@@ -2,12 +2,34 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Image } from '@/types';
 
+const isIos = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+};
+
 export const downloadSingleImage = async (image: Image): Promise<void> => {
+  if (isIos()) {
+    // iOS Safari: open image in new tab for long-press save
+    window.open(image.url, '_blank');
+    return;
+  }
+
+  // Desktop / Android: fetch blob and trigger download
   const response = await fetch(image.url);
   const blob = await response.blob();
   const extension = blob.type.split('/')[1] || 'jpg';
   const filename = `${image.title || image.id}.${extension}`;
-  saveAs(blob, filename);
+
+  // Use native anchor download for better browser compatibility
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 export interface DownloadProgress {
