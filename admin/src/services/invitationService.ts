@@ -157,6 +157,7 @@ export const deleteInvitation = async (id: string): Promise<void> => {
 };
 
 export const getGalleryUrl = (token: string): string => {
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin.replace(':3001', ':3002') : 'http://localhost:3002';
+  const baseUrl = process.env.NEXT_PUBLIC_WEB_URL
+    || (typeof window !== 'undefined' ? window.location.origin.replace(':3001', ':3002') : 'http://localhost:3002');
   return `${baseUrl}/gallery/${token}`;
 };
