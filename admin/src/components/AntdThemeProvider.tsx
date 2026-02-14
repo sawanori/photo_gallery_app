@@ -1,6 +1,6 @@
 'use client';
 
-import { ConfigProvider } from 'antd';
+import { ConfigProvider, App } from 'antd';
 import jaJP from 'antd/locale/ja_JP';
 import { ReactNode } from 'react';
 
@@ -55,7 +55,7 @@ export function AntdThemeProvider({ children }: { children: ReactNode }) {
         },
       }}
     >
-      {children}
+      <App>{children}</App>
     </ConfigProvider>
   );
 }

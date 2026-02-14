@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Card, Button, Tag, Segmented, Spin, Empty, Modal, message } from 'antd';
+import { Card, Button, Tag, Segmented, Spin, Empty, App } from 'antd';
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
 import { getProjects, deleteProject, Project, ProjectStatus } from '@/services/projectService';
@@ -21,6 +21,7 @@ const STATUS_COLORS: Record<ProjectStatus, string> = {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { modal, message } = App.useApp();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'all'>('all');
@@ -44,7 +45,7 @@ export default function DashboardPage() {
 
   const handleDeleteProject = (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
-    Modal.confirm({
+    modal.confirm({
       title: 'プロジェクトを削除しますか？',
       content: `プロジェクト「${project.name}」を削除します。画像 ${project.imageCount} 枚と関連データも同時に削除されます。この操作は取り消せません。`,
       okText: '削除',

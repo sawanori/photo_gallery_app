@@ -9,8 +9,7 @@ import {
   Button,
   Tabs,
   Image,
-  Modal,
-  message,
+  App,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -40,6 +39,7 @@ export default function ProjectDetailPage() {
   const router = useRouter();
   const params = useParams();
   const projectId = params?.projectId as string;
+  const { modal, message } = App.useApp();
 
   const [project, setProject] = useState<Project | null>(null);
   const [images, setImages] = useState<ImageType[]>([]);
@@ -90,7 +90,7 @@ export default function ProjectDetailPage() {
   }
 
   const handleDeleteProject = () => {
-    Modal.confirm({
+    modal.confirm({
       title: 'プロジェクトを削除しますか？',
       content: `プロジェクト「${project.name}」を削除します。画像 ${images.length} 枚、招待リンク ${invitations.length} 件も同時に削除されます。この操作は取り消せません。`,
       okText: '削除',
