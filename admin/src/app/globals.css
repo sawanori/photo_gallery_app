@@ -1,5 +1,106 @@
+/* ===== Warm Minimalist Design Tokens ===== */
+:root {
+  /* Background (60%) */
+  --color-bg: #faf8f5;
+  --color-bg-alt: #f5f3f0;
+
+  /* Surface (30%) */
+  --color-surface: #ffffff;
+  --color-border: #e8e5e0;
+  --color-border-light: #f0ece7;
+
+  /* Ink / Text */
+  --color-ink: #2d2a26;
+  --color-ink-secondary: #6b6560;
+  --color-ink-muted: #a39e98;
+
+  /* Accent (10%) */
+  --color-accent: #c9652e;
+  --color-accent-hover: #b5571f;
+  --color-accent-light: #fdf4ef;
+
+  /* Semantic */
+  --color-success: #5a9a6e;
+  --color-warning: #d4943a;
+  --color-error: #c45454;
+
+  /* Sidebar */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 72px;
+  --sidebar-bg: #1e1c1a;
+  --sidebar-ink: #d4d0cc;
+  --sidebar-ink-muted: #8a8580;
+  --sidebar-active-bg: rgba(201, 101, 46, 0.15);
+  --sidebar-active-ink: #e8a67a;
+
+  /* Easing */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-smooth: cubic-bezier(0.33, 1, 0.68, 1);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(45, 42, 38, 0.04);
+  --shadow-md: 0 4px 12px rgba(45, 42, 38, 0.06);
+  --shadow-lg: 0 12px 32px rgba(45, 42, 38, 0.08);
+  --shadow-hover: 0 8px 24px rgba(45, 42, 38, 0.1);
+}
+
+/* ===== Base ===== */
 body {
-  background: #ffffff;
-  color: #171717;
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: 'Outfit', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Spinner ===== */
+.admin-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+}
+
+/* ===== Entrance Animation ===== */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeSlideUp 0.5s var(--ease-spring) forwards;
+}
+
+.stagger-1 { animation-delay: 0.05s; opacity: 0; }
+.stagger-2 { animation-delay: 0.1s; opacity: 0; }
+.stagger-3 { animation-delay: 0.15s; opacity: 0; }
+.stagger-4 { animation-delay: 0.2s; opacity: 0; }
+
+/* ===== Card Hover ===== */
+.card-hover {
+  transition:
+    transform 0.5s var(--ease-spring),
+    box-shadow 0.5s var(--ease-spring);
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-hover);
+}
+
+/* ===== Reduced Motion ===== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
