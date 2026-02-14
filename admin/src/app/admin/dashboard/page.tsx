@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { Card, Button, Tag, Segmented, Spin, Empty } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Card, Button, Tag, Segmented, Spin, Empty, Modal, message } from 'antd';
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
-import { getProjects, Project, ProjectStatus } from '@/services/projectService';
+import { getProjects, deleteProject, Project, ProjectStatus } from '@/services/projectService';
 
 const STATUS_LABELS: Record<ProjectStatus | 'all', string> = {
   all: 'すべて',
@@ -41,6 +41,27 @@ export default function DashboardPage() {
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  const handleDeleteProject = (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    Modal.confirm({
+      title: 'プロジェクトを削除しますか？',
+      content: `プロジェクト「${project.name}」を削除します。画像 ${project.imageCount} 枚と関連データも同時に削除されます。この操作は取り消せません。`,
+      okText: '削除',
+      okType: 'danger',
+      cancelText: 'キャンセル',
+      onOk: async () => {
+        try {
+          await deleteProject(project.id);
+          message.success('プロジェクトを削除しました');
+          loadProjects();
+        } catch (error) {
+          console.error('Failed to delete project:', error);
+          message.error('プロジェクトの削除に失敗しました');
+        }
+      },
+    });
+  };
 
   return (
     <div>
@@ -89,9 +110,19 @@ export default function DashboardPage() {
                 <Tag color={STATUS_COLORS[project.status]}>
                   {STATUS_LABELS[project.status]}
                 </Tag>
-                <span style={{ color: '#999', fontSize: 12 }}>
-                  {project.imageCount} 枚
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: '#999', fontSize: 12 }}>
+                    {project.imageCount} 枚
+                  </span>
+                  <Button
+                    type="text"
+                    danger
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    onClick={(e) => handleDeleteProject(e, project)}
+                    style={{ borderRadius: 6 }}
+                  />
+                </div>
               </div>
             </Card>
           ))}
