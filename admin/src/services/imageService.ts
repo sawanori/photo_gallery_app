@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
   query,
   orderBy,
   where,
@@ -46,6 +47,7 @@ export interface PaginatedImages {
 
 const IMAGES_COLLECTION = 'images';
 const PROJECTS_COLLECTION = 'projects';
+const LIKES_COLLECTION = 'likes';
 const PAGE_SIZE = 20;
 
 // Convert Firestore document to Image object
@@ -218,6 +220,20 @@ export const deleteImage = async (imageId: string): Promise<void> => {
       } catch (error) {
         console.warn('Failed to delete file from storage:', error);
       }
+    }
+
+    // Delete associated likes (best-effort, outside transaction)
+    try {
+      const likesQuery = query(
+        collection(db, LIKES_COLLECTION),
+        where('imageId', '==', imageId)
+      );
+      const likesSnapshot = await getDocs(likesQuery);
+      for (const likeDoc of likesSnapshot.docs) {
+        await deleteDoc(doc(db, LIKES_COLLECTION, likeDoc.id));
+      }
+    } catch (error) {
+      console.warn('Failed to delete likes for image:', error);
     }
 
     // Delete image document

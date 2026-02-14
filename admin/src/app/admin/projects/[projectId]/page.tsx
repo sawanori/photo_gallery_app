@@ -9,6 +9,8 @@ import {
   Button,
   Tabs,
   Image,
+  Modal,
+  message,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -17,9 +19,10 @@ import {
   LinkOutlined,
   UserOutlined,
   EyeOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
-import { getProject, Project, ProjectStatus } from '@/services/projectService';
+import { getProject, deleteProject, Project, ProjectStatus } from '@/services/projectService';
 import { getImagesByProject, Image as ImageType } from '@/services/imageService';
 import { getInvitationsByProject, Invitation } from '@/services/invitationService';
 import dayjs from 'dayjs';
@@ -85,6 +88,26 @@ export default function ProjectDetailPage() {
       </Empty>
     );
   }
+
+  const handleDeleteProject = () => {
+    Modal.confirm({
+      title: 'プロジェクトを削除しますか？',
+      content: `プロジェクト「${project.name}」を削除します。画像 ${images.length} 枚、招待リンク ${invitations.length} 件も同時に削除されます。この操作は取り消せません。`,
+      okText: '削除',
+      okType: 'danger',
+      cancelText: 'キャンセル',
+      onOk: async () => {
+        try {
+          await deleteProject(projectId);
+          message.success('プロジェクトを削除しました');
+          router.push('/admin/dashboard');
+        } catch (error) {
+          console.error('Failed to delete project:', error);
+          message.error('プロジェクトの削除に失敗しました');
+        }
+      },
+    });
+  };
 
   const getInvitationStatus = (inv: Invitation) => {
     if (!inv.isActive) return { label: '無効', color: 'default' as const };
@@ -265,6 +288,13 @@ export default function ProjectDetailPage() {
             <span>{project.clientName}</span>
           </div>
         </div>
+        <Button
+          danger
+          icon={<DeleteOutlined />}
+          onClick={handleDeleteProject}
+        >
+          削除
+        </Button>
       </div>
 
       {/* Tabs */}
