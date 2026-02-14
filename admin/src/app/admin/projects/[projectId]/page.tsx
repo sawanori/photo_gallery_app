@@ -22,7 +22,7 @@ import {
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { getProject, deleteProject, Project, ProjectStatus } from '@/services/projectService';
-import { getImagesByProject, Image as ImageType } from '@/services/imageService';
+import { getImagesByProject, deleteImage, Image as ImageType } from '@/services/imageService';
 import { getInvitationsByProject, Invitation } from '@/services/invitationService';
 import dayjs from 'dayjs';
 import 'dayjs/locale/ja';
@@ -115,6 +115,27 @@ export default function ProjectDetailPage() {
     return { label: '有効', color: 'success' as const };
   };
 
+  const handleDeleteImage = (img: ImageType) => {
+    modal.confirm({
+      title: '画像を削除しますか？',
+      content: `「${img.title}」を削除します。この操作は取り消せません。`,
+      okText: '削除',
+      okType: 'danger',
+      cancelText: 'キャンセル',
+      onOk: async () => {
+        try {
+          await deleteImage(img.id);
+          message.success('画像を削除しました');
+          const updatedImages = images.filter((i) => i.id !== img.id);
+          setImages(updatedImages);
+        } catch (error) {
+          console.error('Failed to delete image:', error);
+          message.error('画像の削除に失敗しました');
+        }
+      },
+    });
+  };
+
   const imagesContent = (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -149,7 +170,7 @@ export default function ProjectDetailPage() {
           }}
         >
           {images.map((img) => (
-            <div key={img.id} style={{ textAlign: 'center' }}>
+            <div key={img.id} style={{ position: 'relative' }}>
               <Image
                 src={img.url}
                 alt={img.title}
@@ -157,6 +178,23 @@ export default function ProjectDetailPage() {
                 height={120}
                 style={{ objectFit: 'cover', borderRadius: 8 }}
                 fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+              />
+              <Button
+                type="text"
+                danger
+                size="small"
+                icon={<DeleteOutlined />}
+                onClick={() => handleDeleteImage(img)}
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  right: 4,
+                  background: 'rgba(255,255,255,0.85)',
+                  borderRadius: 6,
+                  minWidth: 24,
+                  height: 24,
+                  padding: 0,
+                }}
               />
               <div
                 style={{
@@ -166,6 +204,7 @@ export default function ProjectDetailPage() {
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
+                  textAlign: 'center',
                 }}
               >
                 {img.title}

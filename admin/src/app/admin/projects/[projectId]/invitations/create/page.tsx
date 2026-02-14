@@ -258,16 +258,32 @@ export default function CreateInvitationPage() {
 
         {/* Right: Image selection grid */}
         <Card style={{ flex: 2, minWidth: 400 }}>
-          <h3
-            style={{
-              margin: '0 0 16px 0',
-              fontSize: 16,
-              fontWeight: 600,
-              color: 'var(--color-ink)',
-            }}
-          >
-            画像を選択
-          </h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3
+              style={{
+                margin: 0,
+                fontSize: 16,
+                fontWeight: 600,
+                color: 'var(--color-ink)',
+              }}
+            >
+              画像を選択
+            </h3>
+            {images.length > 0 && (
+              <Button
+                size="small"
+                onClick={() =>
+                  setSelectedImageIds(
+                    selectedImageIds.length === images.length
+                      ? []
+                      : images.map((img) => img.id)
+                  )
+                }
+              >
+                {selectedImageIds.length === images.length ? '全解除' : '全選択'}
+              </Button>
+            )}
+          </div>
 
           {images.length === 0 ? (
             <Empty description="画像がありません" />
