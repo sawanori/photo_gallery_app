@@ -70,7 +70,10 @@ service cloud.firestore {
       allow create: if isAdmin() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin() ||
+        (hasValidSession() &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessCount', 'lastAccessedAt']));
+      allow delete: if isAdmin();
     }
 
     // Sessions collection
