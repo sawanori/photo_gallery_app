@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState } from 'react';
+import { memo, useState, useCallback } from 'react';
 import Image from 'next/image';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
@@ -14,6 +14,14 @@ interface ImageCardProps {
 
 const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
+
+  // Callback ref: catches images already loaded from browser cache
+  // (onLoad may fire before React attaches the event handler)
+  const imgRef = useCallback((img: HTMLImageElement | null) => {
+    if (img?.complete && img.naturalWidth > 0) {
+      setIsLoaded(true);
+    }
+  }, []);
 
   return (
     <div
@@ -30,6 +38,7 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
     >
       <div className="bg-surface">
         <Image
+          ref={imgRef}
           src={image.url}
           alt={image.title || ''}
           width={600}
@@ -40,6 +49,7 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
             ${isLoaded ? 'opacity-100' : 'opacity-0'}
           `}
           onLoad={() => setIsLoaded(true)}
+          onError={() => setIsLoaded(true)}
         />
       </div>
 
