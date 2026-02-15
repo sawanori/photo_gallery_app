@@ -15,33 +15,20 @@ const downloadViaAnchor = (blob: Blob, filename: string): void => {
 };
 
 export const downloadSingleImage = async (image: Image): Promise<void> => {
-  if (isIos()) {
-    // iOS Safari: open image in new tab for long-press save
+  if (isIos() || isAndroid()) {
+    // Mobile: open image in new tab (must be synchronous to preserve user gesture)
+    // iOS: user long-presses to save to Photos
+    // Android: user uses ⋮ menu → Download or long-press → Download image
+    // Chrome's UI download uses MediaStore, so images appear in gallery
     window.open(image.url, '_blank');
     return;
   }
 
+  // Desktop: fetch blob and trigger download
   const response = await fetch(image.url);
   const blob = await response.blob();
   const extension = blob.type.split('/')[1] || 'jpg';
   const filename = `${image.title || image.id}.${extension}`;
-
-  if (isAndroid()) {
-    // Android: use Web Share API so user can save to Photos/Gallery
-    const file = new File([blob], filename, { type: blob.type });
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file] });
-        return;
-      } catch (err) {
-        // User cancelled share — treat as success
-        if ((err as Error).name === 'AbortError') return;
-        // Other error — fall through to anchor download
-      }
-    }
-  }
-
-  // Desktop / fallback: anchor download
   downloadViaAnchor(blob, filename);
 };
 

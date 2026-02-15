@@ -59,68 +59,16 @@ describe('downloadSingleImage', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('uses navigator.share on Android when canShare is supported', async () => {
+  it('opens new tab on Android', async () => {
     vi.mocked(isIos).mockReturnValue(false);
     vi.mocked(isAndroid).mockReturnValue(true);
-
-    const shareMock = vi.fn().mockResolvedValue(undefined);
-    const canShareMock = vi.fn().mockReturnValue(true);
-    Object.defineProperty(navigator, 'share', { value: shareMock, writable: true, configurable: true });
-    Object.defineProperty(navigator, 'canShare', { value: canShareMock, writable: true, configurable: true });
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
     await downloadSingleImage(mockImage);
 
-    expect(fetch).toHaveBeenCalledWith(mockImage.url);
-    expect(canShareMock).toHaveBeenCalled();
-    expect(shareMock).toHaveBeenCalledWith({
-      files: [expect.any(File)],
-    });
-    // Should NOT fall through to anchor download
+    expect(openSpy).toHaveBeenCalledWith(mockImage.url, '_blank');
+    expect(fetch).not.toHaveBeenCalled();
     expect(mockAnchorElement.click).not.toHaveBeenCalled();
-  });
-
-  it('silently handles AbortError (user cancel) on Android share', async () => {
-    vi.mocked(isIos).mockReturnValue(false);
-    vi.mocked(isAndroid).mockReturnValue(true);
-
-    const abortError = new DOMException('Share canceled', 'AbortError');
-    const shareMock = vi.fn().mockRejectedValue(abortError);
-    const canShareMock = vi.fn().mockReturnValue(true);
-    Object.defineProperty(navigator, 'share', { value: shareMock, writable: true, configurable: true });
-    Object.defineProperty(navigator, 'canShare', { value: canShareMock, writable: true, configurable: true });
-
-    await downloadSingleImage(mockImage);
-
-    expect(shareMock).toHaveBeenCalled();
-    // Should NOT fall through to anchor download
-    expect(mockAnchorElement.click).not.toHaveBeenCalled();
-  });
-
-  it('falls back to anchor download on Android when canShare is not supported', async () => {
-    vi.mocked(isIos).mockReturnValue(false);
-    vi.mocked(isAndroid).mockReturnValue(true);
-
-    Object.defineProperty(navigator, 'canShare', { value: undefined, writable: true, configurable: true });
-
-    await downloadSingleImage(mockImage);
-
-    expect(mockAnchorElement.click).toHaveBeenCalled();
-    expect(mockAnchorElement.download).toBe('test-photo.jpeg');
-  });
-
-  it('falls back to anchor download on Android when share throws non-AbortError', async () => {
-    vi.mocked(isIos).mockReturnValue(false);
-    vi.mocked(isAndroid).mockReturnValue(true);
-
-    const shareMock = vi.fn().mockRejectedValue(new Error('NetworkError'));
-    const canShareMock = vi.fn().mockReturnValue(true);
-    Object.defineProperty(navigator, 'share', { value: shareMock, writable: true, configurable: true });
-    Object.defineProperty(navigator, 'canShare', { value: canShareMock, writable: true, configurable: true });
-
-    await downloadSingleImage(mockImage);
-
-    // Should fall through to anchor download
-    expect(mockAnchorElement.click).toHaveBeenCalled();
   });
 
   it('uses anchor download on desktop', async () => {

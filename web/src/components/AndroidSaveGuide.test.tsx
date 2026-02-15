@@ -23,7 +23,7 @@ describe('AndroidSaveGuide', () => {
     vi.mocked(isAndroid).mockReturnValue(true);
     render(<AndroidSaveGuide />);
     expect(screen.getByText('写真を保存するには')).toBeInTheDocument();
-    expect(screen.getByText(/お使いの写真アプリ/)).toBeInTheDocument();
+    expect(screen.getByText(/画像が新しいタブで開きます/)).toBeInTheDocument();
   });
 
   it('does not show guide on non-Android', () => {

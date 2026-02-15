@@ -36,7 +36,7 @@ export default function AndroidSaveGuide() {
               写真を保存するには
             </p>
             <p className="text-xs text-muted mt-0.5">
-              表示されるメニューから、お使いの写真アプリ（Googleフォト、ギャラリー等）を選択して保存してください
+              画像が新しいタブで開きます。画像を長押しして「画像をダウンロード」を選択してください
             </p>
           </div>
           <button

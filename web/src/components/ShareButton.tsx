@@ -41,7 +41,7 @@ export default function ShareButton({ image, size = 'md' }: ShareButtonProps) {
   };
 
   // Hide on browsers that don't support sharing files
-  // On Android, DownloadButton already opens the share sheet, so hide to avoid duplication
+  // On Android, DownloadButton opens image in new tab, so share is redundant
   if (typeof navigator !== 'undefined' && (!navigator.share || isAndroid())) {
     return null;
   }
