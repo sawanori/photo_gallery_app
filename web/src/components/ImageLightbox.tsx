@@ -17,17 +17,17 @@ interface ImageLightboxProps {
 
 export default function ImageLightbox({ images, currentIndex, onClose, onNavigate }: ImageLightboxProps) {
   const image = images[currentIndex];
-  const [isLoading, setIsLoading] = useState(false);
-  const [displayedSrc, setDisplayedSrc] = useState(image?.url);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadedUrl, setLoadedUrl] = useState('');
 
   useEffect(() => {
-    if (image?.url && image.url !== displayedSrc) {
+    if (image?.url && image.url !== loadedUrl) {
       setIsLoading(true);
     }
-  }, [image?.url, displayedSrc]);
+  }, [image?.url, loadedUrl]);
 
   const handleImageLoad = () => {
-    setDisplayedSrc(image?.url);
+    setLoadedUrl(image?.url);
     setIsLoading(false);
   };
 
@@ -107,10 +107,11 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
       )}
 
       {/* Image */}
-      <div className="relative max-w-[90vw] max-h-[85vh]">
+      <div className="relative max-w-[90vw] max-h-[85vh] min-w-[200px] min-h-[200px] flex items-center justify-center">
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center z-10">
-            <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center z-10 gap-3">
+            <div className="w-10 h-10 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+            <p className="text-white/40 text-xs font-light">読み込み中</p>
           </div>
         )}
         <Image
@@ -119,7 +120,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
           alt={image.title || ''}
           width={1920}
           height={1080}
-          className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-200 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
+          className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
           sizes="90vw"
           priority
           onLoad={handleImageLoad}
