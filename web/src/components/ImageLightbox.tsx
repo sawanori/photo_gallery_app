@@ -5,6 +5,7 @@ import Image from 'next/image';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
 import ShareButton from './ShareButton';
+import LineImageShareButton from './LineImageShareButton';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
 
 interface ImageLightboxProps {
@@ -142,6 +143,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
               isLiked={image.isLiked}
               likeCount={image.likeCount}
             />
+            <LineImageShareButton image={image} />
             <ShareButton image={image} />
             <DownloadButton image={image} />
           </div>
