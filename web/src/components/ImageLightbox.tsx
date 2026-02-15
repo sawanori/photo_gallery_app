@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
@@ -16,6 +16,30 @@ interface ImageLightboxProps {
 
 export default function ImageLightbox({ images, currentIndex, onClose, onNavigate }: ImageLightboxProps) {
   const image = images[currentIndex];
+  const [isLoading, setIsLoading] = useState(false);
+  const [displayedSrc, setDisplayedSrc] = useState(image?.url);
+
+  useEffect(() => {
+    if (image?.url && image.url !== displayedSrc) {
+      setIsLoading(true);
+    }
+  }, [image?.url, displayedSrc]);
+
+  const handleImageLoad = () => {
+    setDisplayedSrc(image?.url);
+    setIsLoading(false);
+  };
+
+  // Preload adjacent images
+  useEffect(() => {
+    const preloadIndexes = [currentIndex - 1, currentIndex + 1];
+    preloadIndexes.forEach((i) => {
+      if (i >= 0 && i < images.length) {
+        const img = new window.Image();
+        img.src = images[i].url;
+      }
+    });
+  }, [currentIndex, images]);
 
   const goNext = useCallback(() => {
     if (currentIndex < images.length - 1) onNavigate(currentIndex + 1);
@@ -83,14 +107,21 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
 
       {/* Image */}
       <div className="relative max-w-[90vw] max-h-[85vh]">
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          </div>
+        )}
         <Image
+          key={image.url}
           src={image.url}
           alt={image.title || ''}
           width={1920}
           height={1080}
-          className="max-w-full max-h-[85vh] object-contain"
+          className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-200 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
           sizes="90vw"
           priority
+          onLoad={handleImageLoad}
         />
       </div>
 
