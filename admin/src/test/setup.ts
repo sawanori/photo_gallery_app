@@ -54,3 +54,11 @@ vi.mock('next/link', () => ({
   default: ({ children, href }: { children: React.ReactNode; href: string }) =>
     React.createElement('a', { href }, children),
 }));
+
+// --- Firebase lib モック（全テストでFirebase初期化エラーを防ぐ）---
+vi.mock('@/lib/firebase', () => ({
+  app: {},
+  auth: { onAuthStateChanged: vi.fn() },
+  db: {},
+  storage: {},
+}));

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import dayjs from 'dayjs';
 import { mockFirestore } from '../../test/mocks/firebase';
 import { createMockDocSnapshot, createMockQuerySnapshot, sampleProject, sampleImage, sampleInvitation } from '../../test/fixtures';
+import type { Project, ProjectStatus } from '../projectService';
 
 // --- Firebase モック ---
 vi.mock('firebase/firestore', () => ({
@@ -370,6 +372,84 @@ describe('projectService', () => {
       expect(result).not.toBeNull();
       expect(result!.name).toBe('最小プロジェクト');
       expect(result!.shootingDate).toBeUndefined();
+    });
+  });
+
+  describe('getProjectExpiryInfo', () => {
+    const createProjectWithAge = (daysAgo: number, status: ProjectStatus = 'active'): Project => ({
+      ...sampleProject,
+      status,
+      createdAt: dayjs().subtract(daysAgo, 'day').toDate(),
+      updatedAt: new Date(),
+    });
+
+    it('6日前のプロジェクトは null を返す（警告なし）', () => {
+      const project = createProjectWithAge(6);
+      expect(projectService.getProjectExpiryInfo(project)).toBeNull();
+    });
+
+    it('7日前のプロジェクトは warning を返す', () => {
+      const project = createProjectWithAge(7);
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result).not.toBeNull();
+      expect(result!.level).toBe('warning');
+      expect(result!.daysElapsed).toBe(7);
+      expect(result!.daysRemaining).toBe(13);
+    });
+
+    it('13日前のプロジェクトは warning を返す', () => {
+      const project = createProjectWithAge(13);
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result!.level).toBe('warning');
+    });
+
+    it('14日前のプロジェクトは danger を返す', () => {
+      const project = createProjectWithAge(14);
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result!.level).toBe('danger');
+      expect(result!.daysRemaining).toBe(6);
+    });
+
+    it('19日前のプロジェクトは danger を返す', () => {
+      const project = createProjectWithAge(19);
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result!.level).toBe('danger');
+      expect(result!.daysRemaining).toBe(1);
+    });
+
+    it('20日前のプロジェクトは expired を返す', () => {
+      const project = createProjectWithAge(20);
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result!.level).toBe('expired');
+      expect(result!.daysRemaining).toBe(0);
+    });
+
+    it('30日前のプロジェクトは expired を返す（daysRemaining は負数）', () => {
+      const project = createProjectWithAge(30);
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result!.level).toBe('expired');
+      expect(result!.daysRemaining).toBe(-10);
+    });
+
+    it('archived ステータスは null を返す（対象外）', () => {
+      const project = createProjectWithAge(25, 'archived');
+      expect(projectService.getProjectExpiryInfo(project)).toBeNull();
+    });
+
+    it('delivered ステータスは期限管理の対象', () => {
+      const project = createProjectWithAge(15, 'delivered');
+      const result = projectService.getProjectExpiryInfo(project);
+      expect(result!.level).toBe('danger');
+    });
+
+    it('createdAt がない場合は null を返す', () => {
+      const project = { ...sampleProject, createdAt: undefined as unknown as Date };
+      expect(projectService.getProjectExpiryInfo(project)).toBeNull();
+    });
+
+    it('作成直後（0日前）のプロジェクトは null を返す', () => {
+      const project = createProjectWithAge(0);
+      expect(projectService.getProjectExpiryInfo(project)).toBeNull();
     });
   });
 });

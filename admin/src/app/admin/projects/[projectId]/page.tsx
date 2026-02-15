@@ -10,6 +10,7 @@ import {
   Tabs,
   Image,
   App,
+  Alert,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -21,7 +22,7 @@ import {
   DeleteOutlined,
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
-import { getProject, deleteProject, Project, ProjectStatus } from '@/services/projectService';
+import { getProject, deleteProject, getProjectExpiryInfo, Project, ProjectStatus } from '@/services/projectService';
 import { getImagesByProject, deleteImage, Image as ImageType } from '@/services/imageService';
 import { getInvitationsByProject, Invitation } from '@/services/invitationService';
 import dayjs from 'dayjs';
@@ -335,6 +336,23 @@ export default function ProjectDetailPage() {
           削除
         </Button>
       </div>
+
+      {/* Expiry Warning */}
+      {(() => {
+        const expiryInfo = getProjectExpiryInfo(project);
+        if (!expiryInfo) return null;
+        if (expiryInfo.level === 'expired') {
+          return <Alert type="error" showIcon message="このプロジェクトは期限切れです。" style={{ marginBottom: 16 }} />;
+        }
+        return (
+          <Alert
+            type={expiryInfo.level === 'danger' ? 'error' : 'warning'}
+            showIcon
+            message={`作成から ${expiryInfo.daysElapsed} 日経過。残り ${expiryInfo.daysRemaining} 日で期限切れになります。`}
+            style={{ marginBottom: 16 }}
+          />
+        );
+      })()}
 
       {/* Tabs */}
       <Tabs

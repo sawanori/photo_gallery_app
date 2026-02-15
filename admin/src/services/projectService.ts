@@ -16,6 +16,7 @@ import {
 import { db } from '../lib/firebase';
 import { getImagesByProject, deleteImage } from './imageService';
 import { getInvitationsByProject, deleteInvitation } from './invitationService';
+import dayjs from 'dayjs';
 
 export type ProjectStatus = 'active' | 'delivered' | 'archived';
 
@@ -165,4 +166,26 @@ export const deleteProject = async (projectId: string): Promise<void> => {
   // Delete project document
   const docRef = doc(db, PROJECTS_COLLECTION, projectId);
   await deleteDoc(docRef);
+};
+
+export const PROJECT_LIFETIME_DAYS = 20;
+const WARNING_DAYS = 7;
+const DANGER_DAYS = 14;
+
+export type ExpiryLevel = 'warning' | 'danger' | 'expired';
+
+export interface ExpiryInfo {
+  level: ExpiryLevel;
+  daysRemaining: number;
+  daysElapsed: number;
+}
+
+export const getProjectExpiryInfo = (project: Project): ExpiryInfo | null => {
+  if (!project.createdAt || project.status === 'archived') return null;
+  const elapsed = dayjs().diff(dayjs(project.createdAt), 'day');
+  const remaining = PROJECT_LIFETIME_DAYS - elapsed;
+  if (elapsed >= PROJECT_LIFETIME_DAYS) return { level: 'expired', daysRemaining: remaining, daysElapsed: elapsed };
+  if (elapsed >= DANGER_DAYS) return { level: 'danger', daysRemaining: remaining, daysElapsed: elapsed };
+  if (elapsed >= WARNING_DAYS) return { level: 'warning', daysRemaining: remaining, daysElapsed: elapsed };
+  return null;
 };

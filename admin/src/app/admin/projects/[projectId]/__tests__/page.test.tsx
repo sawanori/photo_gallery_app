@@ -5,23 +5,25 @@ import { ConfigProvider, App } from 'antd';
 import jaJP from 'antd/locale/ja_JP';
 
 const mockGetProject = vi.fn();
+const mockGetProjectExpiryInfo = vi.fn();
 const mockGetImagesByProject = vi.fn();
 const mockGetInvitationsByProject = vi.fn();
 
-vi.mock('@/services/projectService', () => ({
+vi.mock('../../../../../services/projectService', () => ({
   getProject: (...args: unknown[]) => mockGetProject(...args),
+  getProjectExpiryInfo: (...args: unknown[]) => mockGetProjectExpiryInfo(...args),
 }));
 
-vi.mock('@/services/imageService', () => ({
+vi.mock('../../../../../services/imageService', () => ({
   getImagesByProject: (...args: unknown[]) => mockGetImagesByProject(...args),
 }));
 
-vi.mock('@/services/invitationService', () => ({
+vi.mock('../../../../../services/invitationService', () => ({
   getInvitationsByProject: (...args: unknown[]) => mockGetInvitationsByProject(...args),
   getGalleryUrl: (token: string) => `http://localhost:3002/gallery/${token}`,
 }));
 
-vi.mock('@/contexts/AuthContext', () => ({
+vi.mock('../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },
@@ -199,6 +201,64 @@ describe('ProjectDetailPage', () => {
       await waitFor(() => {
         expect(screen.getByText(/招待作成/)).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('期限警告アラート', () => {
+    it('warning レベルで警告アラートを表示する', async () => {
+      mockGetProject.mockResolvedValue(sampleProject);
+      mockGetImagesByProject.mockResolvedValue([]);
+      mockGetInvitationsByProject.mockResolvedValue([]);
+      mockGetProjectExpiryInfo.mockReturnValue({ level: 'warning', daysRemaining: 10, daysElapsed: 10 });
+
+      renderWithProviders(<ProjectDetailPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/作成から 10 日経過/)).toBeInTheDocument();
+        expect(screen.getByText(/残り 10 日で期限切れ/)).toBeInTheDocument();
+      });
+    });
+
+    it('danger レベルでエラーアラートを表示する', async () => {
+      mockGetProject.mockResolvedValue(sampleProject);
+      mockGetImagesByProject.mockResolvedValue([]);
+      mockGetInvitationsByProject.mockResolvedValue([]);
+      mockGetProjectExpiryInfo.mockReturnValue({ level: 'danger', daysRemaining: 3, daysElapsed: 17 });
+
+      renderWithProviders(<ProjectDetailPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/作成から 17 日経過/)).toBeInTheDocument();
+        expect(screen.getByText(/残り 3 日で期限切れ/)).toBeInTheDocument();
+      });
+    });
+
+    it('expired レベルで「このプロジェクトは期限切れです」を表示する', async () => {
+      mockGetProject.mockResolvedValue(sampleProject);
+      mockGetImagesByProject.mockResolvedValue([]);
+      mockGetInvitationsByProject.mockResolvedValue([]);
+      mockGetProjectExpiryInfo.mockReturnValue({ level: 'expired', daysRemaining: -5, daysElapsed: 25 });
+
+      renderWithProviders(<ProjectDetailPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/このプロジェクトは期限切れです/)).toBeInTheDocument();
+      });
+    });
+
+    it('期限情報なし（null）の場合はアラートを表示しない', async () => {
+      mockGetProject.mockResolvedValue({ ...sampleProject, status: 'archived' });
+      mockGetImagesByProject.mockResolvedValue([]);
+      mockGetInvitationsByProject.mockResolvedValue([]);
+      mockGetProjectExpiryInfo.mockReturnValue(null);
+
+      renderWithProviders(<ProjectDetailPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('田中様 結婚式')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/期限切れ/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/日経過/)).not.toBeInTheDocument();
     });
   });
 });

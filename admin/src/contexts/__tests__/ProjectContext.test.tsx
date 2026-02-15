@@ -4,7 +4,7 @@ import React from 'react';
 
 const mockGetProject = vi.fn();
 
-vi.mock('@/services/projectService', () => ({
+vi.mock('../../services/projectService', () => ({
   getProject: (...args: unknown[]) => mockGetProject(...args),
 }));
 

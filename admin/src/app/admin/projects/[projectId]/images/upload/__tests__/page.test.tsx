@@ -8,11 +8,11 @@ import jaJP from 'antd/locale/ja_JP';
 const mockUploadImage = vi.fn();
 const mockRouterPush = vi.fn();
 
-vi.mock('@/services/imageService', () => ({
+vi.mock('../../../../../../services/imageService', () => ({
   uploadImage: (...args: unknown[]) => mockUploadImage(...args),
 }));
 
-vi.mock('@/contexts/AuthContext', () => ({
+vi.mock('../../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },
