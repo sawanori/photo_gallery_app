@@ -15,6 +15,14 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
   const { invitation, images, likedIds } = useGallery();
   const token = invitation?.token || '';
 
+  const expiryDate = invitation?.createdAt
+    ? new Date(invitation.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000)
+    : null;
+
+  const isExpiringSoon = expiryDate
+    ? expiryDate.getTime() - Date.now() < 2 * 24 * 60 * 60 * 1000
+    : false;
+
   return (
     <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-gray-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -38,6 +46,11 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
               <p className="text-xs text-gray-500">
                 {images.length} photos
               </p>
+              {expiryDate && (
+                <p className={`text-xs ${isExpiringSoon ? 'text-red-500' : 'text-gray-400'}`}>
+                  {expiryDate.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' })}まで閲覧可能
+                </p>
+              )}
             </div>
           </div>
 
