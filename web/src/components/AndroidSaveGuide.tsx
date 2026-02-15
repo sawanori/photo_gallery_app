@@ -1,16 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { isIos } from '@/utils/device';
+import { isAndroid } from '@/utils/device';
 
-const STORAGE_KEY = 'ios_save_guide_dismissed';
+const STORAGE_KEY = 'android_save_guide_dismissed';
 
-export default function IosSaveGuide() {
+export default function AndroidSaveGuide() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
     const dismissed = localStorage.getItem(STORAGE_KEY);
-    if (isIos() && !dismissed) {
+    if (isAndroid() && !dismissed) {
       setShow(true);
     }
   }, []);
@@ -36,7 +36,7 @@ export default function IosSaveGuide() {
               写真を保存するには
             </p>
             <p className="text-xs text-muted mt-0.5">
-              写真を長押しして「"写真"に追加」を選択してください
+              表示されるメニューから、お使いの写真アプリ（Googleフォト、ギャラリー等）を選択して保存してください
             </p>
           </div>
           <button

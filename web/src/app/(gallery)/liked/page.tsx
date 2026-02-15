@@ -10,6 +10,7 @@ import { useGallery } from '@/contexts/GalleryContext';
 import Header from '@/components/Header';
 import MasonryGrid from '@/components/MasonryGrid';
 import ExpiredLink from '@/components/ExpiredLink';
+import AndroidSaveGuide from '@/components/AndroidSaveGuide';
 
 const ImageLightbox = dynamic(() => import('@/components/ImageLightbox'), {
   ssr: false,
@@ -101,6 +102,8 @@ function LikedPageContent() {
           />
         )}
       </main>
+
+      <AndroidSaveGuide />
 
       {lightboxIndex !== null && (
         <ImageLightbox

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Image as ImageType } from '@/types';
+import { isAndroid } from '@/utils/device';
 
 interface ShareButtonProps {
   image: ImageType;
@@ -40,7 +41,8 @@ export default function ShareButton({ image, size = 'md' }: ShareButtonProps) {
   };
 
   // Hide on browsers that don't support sharing files
-  if (typeof navigator !== 'undefined' && !navigator.share) {
+  // On Android, DownloadButton already opens the share sheet, so hide to avoid duplication
+  if (typeof navigator !== 'undefined' && (!navigator.share || isAndroid())) {
     return null;
   }
 

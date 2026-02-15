@@ -9,6 +9,7 @@ import Header from '@/components/Header';
 import MasonryGrid from '@/components/MasonryGrid';
 import ExpiredLink from '@/components/ExpiredLink';
 import IosSaveGuide from '@/components/IosSaveGuide';
+import AndroidSaveGuide from '@/components/AndroidSaveGuide';
 import WelcomeGuide from '@/components/WelcomeGuide';
 
 const ImageLightbox = dynamic(() => import('@/components/ImageLightbox'), {
@@ -68,6 +69,7 @@ export default function GalleryPage({ params }: PageProps) {
 
       <WelcomeGuide />
       <IosSaveGuide />
+      <AndroidSaveGuide />
 
       {lightboxIndex !== null && (
         <ImageLightbox
