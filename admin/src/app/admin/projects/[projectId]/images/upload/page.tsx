@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { UploadFile } from 'antd';
 
 const { Dragger } = Upload;
+const MAX_FILES = 1000;
 
 export default function ProjectImageUploadPage() {
   const router = useRouter();
@@ -97,6 +98,7 @@ export default function ProjectImageUploadPage() {
         <Dragger
           fileList={fileList}
           multiple
+          maxCount={MAX_FILES}
           beforeUpload={(file, newFileList) => {
             const newFiles: UploadFile[] = newFileList.map((f) => ({
               uid: f.uid || `${Date.now()}-${f.name}`,
@@ -109,7 +111,12 @@ export default function ProjectImageUploadPage() {
             setFileList((prev) => {
               const existingNames = new Set(prev.map((p) => p.name));
               const unique = newFiles.filter((f) => !existingNames.has(f.name));
-              return [...prev, ...unique];
+              const combined = [...prev, ...unique];
+              if (combined.length > MAX_FILES) {
+                message.warning(`一度にアップロードできるのは最大${MAX_FILES}枚までです`);
+                return combined.slice(0, MAX_FILES);
+              }
+              return combined;
             });
             return false;
           }}
@@ -127,7 +134,7 @@ export default function ProjectImageUploadPage() {
             クリックまたはドラッグで画像を選択
           </p>
           <p className="ant-upload-hint">
-            複数ファイルを一括でアップロードできます（JPG, PNG, WebP）
+            複数ファイルを一括でアップロードできます（JPG, PNG, WebP・最大{MAX_FILES}枚）
           </p>
         </Dragger>
 
