@@ -31,13 +31,14 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
     setIsLoading(false);
   };
 
-  // Preload adjacent images
+  // Preload adjacent images via Next.js image optimizer
   useEffect(() => {
-    const preloadIndexes = [currentIndex - 1, currentIndex + 1];
+    const preloadIndexes = [currentIndex + 1, currentIndex - 1, currentIndex + 2];
     preloadIndexes.forEach((i) => {
       if (i >= 0 && i < images.length) {
+        const optimizedUrl = `/_next/image?url=${encodeURIComponent(images[i].url)}&w=1920&q=75`;
         const img = new window.Image();
-        img.src = images[i].url;
+        img.src = optimizedUrl;
       }
     });
   }, [currentIndex, images]);
@@ -120,6 +121,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
           alt={image.title || ''}
           width={1920}
           height={1080}
+          quality={80}
           className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
           sizes="90vw"
           priority

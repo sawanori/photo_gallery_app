@@ -44,6 +44,8 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
           width={600}
           height={400}
           sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+          quality={70}
+          priority={index < 8}
           className={`
             w-full h-auto object-cover transition-opacity duration-500
             ${isLoaded ? 'opacity-100' : 'opacity-0'}
