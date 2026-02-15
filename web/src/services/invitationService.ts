@@ -49,6 +49,12 @@ export const validateInvitation = (invitation: Invitation): { valid: boolean; re
   if (invitation.expiresAt && new Date() > invitation.expiresAt) {
     return { valid: false, reason: 'このリンクの有効期限が切れています。' };
   }
+  if (invitation.createdAt) {
+    const viewingDeadline = new Date(invitation.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+    if (new Date() > viewingDeadline) {
+      return { valid: false, reason: 'このリンクの閲覧期限が切れています。' };
+    }
+  }
   return { valid: true };
 };
 
