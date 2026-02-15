@@ -46,19 +46,19 @@ service cloud.firestore {
 
     // Images collection
     match /images/{imageId} {
-      allow read: if isRegisteredUser() || isAdmin() || hasValidSession();
+      allow read: if isAuthenticated();
       allow create: if isRegisteredUser() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
       allow update: if isAuthenticated() &&
         (resource.data.userId == request.auth.uid || isAdmin() ||
-         (onlyLikeCountChanged() && (isRegisteredUser() || hasValidSession())));
+         (onlyLikeCountChanged() && isAuthenticated()));
       allow delete: if resource.data.userId == request.auth.uid || isAdmin();
     }
 
     // Likes collection
     match /likes/{likeId} {
-      allow read: if isRegisteredUser() || isAdmin() || hasValidSession();
+      allow read: if isAuthenticated();
       allow create: if isAuthenticated() &&
         request.resource.data.userId == request.auth.uid;
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
@@ -71,7 +71,7 @@ service cloud.firestore {
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
       allow update: if isAdmin() ||
-        (hasValidSession() &&
+        (isAuthenticated() &&
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessCount', 'lastAccessedAt']));
       allow delete: if isAdmin();
     }
