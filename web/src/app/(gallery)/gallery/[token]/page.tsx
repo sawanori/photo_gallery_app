@@ -26,11 +26,11 @@ export default function GalleryPage({ params }: PageProps) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-bg">
         {/* Skeleton header */}
-        <div className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-gray-100">
+        <div className="sticky top-0 z-40 bg-surface/80 backdrop-blur-md border-b border-border">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center">
-            <div className="h-5 w-40 bg-gray-200 rounded animate-pulse" />
+            <div className="h-5 w-40 rounded animate-shimmer" />
           </div>
         </div>
 
@@ -40,7 +40,7 @@ export default function GalleryPage({ params }: PageProps) {
             {Array.from({ length: 12 }).map((_, i) => (
               <div
                 key={i}
-                className="break-inside-avoid mb-4 rounded-xl bg-gray-200 animate-pulse"
+                className="break-inside-avoid mb-4 rounded-lg animate-shimmer"
                 style={{ height: `${200 + Math.random() * 200}px` }}
               />
             ))}
@@ -55,7 +55,7 @@ export default function GalleryPage({ params }: PageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-bg">
       <Header showLikedLink showBackLink={false} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

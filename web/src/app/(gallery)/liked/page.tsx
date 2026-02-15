@@ -38,8 +38,8 @@ function LikedPageContent() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-border border-t-ink rounded-full animate-spin" />
       </div>
     );
   }
@@ -49,16 +49,16 @@ function LikedPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-bg">
       <Header showLikedLink={false} showBackLink showDownload={false} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="mb-6 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">
+            <h2 className="font-serif text-xl text-ink">
               お気に入り
             </h2>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-muted mt-1">
               {likedImages.length} photos
             </p>
           </div>
@@ -69,9 +69,10 @@ function LikedPageContent() {
               disabled={isDownloading}
               className="
                 flex items-center gap-2 px-4 py-2 rounded-lg
-                bg-gray-900 text-white hover:bg-gray-800
+                bg-ink text-white hover:bg-ink/85
                 disabled:opacity-50 disabled:cursor-not-allowed
-                transition-colors duration-200 text-sm font-medium cursor-pointer
+                transition-all duration-200 text-sm font-medium cursor-pointer
+                hover:-translate-y-[1px] hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)]
               "
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
@@ -85,10 +86,10 @@ function LikedPageContent() {
         {likedImages.length === 0 ? (
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-12 h-12 text-gray-300 mx-auto mb-3">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-12 h-12 text-border mx-auto mb-3">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
               </svg>
-              <p className="text-gray-400">
+              <p className="text-muted">
                 お気に入りの写真はまだありません
               </p>
             </div>
@@ -120,8 +121,8 @@ function LikedPageContent() {
 export default function LikedPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-border border-t-ink rounded-full animate-spin" />
       </div>
     }>
       <LikedPageContent />

@@ -25,9 +25,10 @@ export default function BulkDownloadButton() {
         disabled={isDownloading || images.length === 0}
         className="
           flex items-center gap-2 px-4 py-2 rounded-lg
-          bg-gray-900 text-white hover:bg-gray-800
+          bg-ink text-white hover:bg-ink/85
           disabled:opacity-50 disabled:cursor-not-allowed
-          transition-colors duration-200 text-sm font-medium cursor-pointer
+          transition-all duration-200 text-sm font-medium cursor-pointer
+          hover:-translate-y-[1px] hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)]
         "
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">

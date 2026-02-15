@@ -34,7 +34,7 @@ export default function DownloadButton({ image, size = 'md' }: DownloadButtonPro
       disabled={isDownloading}
       className={`
         ${sizeClasses} rounded-full flex items-center justify-center
-        bg-white/90 text-gray-600 hover:bg-white hover:text-blue-500
+        bg-white/90 text-neutral-600 hover:bg-white hover:text-ink
         transition-all duration-200 backdrop-blur-sm shadow-md cursor-pointer
         ${isDownloading ? 'opacity-50' : ''}
       `}

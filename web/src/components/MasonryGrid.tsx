@@ -18,7 +18,7 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
   if (images.length === 0) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-gray-400 text-lg">
+        <p className="text-muted text-lg font-light">
           まだ写真がありません
         </p>
       </div>
@@ -31,6 +31,7 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
         <ImageCard
           key={image.id}
           image={image}
+          index={index}
           onClick={handleImageClick(index)}
         />
       ))}

@@ -20,7 +20,8 @@ export default function LineShareButton() {
       className="
         flex items-center gap-2 px-3 py-2 rounded-lg
         bg-[#06C755] text-white hover:bg-[#05b34c]
-        transition-colors duration-200 text-sm font-medium cursor-pointer
+        transition-all duration-200 text-sm font-medium cursor-pointer
+        hover:-translate-y-[1px] hover:shadow-[0_4px_12px_rgba(6,199,85,0.3)]
       "
       aria-label="LINEで共有"
     >
