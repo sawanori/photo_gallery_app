@@ -6,6 +6,7 @@ import { UploadOutlined, ArrowLeftOutlined, InboxOutlined } from '@ant-design/ic
 import { useRouter, useParams } from 'next/navigation';
 import { uploadImage } from '@/services/imageService';
 import { useAuth } from '@/contexts/AuthContext';
+import { compressImage } from '@/utils/imageCompression';
 import type { UploadFile } from 'antd';
 
 const { Dragger } = Upload;
@@ -45,8 +46,9 @@ export default function ProjectImageUploadPage() {
 
       for (const file of files) {
         try {
+          const compressed = await compressImage(file);
           const title = file.name.replace(/\.[^/.]+$/, '');
-          await uploadImage(projectId, user.uid, file, title);
+          await uploadImage(projectId, user.uid, compressed, title);
           successCount++;
         } catch (error) {
           console.error(`Failed to upload ${file.name}:`, error);
