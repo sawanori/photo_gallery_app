@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "photo-gallery-app-20251204"
-  }
+  },
+  "targets": {
+    "photo-gallery-app-20251204": {
+      "storage": {
+        "rules": [
+          "photo-gallery-app-20251204.firebasestorage.app"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

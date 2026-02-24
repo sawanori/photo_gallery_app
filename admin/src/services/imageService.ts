@@ -16,6 +16,8 @@ import {
   DocumentSnapshot,
   QueryDocumentSnapshot,
   getCountFromServer,
+  arrayRemove,
+  arrayUnion,
 } from 'firebase/firestore';
 import {
   ref,
@@ -24,6 +26,10 @@ import {
   deleteObject,
 } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
+import {
+  getInvitationsByProject,
+  getActiveInvitationsByProject,
+} from './invitationService';
 
 export interface Image {
   id: string;
@@ -67,6 +73,59 @@ const docToImage = (docSnap: DocumentSnapshot): Image | null => {
     createdAt: data.createdAt?.toDate(),
     updatedAt: data.updatedAt?.toDate(),
   };
+};
+
+const INVITATIONS_COLLECTION = 'invitations';
+
+/**
+ * 削除された画像IDを全招待から除去（アトミック操作）
+ * arrayRemoveは対象値が存在しない場合no-opのため、フィルタ不要
+ */
+const syncInvitationsOnImageDelete = async (
+  projectId: string,
+  deletedImageId: string
+): Promise<void> => {
+  try {
+    const invitations = await getInvitationsByProject(projectId);
+    await Promise.all(
+      invitations.map((inv) =>
+        updateDoc(doc(db, INVITATIONS_COLLECTION, inv.id), {
+          imageIds: arrayRemove(deletedImageId),
+          updatedAt: serverTimestamp(),
+        }).catch((error) =>
+          console.warn(`Failed to sync invitation ${inv.id} on delete:`, error)
+        )
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to sync invitations on image delete:', error);
+  }
+};
+
+/**
+ * 新画像IDをアクティブ招待に追加（アトミック操作）
+ * arrayUnionは重複追加を防ぐ
+ */
+const syncInvitationsOnImageUpload = async (
+  projectId: string,
+  newImageId: string
+): Promise<void> => {
+  try {
+    const activeInvitations = await getActiveInvitationsByProject(projectId);
+    if (activeInvitations.length === 0) return;
+    await Promise.all(
+      activeInvitations.map((inv) =>
+        updateDoc(doc(db, INVITATIONS_COLLECTION, inv.id), {
+          imageIds: arrayUnion(newImageId),
+          updatedAt: serverTimestamp(),
+        }).catch((error) =>
+          console.warn(`Failed to sync invitation ${inv.id} on upload:`, error)
+        )
+      )
+    );
+  } catch (error) {
+    console.warn('Failed to sync invitations on image upload:', error);
+  }
 };
 
 // Get total count of images
@@ -149,8 +208,9 @@ export const uploadImage = async (
   const storagePath = `images/${userId}/${filename}`;
   const storageRef = ref(storage, storagePath);
 
-  // Upload file to Storage
-  await uploadBytes(storageRef, file);
+  // Upload file to Storage with explicit content type
+  const metadata = { contentType: file.type || 'image/jpeg' };
+  await uploadBytes(storageRef, file, metadata);
   const url = await getDownloadURL(storageRef);
 
   // Create document in Firestore with transaction to update project imageCount
@@ -182,7 +242,12 @@ export const uploadImage = async (
   });
 
   const newDoc = await getDoc(imageDocRef);
-  return docToImage(newDoc) as Image;
+  const newImage = docToImage(newDoc) as Image;
+
+  // トランザクション成功後にベストエフォートで招待同期
+  await syncInvitationsOnImageUpload(projectId, newImage.id);
+
+  return newImage;
 };
 
 // Update image
@@ -200,6 +265,7 @@ export const updateImage = async (
 // Delete image with transaction for imageCount sync
 export const deleteImage = async (imageId: string): Promise<void> => {
   const imageDocRef = doc(db, IMAGES_COLLECTION, imageId);
+  let projectId: string | undefined;
 
   // Use transaction to atomically delete image and update project count
   await runTransaction(db, async (transaction) => {
@@ -210,7 +276,7 @@ export const deleteImage = async (imageId: string): Promise<void> => {
 
     const imageData = imageSnap.data();
     const storagePath = imageData?.storagePath;
-    const projectId = imageData?.projectId;
+    projectId = imageData?.projectId;
 
     // Delete from Storage (best-effort)
     if (storagePath) {
@@ -248,6 +314,11 @@ export const deleteImage = async (imageId: string): Promise<void> => {
       });
     }
   });
+
+  // トランザクション成功後にベストエフォートで招待同期
+  if (projectId) {
+    await syncInvitationsOnImageDelete(projectId, imageId);
+  }
 };
 
 // Delete multiple images

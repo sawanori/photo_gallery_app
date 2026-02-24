@@ -129,6 +129,9 @@ export default function ProjectDetailPage() {
           message.success('画像を削除しました');
           const updatedImages = images.filter((i) => i.id !== img.id);
           setImages(updatedImages);
+          // サービス層で招待のimageIdsは更新済み、UIに反映
+          const updatedInvitations = await getInvitationsByProject(projectId);
+          setInvitations(updatedInvitations);
         } catch (error) {
           console.error('Failed to delete image:', error);
           message.error('画像の削除に失敗しました');

@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mockFirestore, mockStorage, mockTransaction } from '../../test/mocks/firebase';
-import { createMockDocSnapshot, createMockQuerySnapshot, sampleImage } from '../../test/fixtures';
+import { createMockDocSnapshot, createMockQuerySnapshot, sampleImage, sampleInvitation } from '../../test/fixtures';
+
+// --- invitationService モック ---
+const mockGetInvitationsByProject = vi.fn();
+const mockGetActiveInvitationsByProject = vi.fn();
+
+vi.mock('../invitationService', () => ({
+  getInvitationsByProject: (...args: unknown[]) => mockGetInvitationsByProject(...args),
+  getActiveInvitationsByProject: (...args: unknown[]) => mockGetActiveInvitationsByProject(...args),
+}));
 
 // --- Firebase モック ---
 vi.mock('firebase/firestore', () => ({
@@ -19,6 +28,8 @@ vi.mock('firebase/firestore', () => ({
   serverTimestamp: () => mockFirestore.serverTimestamp(),
   increment: (n: number) => mockFirestore.increment(n),
   getCountFromServer: (...args: unknown[]) => mockFirestore.getCountFromServer(...args),
+  arrayRemove: (...args: unknown[]) => mockFirestore.arrayRemove(...args),
+  arrayUnion: (...args: unknown[]) => mockFirestore.arrayUnion(...args),
   Timestamp: mockFirestore.Timestamp,
   runTransaction: (...args: unknown[]) => mockFirestore.runTransaction(...args),
   DocumentSnapshot: vi.fn(),
@@ -42,6 +53,8 @@ let imageService: typeof import('../imageService');
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mockGetInvitationsByProject.mockResolvedValue([]);
+  mockGetActiveInvitationsByProject.mockResolvedValue([]);
   imageService = await import('../imageService');
 });
 
@@ -286,6 +299,212 @@ describe('imageService（projectId対応）', () => {
       await imageService.deleteImage('image-1');
 
       expect(mockTransaction.delete).toHaveBeenCalled();
+    });
+  });
+
+  // --- 招待同期 ---
+  describe('招待同期（画像削除時）', () => {
+    it('削除した画像IDが関連する招待からarrayRemoveで除去される', async () => {
+      const imageDoc = createMockDocSnapshot('image-1', {
+        ...sampleImage,
+        projectId: 'project-1',
+        storagePath: 'images/admin-uid/12345-abc',
+      });
+
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValueOnce(imageDoc);
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+
+      mockGetInvitationsByProject.mockResolvedValue([
+        { ...sampleInvitation, id: 'inv-1' },
+        { ...sampleInvitation, id: 'inv-2' },
+      ]);
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockGetInvitationsByProject).toHaveBeenCalledWith('project-1');
+      expect(mockFirestore.updateDoc).toHaveBeenCalledTimes(2);
+      expect(mockFirestore.arrayRemove).toHaveBeenCalledWith('image-1');
+    });
+
+    it('招待同期失敗でもdeleteImage自体は成功する', async () => {
+      const imageDoc = createMockDocSnapshot('image-1', {
+        ...sampleImage,
+        projectId: 'project-1',
+        storagePath: 'images/admin-uid/12345-abc',
+      });
+
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValueOnce(imageDoc);
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+
+      mockGetInvitationsByProject.mockRejectedValue(new Error('Firestore error'));
+
+      // Should not throw
+      await imageService.deleteImage('image-1');
+      expect(mockTransaction.delete).toHaveBeenCalled();
+    });
+
+    it('projectIdがない画像の削除時は同期をスキップする', async () => {
+      const imageDoc = createMockDocSnapshot('image-1', {
+        ...sampleImage,
+        projectId: undefined,
+        storagePath: 'images/admin-uid/12345-abc',
+      });
+
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValueOnce(imageDoc);
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockGetInvitationsByProject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('招待同期（画像アップロード時）', () => {
+    it('アップロード後にアクティブな招待にarrayUnionで画像IDが追加される', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.uploadBytes.mockResolvedValue({});
+      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
+      mockFirestore.collection.mockReturnValue('images-collection');
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValue(
+        createMockDocSnapshot('project-1', { imageCount: 5 })
+      );
+      mockFirestore.getDoc.mockResolvedValue(
+        createMockDocSnapshot('new-image-id', {
+          projectId: 'project-1',
+          url: 'https://example.com/image.jpg',
+          storagePath: 'images/admin-uid/x',
+          title: 'テスト',
+          userId: 'admin-uid',
+          likeCount: 0,
+        })
+      );
+
+      mockGetActiveInvitationsByProject.mockResolvedValue([
+        { ...sampleInvitation, id: 'inv-1' },
+      ]);
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
+
+      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+
+      expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
+      expect(mockFirestore.updateDoc).toHaveBeenCalled();
+      expect(mockFirestore.arrayUnion).toHaveBeenCalledWith('new-image-id');
+    });
+
+    it('アクティブな招待がない場合はupdateDocが呼ばれない', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.uploadBytes.mockResolvedValue({});
+      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
+      mockFirestore.collection.mockReturnValue('images-collection');
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValue(
+        createMockDocSnapshot('project-1', { imageCount: 5 })
+      );
+      mockFirestore.getDoc.mockResolvedValue(
+        createMockDocSnapshot('new-image-id', {
+          projectId: 'project-1',
+          url: 'https://example.com/image.jpg',
+          storagePath: 'images/admin-uid/x',
+          title: 'テスト',
+          userId: 'admin-uid',
+          likeCount: 0,
+        })
+      );
+
+      mockGetActiveInvitationsByProject.mockResolvedValue([]);
+
+      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+
+      expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
+      expect(mockFirestore.updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('招待同期失敗でもuploadImage自体は成功する', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.uploadBytes.mockResolvedValue({});
+      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
+      mockFirestore.collection.mockReturnValue('images-collection');
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValue(
+        createMockDocSnapshot('project-1', { imageCount: 5 })
+      );
+      mockFirestore.getDoc.mockResolvedValue(
+        createMockDocSnapshot('new-image-id', {
+          projectId: 'project-1',
+          url: 'https://example.com/image.jpg',
+          storagePath: 'images/admin-uid/x',
+          title: 'テスト',
+          userId: 'admin-uid',
+          likeCount: 0,
+        })
+      );
+
+      mockGetActiveInvitationsByProject.mockRejectedValue(new Error('Firestore error'));
+
+      const result = await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+      expect(result).toBeDefined();
+      expect(result.id).toBe('new-image-id');
+    });
+  });
+
+  describe('招待同期（アクティブ/非アクティブ区別）', () => {
+    it('アップロード時はgetActiveInvitationsByProject、削除時はgetInvitationsByProjectが呼ばれる', async () => {
+      // Upload
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.uploadBytes.mockResolvedValue({});
+      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
+      mockFirestore.collection.mockReturnValue('images-collection');
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValue(
+        createMockDocSnapshot('project-1', { imageCount: 5 })
+      );
+      mockFirestore.getDoc.mockResolvedValue(
+        createMockDocSnapshot('new-image-id', {
+          projectId: 'project-1',
+          url: 'https://example.com/image.jpg',
+          storagePath: 'images/admin-uid/x',
+          title: 'テスト',
+          userId: 'admin-uid',
+          likeCount: 0,
+        })
+      );
+
+      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+
+      expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
+      expect(mockGetInvitationsByProject).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      mockGetInvitationsByProject.mockResolvedValue([]);
+      mockGetActiveInvitationsByProject.mockResolvedValue([]);
+
+      // Delete
+      const imageDoc = createMockDocSnapshot('image-1', {
+        ...sampleImage,
+        projectId: 'project-1',
+        storagePath: 'images/admin-uid/12345-abc',
+      });
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockTransaction.get.mockResolvedValueOnce(imageDoc);
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockGetInvitationsByProject).toHaveBeenCalledWith('project-1');
+      expect(mockGetActiveInvitationsByProject).not.toHaveBeenCalled();
     });
   });
 
