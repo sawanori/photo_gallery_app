@@ -69,6 +69,9 @@ export default function WelcomeGuide() {
         <p className="text-xs text-muted mt-4 leading-relaxed">
           ※ スマートフォンは機種・ブラウザにより保存方法が異なります。PC からのダウンロードを推奨します。
         </p>
+        <p className="text-xs text-muted mt-2 leading-relaxed">
+          ※ 推奨ブラウザ: Google Chrome。Safari では表示が不安定になる場合があります。
+        </p>
 
         <button
           onClick={handleDismiss}
