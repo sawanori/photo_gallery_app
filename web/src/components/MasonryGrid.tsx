@@ -26,7 +26,7 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
   }
 
   return (
-    <div className="columns-2 md:columns-3 lg:columns-4 gap-4 [content-visibility:auto]">
+    <div className="columns-2 md:columns-3 lg:columns-4 gap-4">
       {images.map((image, index) => (
         <ImageCard
           key={image.id}
