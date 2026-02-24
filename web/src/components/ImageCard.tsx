@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useState, useCallback } from 'react';
+import { memo, useState, useCallback} from 'react';
 import Image from 'next/image';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
@@ -15,13 +15,7 @@ interface ImageCardProps {
 const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Callback ref: catches images already loaded from browser cache
-  // (onLoad may fire before React attaches the event handler)
-  const imgRef = useCallback((img: HTMLImageElement | null) => {
-    if (img?.complete && img.naturalWidth > 0) {
-      setIsLoaded(true);
-    }
-  }, []);
+  const handleLoaded = useCallback(() => setIsLoaded(true), []);
 
   return (
     <div
@@ -34,9 +28,12 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
       "
       onClick={onClick}
     >
-      <div className="bg-surface">
+      <div className="bg-surface relative">
+        {/* Background shimmer visible until image loads */}
+        {!isLoaded && (
+          <div className="absolute inset-0 animate-shimmer rounded-lg" />
+        )}
         <Image
-          ref={imgRef}
           src={image.url}
           alt={image.title || ''}
           width={600}
@@ -44,19 +41,11 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
           sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
           quality={70}
           priority={index < 8}
-          className={`
-            w-full h-auto object-cover transition-opacity duration-500
-            ${isLoaded ? 'opacity-100' : 'opacity-0'}
-          `}
-          onLoad={() => setIsLoaded(true)}
-          onError={() => setIsLoaded(true)}
+          className="w-full h-auto object-cover"
+          onLoad={handleLoaded}
+          onError={handleLoaded}
         />
       </div>
-
-      {/* Skeleton placeholder */}
-      {!isLoaded && (
-        <div className="absolute inset-0 animate-shimmer rounded-lg" />
-      )}
 
       {/* Hover overlay */}
       <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
