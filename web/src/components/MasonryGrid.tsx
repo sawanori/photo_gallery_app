@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ImageCard from './ImageCard';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
 
@@ -9,23 +9,33 @@ interface MasonryGridProps {
   onImageClick: (index: number) => void;
 }
 
-function useColumns(count: number) {
-  // This hook is only for the distribution logic; actual responsive
-  // column count is handled by CSS grid on the container.
-  return count;
+function useColumnCount() {
+  const [colCount, setColCount] = useState(4);
+
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      if (w >= 1024) setColCount(4);       // lg
+      else if (w >= 768) setColCount(3);   // md
+      else setColCount(2);                 // sm
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  return colCount;
 }
 
 export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) {
+  const colCount = useColumnCount();
+
   const handleImageClick = useCallback(
     (index: number) => () => onImageClick(index),
     [onImageClick]
   );
 
-  // Distribute images into columns (round-robin) to maintain order
-  // while keeping column heights roughly balanced.
-  // We create 4 columns max; CSS hides extra columns on smaller screens.
   const columns = useMemo(() => {
-    const colCount = 4;
     const cols: { image: ImageWithLikeStatus; originalIndex: number }[][] = Array.from(
       { length: colCount },
       () => []
@@ -34,7 +44,7 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
       cols[index % colCount].push({ image, originalIndex: index });
     });
     return cols;
-  }, [images]);
+  }, [images, colCount]);
 
   if (images.length === 0) {
     return (
@@ -49,7 +59,7 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
       {columns.map((col, colIndex) => (
-        <div key={colIndex} className={colIndex >= 2 ? (colIndex >= 3 ? 'hidden lg:block' : 'hidden md:block') : ''}>
+        <div key={colIndex}>
           {col.map(({ image, originalIndex }) => (
             <ImageCard
               key={image.id}
