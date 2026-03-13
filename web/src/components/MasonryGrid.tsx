@@ -10,18 +10,29 @@ interface MasonryGridProps {
 }
 
 function useColumnCount() {
-  const [colCount, setColCount] = useState(4);
+  const [colCount, setColCount] = useState(
+    typeof window !== 'undefined'
+      ? window.innerWidth >= 1024 ? 4 : window.innerWidth >= 768 ? 3 : 2
+      : 2
+  );
 
   useEffect(() => {
+    const lg = window.matchMedia('(min-width: 1024px)');
+    const md = window.matchMedia('(min-width: 768px)');
+
     const update = () => {
-      const w = window.innerWidth;
-      if (w >= 1024) setColCount(4);       // lg
-      else if (w >= 768) setColCount(3);   // md
-      else setColCount(2);                 // sm
+      if (lg.matches) setColCount(4);
+      else if (md.matches) setColCount(3);
+      else setColCount(2);
     };
     update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+
+    lg.addEventListener('change', update);
+    md.addEventListener('change', update);
+    return () => {
+      lg.removeEventListener('change', update);
+      md.removeEventListener('change', update);
+    };
   }, []);
 
   return colCount;
@@ -29,11 +40,6 @@ function useColumnCount() {
 
 export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) {
   const colCount = useColumnCount();
-
-  const handleImageClick = useCallback(
-    (index: number) => () => onImageClick(index),
-    [onImageClick]
-  );
 
   const columns = useMemo(() => {
     const cols: { image: ImageWithLikeStatus; originalIndex: number }[][] = Array.from(
@@ -65,7 +71,7 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
               key={image.id}
               image={image}
               index={originalIndex}
-              onClick={handleImageClick(originalIndex)}
+              onImageClick={onImageClick}
             />
           ))}
         </div>

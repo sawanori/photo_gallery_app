@@ -7,6 +7,7 @@ const ALLOWED_HOSTS = [
   'photo-gallery-app-20251204.firebasestorage.app',
 ];
 const CACHE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+const MAX_INPUT_SIZE = 20 * 1024 * 1024; // 20MB
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -18,9 +19,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing url parameter' }, { status: 400 });
   }
 
-  // Validate host
+  // Validate URL: protocol + host
   try {
     const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      return NextResponse.json({ error: 'Only HTTPS URLs allowed' }, { status: 400 });
+    }
     if (!ALLOWED_HOSTS.includes(parsed.hostname)) {
       return NextResponse.json({ error: 'Host not allowed' }, { status: 403 });
     }
@@ -35,7 +39,7 @@ export async function GET(request: NextRequest) {
   const quality = Math.min(Math.max(q, 1), 100);
 
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { redirect: 'error' });
     if (!response.ok) {
       return NextResponse.json(
         { error: `Upstream ${response.status}` },
@@ -43,9 +47,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
+    // Validate upstream Content-Type
+    const upstreamType = response.headers.get('content-type') || '';
+    if (!upstreamType.startsWith('image/')) {
+      return NextResponse.json({ error: 'Not an image' }, { status: 400 });
+    }
 
-    // Check if input supports WebP output
+    // Check Content-Length before reading body
+    const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+    if (contentLength > MAX_INPUT_SIZE) {
+      return NextResponse.json({ error: 'Image too large' }, { status: 413 });
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_INPUT_SIZE) {
+      return NextResponse.json({ error: 'Image too large' }, { status: 413 });
+    }
+
+    // Determine output format from Accept header
     const accept = request.headers.get('accept') || '';
     const supportsWebp = accept.includes('image/webp');
     const supportsAvif = accept.includes('image/avif');
@@ -55,25 +74,25 @@ export async function GET(request: NextRequest) {
       fit: 'inside',
     });
 
-    let contentType: string;
+    let outputType: string;
 
     if (supportsAvif) {
-      pipeline = pipeline.avif({ quality });
-      contentType = 'image/avif';
+      pipeline = pipeline.avif({ quality, effort: 0 });
+      outputType = 'image/avif';
     } else if (supportsWebp) {
       pipeline = pipeline.webp({ quality });
-      contentType = 'image/webp';
+      outputType = 'image/webp';
     } else {
       pipeline = pipeline.jpeg({ quality, mozjpeg: true });
-      contentType = 'image/jpeg';
+      outputType = 'image/jpeg';
     }
 
     const optimized = await pipeline.toBuffer();
 
-    return new Response(optimized as unknown as BodyInit, {
+    return new Response(new Uint8Array(optimized), {
       headers: {
-        'Content-Type': contentType,
-        'Cache-Control': `public, max-age=${CACHE_MAX_AGE}, immutable`,
+        'Content-Type': outputType,
+        'Cache-Control': `public, max-age=${CACHE_MAX_AGE}`,
         'Vary': 'Accept',
       },
     });

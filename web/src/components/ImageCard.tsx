@@ -9,24 +9,29 @@ import { optimizedImageUrl } from '@/utils/optimizedImage';
 interface ImageCardProps {
   image: ImageWithLikeStatus;
   index: number;
-  onClick: () => void;
+  onImageClick: (index: number) => void;
 }
 
-const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardProps) {
+const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
 
   const handleLoaded = useCallback(() => setIsLoaded(true), []);
+  const handleClick = useCallback(() => onImageClick(index), [onImageClick, index]);
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } }}
       className="
         break-inside-avoid mb-4 group cursor-pointer relative
         rounded-lg overflow-hidden
         border border-border/60 shadow-[0_1px_3px_rgba(0,0,0,0.04)]
         transition-shadow duration-500
         hover:shadow-[0_8px_30px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.04)]
+        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none
       "
-      onClick={onClick}
+      onClick={handleClick}
     >
       <div className="bg-surface relative">
         {/* Background shimmer visible until image loads */}
