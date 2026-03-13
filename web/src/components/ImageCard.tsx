@@ -1,7 +1,6 @@
 'use client';
 
-import { memo, useState, useCallback} from 'react';
-import Image from 'next/image';
+import { memo, useState, useCallback } from 'react';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
@@ -33,14 +32,11 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
         {!isLoaded && (
           <div className="absolute inset-0 animate-shimmer rounded-lg" />
         )}
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={image.url}
           alt={image.title || ''}
-          width={600}
-          height={400}
-          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-          quality={70}
-          priority={index < 8}
+          loading={index < 8 ? 'eager' : 'lazy'}
           className="w-full h-auto object-cover"
           onLoad={handleLoaded}
           onError={handleLoaded}
