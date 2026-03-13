@@ -6,6 +6,7 @@ import DownloadButton from './DownloadButton';
 import ShareButton from './ShareButton';
 import LineImageShareButton from './LineImageShareButton';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
+import { optimizedImageUrl } from '@/utils/optimizedImage';
 
 interface ImageLightboxProps {
   images: ImageWithLikeStatus[];
@@ -30,13 +31,13 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
     setIsLoading(false);
   };
 
-  // Preload adjacent images
+  // Preload adjacent images (optimized size)
   useEffect(() => {
     const preloadIndexes = [currentIndex + 1, currentIndex - 1, currentIndex + 2];
     preloadIndexes.forEach((i) => {
       if (i >= 0 && i < images.length) {
         const img = new window.Image();
-        img.src = images[i].url;
+        img.src = optimizedImageUrl(images[i].url, 1920, 80);
       }
     });
   }, [currentIndex, images]);
@@ -116,7 +117,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           key={image.url}
-          src={image.url}
+          src={optimizedImageUrl(image.url, 1920, 80)}
           alt={image.title || ''}
           className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
           onLoad={handleImageLoad}

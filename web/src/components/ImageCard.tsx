@@ -4,6 +4,7 @@ import { memo, useState, useCallback } from 'react';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
+import { optimizedImageUrl } from '@/utils/optimizedImage';
 
 interface ImageCardProps {
   image: ImageWithLikeStatus;
@@ -34,7 +35,7 @@ const ImageCard = memo(function ImageCard({ image, index, onClick }: ImageCardPr
         )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={image.url}
+          src={optimizedImageUrl(image.url, 640, 70)}
           alt={image.title || ''}
           loading={index < 8 ? 'eager' : 'lazy'}
           className="w-full h-auto object-cover"
