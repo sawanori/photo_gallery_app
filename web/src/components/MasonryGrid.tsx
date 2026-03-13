@@ -1,8 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ImageCard from './ImageCard';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
+
+const EAGER_COUNT = 8;
 
 interface MasonryGridProps {
   images: ImageWithLikeStatus[];
@@ -40,6 +42,26 @@ function useColumnCount() {
 
 export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) {
   const colCount = useColumnCount();
+  const [isReady, setIsReady] = useState(false);
+  const loadedCount = useRef(0);
+  const prevImageCount = useRef(0);
+
+  // Reset when images change significantly (new gallery load)
+  useEffect(() => {
+    if (images.length !== prevImageCount.current) {
+      loadedCount.current = 0;
+      setIsReady(false);
+      prevImageCount.current = images.length;
+    }
+  }, [images.length]);
+
+  const handleImageLoad = useCallback(() => {
+    loadedCount.current += 1;
+    const target = Math.min(EAGER_COUNT, prevImageCount.current);
+    if (target > 0 && loadedCount.current >= target) {
+      setIsReady(true);
+    }
+  }, []);
 
   const columns = useMemo(() => {
     const cols: { image: ImageWithLikeStatus; originalIndex: number }[][] = Array.from(
@@ -63,19 +85,46 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
   }
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-      {columns.map((col, colIndex) => (
-        <div key={colIndex}>
-          {col.map(({ image, originalIndex }) => (
-            <ImageCard
-              key={image.id}
-              image={image}
-              index={originalIndex}
-              onImageClick={onImageClick}
-            />
+    <div className="relative">
+      {/* Skeleton overlay */}
+      <div
+        className={`absolute inset-0 z-10 transition-opacity duration-500 ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {Array.from({ length: colCount }).map((_, colIdx) => (
+            <div key={colIdx} className="flex flex-col gap-4">
+              {Array.from({ length: 3 }).map((_, rowIdx) => (
+                <div
+                  key={rowIdx}
+                  className="rounded-lg animate-shimmer"
+                  style={{ height: `${180 + ((colIdx + rowIdx) % 3) * 80}px` }}
+                />
+              ))}
+            </div>
           ))}
         </div>
-      ))}
+      </div>
+
+      {/* Real grid (hidden until ready) */}
+      <div
+        className={`transition-opacity duration-500 ${isReady ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          {columns.map((col, colIndex) => (
+            <div key={colIndex}>
+              {col.map(({ image, originalIndex }) => (
+                <ImageCard
+                  key={image.id}
+                  image={image}
+                  index={originalIndex}
+                  onImageClick={onImageClick}
+                  onImageLoad={handleImageLoad}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

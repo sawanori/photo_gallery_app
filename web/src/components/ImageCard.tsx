@@ -10,12 +10,16 @@ interface ImageCardProps {
   image: ImageWithLikeStatus;
   index: number;
   onImageClick: (index: number) => void;
+  onImageLoad?: () => void;
 }
 
-const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageCardProps) {
+const ImageCard = memo(function ImageCard({ image, index, onImageClick, onImageLoad }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
 
-  const handleLoaded = useCallback(() => setIsLoaded(true), []);
+  const handleLoaded = useCallback(() => {
+    setIsLoaded(true);
+    onImageLoad?.();
+  }, [onImageLoad]);
   const handleClick = useCallback(() => onImageClick(index), [onImageClick, index]);
 
   return (
