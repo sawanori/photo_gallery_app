@@ -86,28 +86,20 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
 
   return (
     <div className="relative">
-      {/* Skeleton overlay */}
-      <div
-        className={`absolute inset-0 z-10 transition-opacity duration-500 ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-      >
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {Array.from({ length: colCount }).map((_, colIdx) => (
-            <div key={colIdx} className="flex flex-col gap-4">
-              {Array.from({ length: 3 }).map((_, rowIdx) => (
-                <div
-                  key={rowIdx}
-                  className="rounded-lg animate-shimmer"
-                  style={{ height: `${180 + ((colIdx + rowIdx) % 3) * 80}px` }}
-                />
-              ))}
-            </div>
-          ))}
+      {/* Loading overlay */}
+      {!isReady && (
+        <div className="flex flex-col items-center justify-center py-32 gap-4">
+          <div className="relative w-12 h-12">
+            <div className="absolute inset-0 rounded-full border-2 border-border/30" />
+            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-ink/60 animate-spin" />
+          </div>
+          <p className="text-muted text-sm font-light tracking-wide">写真を読み込んでいます</p>
         </div>
-      </div>
+      )}
 
-      {/* Real grid (hidden until ready) */}
+      {/* Real grid (hidden until ready, then fade in) */}
       <div
-        className={`transition-opacity duration-500 ${isReady ? 'opacity-100' : 'opacity-0'}`}
+        className={`transition-opacity duration-700 ease-out ${isReady ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}
       >
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {columns.map((col, colIndex) => (
