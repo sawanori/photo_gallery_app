@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ImageCard from './ImageCard';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
 
-const EAGER_COUNT = 8;
+const EAGER_COUNT = 4;
 
 interface MasonryGridProps {
   images: ImageWithLikeStatus[];

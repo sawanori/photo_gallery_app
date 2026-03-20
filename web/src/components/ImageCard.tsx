@@ -44,9 +44,12 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick, onImageL
         )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
+          srcSet={`${optimizedImageUrl(image.url, 384, 70)} 384w, ${optimizedImageUrl(image.url, 640, 70)} 640w`}
+          sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
           src={optimizedImageUrl(image.url, 640, 70)}
           alt={image.title || ''}
-          loading={index < 8 ? 'eager' : 'lazy'}
+          loading={index < 4 ? 'eager' : 'lazy'}
+          fetchPriority={index < 4 ? 'high' : 'auto'}
           className="w-full h-auto object-cover"
           onLoad={handleLoaded}
           onError={handleLoaded}

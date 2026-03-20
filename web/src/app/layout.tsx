@@ -14,6 +14,10 @@ export default function RootLayout({
   return (
     <html lang="ja">
       <head>
+        <link rel="preconnect" href="https://firebasestorage.googleapis.com" />
+        <link rel="dns-prefetch" href="https://firebasestorage.googleapis.com" />
+        <link rel="preconnect" href="https://photo-gallery-app-20251204.firebasestorage.app" />
+        <link rel="dns-prefetch" href="https://photo-gallery-app-20251204.firebasestorage.app" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
