@@ -6,20 +6,24 @@ import DownloadButton from './DownloadButton';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
 import { optimizedImageUrl } from '@/utils/optimizedImage';
 
+function thumbnailSrc(image: ImageWithLikeStatus, width: 384 | 640): string {
+  if (width === 384 && image.thumbnails?.small) return image.thumbnails.small;
+  if (width === 640 && image.thumbnails?.medium) return image.thumbnails.medium;
+  return optimizedImageUrl(image.url, width, 70);
+}
+
 interface ImageCardProps {
   image: ImageWithLikeStatus;
   index: number;
   onImageClick: (index: number) => void;
-  onImageLoad?: () => void;
 }
 
-const ImageCard = memo(function ImageCard({ image, index, onImageClick, onImageLoad }: ImageCardProps) {
+const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageCardProps) {
   const [isLoaded, setIsLoaded] = useState(false);
 
   const handleLoaded = useCallback(() => {
     setIsLoaded(true);
-    onImageLoad?.();
-  }, [onImageLoad]);
+  }, []);
   const handleClick = useCallback(() => onImageClick(index), [onImageClick, index]);
 
   return (
@@ -44,9 +48,9 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick, onImageL
         )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          srcSet={`${optimizedImageUrl(image.url, 384, 70)} 384w, ${optimizedImageUrl(image.url, 640, 70)} 640w`}
+          srcSet={`${thumbnailSrc(image, 384)} 384w, ${thumbnailSrc(image, 640)} 640w`}
           sizes="(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw"
-          src={optimizedImageUrl(image.url, 640, 70)}
+          src={thumbnailSrc(image, 640)}
           alt={image.title || ''}
           loading={index < 4 ? 'eager' : 'lazy'}
           fetchPriority={index < 4 ? 'high' : 'auto'}

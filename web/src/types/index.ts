@@ -8,6 +8,10 @@ export interface Image {
   description?: string;
   userId: string;
   likeCount: number;
+  thumbnails?: {
+    small: string;
+    medium: string;
+  };
   createdAt: Date;
   updatedAt: Date;
 }

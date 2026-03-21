@@ -1,7 +1,10 @@
 'use client';
 
-import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback, useRef } from 'react';
 import { Image, Invitation } from '@/types';
+import { getImagesByIdsOrdered } from '@/services/imageService';
+
+const PAGE_SIZE = 20;
 
 interface GalleryContextValue {
   invitation: Invitation | null;
@@ -12,6 +15,12 @@ interface GalleryContextValue {
   setLikedIds: (ids: Set<string>) => void;
   toggleLikedId: (imageId: string) => void;
   updateImageLikeCount: (imageId: string, delta: number) => void;
+  // Pagination
+  allImageIds: string[];
+  setAllImageIds: (ids: string[]) => void;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => void;
 }
 
 const GalleryContext = createContext<GalleryContextValue | undefined>(undefined);
@@ -20,6 +29,11 @@ export function GalleryProvider({ children }: { children: ReactNode }) {
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [images, setImages] = useState<Image[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [allImageIds, setAllImageIds] = useState<string[]>([]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loadingRef = useRef(false);
+
+  const hasMore = images.length < allImageIds.length;
 
   const toggleLikedId = useCallback((imageId: string) => {
     setLikedIds((prev) => {
@@ -43,6 +57,34 @@ export function GalleryProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const loadMore = useCallback(() => {
+    if (loadingRef.current) return;
+
+    setAllImageIds((currentAllIds) => {
+      setImages((currentImages) => {
+        const offset = currentImages.length;
+        if (offset >= currentAllIds.length) return currentImages;
+
+        loadingRef.current = true;
+        setIsLoadingMore(true);
+
+        const nextBatch = currentAllIds.slice(offset, offset + PAGE_SIZE);
+        getImagesByIdsOrdered(nextBatch).then((newImages) => {
+          setImages((prev) => [...prev, ...newImages]);
+          loadingRef.current = false;
+          setIsLoadingMore(false);
+        }).catch((err) => {
+          console.error('Failed to load more images:', err);
+          loadingRef.current = false;
+          setIsLoadingMore(false);
+        });
+
+        return currentImages;
+      });
+      return currentAllIds;
+    });
+  }, []);
+
   return (
     <GalleryContext.Provider
       value={{
@@ -54,6 +96,11 @@ export function GalleryProvider({ children }: { children: ReactNode }) {
         setLikedIds,
         toggleLikedId,
         updateImageLikeCount,
+        allImageIds,
+        setAllImageIds,
+        hasMore,
+        isLoadingMore,
+        loadMore,
       }}
     >
       {children}

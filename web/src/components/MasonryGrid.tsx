@@ -1,14 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ImageCard from './ImageCard';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
-
-const EAGER_COUNT = 4;
 
 interface MasonryGridProps {
   images: ImageWithLikeStatus[];
   onImageClick: (index: number) => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  loadMore?: () => void;
 }
 
 function useColumnCount() {
@@ -40,28 +41,28 @@ function useColumnCount() {
   return colCount;
 }
 
-export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) {
+export default function MasonryGrid({ images, onImageClick, hasMore, isLoadingMore, loadMore }: MasonryGridProps) {
   const colCount = useColumnCount();
-  const [isReady, setIsReady] = useState(false);
-  const loadedCount = useRef(0);
-  const prevImageCount = useRef(0);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // Reset when images change significantly (new gallery load)
+  // Infinite scroll via IntersectionObserver
   useEffect(() => {
-    if (images.length !== prevImageCount.current) {
-      loadedCount.current = 0;
-      setIsReady(false);
-      prevImageCount.current = images.length;
-    }
-  }, [images.length]);
+    if (!hasMore || !loadMore) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
 
-  const handleImageLoad = useCallback(() => {
-    loadedCount.current += 1;
-    const target = Math.min(EAGER_COUNT, prevImageCount.current);
-    if (target > 0 && loadedCount.current >= target) {
-      setIsReady(true);
-    }
-  }, []);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMore();
+        }
+      },
+      { rootMargin: '600px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore]);
 
   const columns = useMemo(() => {
     const cols: { image: ImageWithLikeStatus; originalIndex: number }[][] = Array.from(
@@ -85,38 +86,31 @@ export default function MasonryGrid({ images, onImageClick }: MasonryGridProps) 
   }
 
   return (
-    <div className="relative">
-      {/* Loading overlay */}
-      {!isReady && (
-        <div className="flex flex-col items-center justify-center py-32 gap-4">
-          <div className="relative w-12 h-12">
-            <div className="absolute inset-0 rounded-full border-2 border-border/30" />
-            <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-ink/60 animate-spin" />
+    <div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        {columns.map((col, colIndex) => (
+          <div key={colIndex}>
+            {col.map(({ image, originalIndex }) => (
+              <ImageCard
+                key={image.id}
+                image={image}
+                index={originalIndex}
+                onImageClick={onImageClick}
+              />
+            ))}
           </div>
-          <p className="text-muted text-sm font-light tracking-wide">写真を読み込んでいます</p>
+        ))}
+      </div>
+
+      {/* Sentinel for infinite scroll */}
+      {hasMore && <div ref={sentinelRef} className="h-1" />}
+
+      {/* Loading spinner for more images */}
+      {isLoadingMore && (
+        <div className="flex justify-center py-8">
+          <div className="w-8 h-8 border-2 border-border/30 border-t-ink/60 rounded-full animate-spin" />
         </div>
       )}
-
-      {/* Real grid (hidden until ready, then fade in) */}
-      <div
-        className={`transition-opacity duration-700 ease-out ${isReady ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}
-      >
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {columns.map((col, colIndex) => (
-            <div key={colIndex}>
-              {col.map(({ image, originalIndex }) => (
-                <ImageCard
-                  key={image.id}
-                  image={image}
-                  index={originalIndex}
-                  onImageClick={onImageClick}
-                  onImageLoad={handleImageLoad}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }

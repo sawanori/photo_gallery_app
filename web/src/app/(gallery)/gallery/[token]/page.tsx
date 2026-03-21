@@ -23,7 +23,7 @@ interface PageProps {
 export default function GalleryPage({ params }: PageProps) {
   const { token } = use(params);
   const { isLoading, error, isValid } = useInvitation(token);
-  const { images } = useGalleryImages();
+  const { images, hasMore, isLoadingMore, loadMore, totalCount } = useGalleryImages();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   if (isLoading) {
@@ -64,6 +64,9 @@ export default function GalleryPage({ params }: PageProps) {
         <MasonryGrid
           images={images}
           onImageClick={(index) => setLightboxIndex(index)}
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          loadMore={loadMore}
         />
       </main>
 
@@ -77,6 +80,9 @@ export default function GalleryPage({ params }: PageProps) {
           currentIndex={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
           onNavigate={setLightboxIndex}
+          totalCount={totalCount}
+          hasMore={hasMore}
+          loadMore={loadMore}
         />
       )}
     </div>

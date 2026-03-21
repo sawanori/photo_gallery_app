@@ -11,7 +11,7 @@ import {
   updateInvitationAccess,
   updateSessionAccess,
 } from '@/services/invitationService';
-import { getImagesByIds } from '@/services/imageService';
+import { getImagesByIdsOrdered } from '@/services/imageService';
 import { getLikedImageIds } from '@/services/likeService';
 
 interface UseInvitationResult {
@@ -22,7 +22,7 @@ interface UseInvitationResult {
 
 export function useInvitation(token: string): UseInvitationResult {
   const { user, isLoading: authLoading, signIn } = useAuth();
-  const { setInvitation, setImages, setLikedIds } = useGallery();
+  const { setInvitation, setImages, setLikedIds, setAllImageIds } = useGallery();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isValid, setIsValid] = useState(false);
@@ -80,15 +80,17 @@ export function useInvitation(token: string): UseInvitationResult {
         // 5. Store token in localStorage for session recovery
         localStorage.setItem('gallery_token', token);
 
-        // 6 & 7. Fetch images and liked status in parallel
+        // 6 & 7. Fetch first page of images and liked status in parallel
+        const PAGE_SIZE = 20;
         const [images, likedImageIds] = await Promise.all([
-          getImagesByIds(invitation.imageIds),
+          getImagesByIdsOrdered(invitation.imageIds.slice(0, PAGE_SIZE)),
           getLikedImageIds(currentUser.uid),
         ]);
         const likedSet = new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id)));
 
         // 8. Update context
         setInvitation(invitation);
+        setAllImageIds(invitation.imageIds);
         setImages(images);
         setLikedIds(likedSet);
         setIsValid(true);
@@ -102,7 +104,7 @@ export function useInvitation(token: string): UseInvitationResult {
     };
 
     initializeGallery();
-  }, [authLoading, user, token, signIn, setInvitation, setImages, setLikedIds]);
+  }, [authLoading, user, token, signIn, setInvitation, setImages, setLikedIds, setAllImageIds]);
 
   return { isLoading: isLoading || authLoading, error, isValid };
 }

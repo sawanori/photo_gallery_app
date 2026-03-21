@@ -13,9 +13,12 @@ interface ImageLightboxProps {
   currentIndex: number;
   onClose: () => void;
   onNavigate: (index: number) => void;
+  totalCount?: number;
+  hasMore?: boolean;
+  loadMore?: () => void;
 }
 
-export default function ImageLightbox({ images, currentIndex, onClose, onNavigate }: ImageLightboxProps) {
+export default function ImageLightbox({ images, currentIndex, onClose, onNavigate, totalCount, hasMore, loadMore }: ImageLightboxProps) {
   const image = images[currentIndex];
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -61,9 +64,18 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
     };
   }, [currentIndex, images]);
 
+  // Auto-load more when approaching the end of loaded images
+  useEffect(() => {
+    if (hasMore && loadMore && currentIndex >= images.length - 3) {
+      loadMore();
+    }
+  }, [currentIndex, images.length, hasMore, loadMore]);
+
+  const maxIndex = (totalCount || images.length) - 1;
+
   const goNext = useCallback(() => {
-    if (currentIndex < images.length - 1) onNavigate(currentIndex + 1);
-  }, [currentIndex, images.length, onNavigate]);
+    if (currentIndex < maxIndex) onNavigate(currentIndex + 1);
+  }, [currentIndex, maxIndex, onNavigate]);
 
   const goPrev = useCallback(() => {
     if (currentIndex > 0) onNavigate(currentIndex - 1);
@@ -87,7 +99,26 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
     };
   }, [onClose, goNext, goPrev]);
 
-  if (!image) return null;
+  // Image not yet loaded (past the loaded range)
+  if (!image) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" role="dialog" aria-modal="true">
+        <button
+          onClick={onClose}
+          aria-label="閉じる"
+          className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/10 border border-white/20 hover:bg-white/20 flex items-center justify-center text-white transition-colors duration-200 cursor-pointer"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-6 h-6">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
+          <p className="text-white/40 text-xs font-light">読み込み中</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" role="dialog" aria-modal="true">
@@ -116,7 +147,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
       )}
 
       {/* Navigation - Next */}
-      {currentIndex < images.length - 1 && (
+      {currentIndex < maxIndex && (
         <button
           onClick={goNext}
           aria-label="次の画像"
@@ -163,7 +194,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
               <p className="text-white font-serif text-lg">{image.title}</p>
             )}
             <p className="text-white/50 text-sm font-light">
-              {currentIndex + 1} of {images.length}
+              {currentIndex + 1} of {totalCount || images.length}
             </p>
           </div>
           <div className="flex items-center gap-3">

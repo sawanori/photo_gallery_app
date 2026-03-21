@@ -5,7 +5,7 @@ import { useGallery } from '@/contexts/GalleryContext';
 import { Image } from '@/types';
 
 export function useGalleryImages() {
-  const { images, likedIds } = useGallery();
+  const { images, likedIds, hasMore, isLoadingMore, loadMore, allImageIds } = useGallery();
 
   const imagesWithLikeStatus = useMemo(() => {
     return images.map((image) => ({
@@ -14,7 +14,13 @@ export function useGalleryImages() {
     }));
   }, [images, likedIds]);
 
-  return { images: imagesWithLikeStatus };
+  return {
+    images: imagesWithLikeStatus,
+    hasMore,
+    isLoadingMore,
+    loadMore,
+    totalCount: allImageIds.length,
+  };
 }
 
 export type ImageWithLikeStatus = Image & { isLiked: boolean };

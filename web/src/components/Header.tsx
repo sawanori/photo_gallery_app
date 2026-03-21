@@ -12,7 +12,7 @@ interface HeaderProps {
 }
 
 export default function Header({ showLikedLink = true, showBackLink = false, showDownload = true }: HeaderProps) {
-  const { invitation, images, likedIds } = useGallery();
+  const { invitation, images, likedIds, allImageIds } = useGallery();
   const token = invitation?.token || '';
 
   const expiryDate = invitation?.createdAt
@@ -45,7 +45,7 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
               </h1>
               <div className="flex items-center gap-3">
                 <p className="text-xs text-muted font-light">
-                  {images.length} photos
+                  {allImageIds.length || images.length} photos
                 </p>
                 {expiryDate && (
                   <p className={`text-xs font-light ${isExpiringSoon ? 'text-accent' : 'text-muted'}`}>
