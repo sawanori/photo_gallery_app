@@ -26,6 +26,7 @@ import {
   deleteObject,
 } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
+import { generateThumbnails } from '../utils/thumbnailGenerator';
 import {
   getInvitationsByProject,
   getActiveInvitationsByProject,
@@ -40,6 +41,11 @@ export interface Image {
   description?: string;
   userId: string;
   likeCount: number;
+  thumbnails?: {
+    small: string;
+    medium: string;
+  };
+  thumbnailPaths?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,6 +76,8 @@ const docToImage = (docSnap: DocumentSnapshot): Image | null => {
     description: data.description,
     userId: data.userId,
     likeCount: data.likeCount || 0,
+    thumbnails: data.thumbnails,
+    thumbnailPaths: data.thumbnailPaths,
     createdAt: data.createdAt?.toDate(),
     updatedAt: data.updatedAt?.toDate(),
   };
@@ -208,14 +216,64 @@ export const uploadImage = async (
   const storagePath = `images/${userId}/${filename}`;
   const storageRef = ref(storage, storagePath);
 
-  // Upload file to Storage with explicit content type
+  // Generate thumbnails + upload original in parallel
   const metadata = { contentType: file.type || 'image/jpeg' };
-  await uploadBytes(storageRef, file, metadata);
-  const url = await getDownloadURL(storageRef);
+  const webpMeta = { contentType: 'image/webp' };
+
+  let thumbnailData: { small: string; medium: string } | undefined;
+  let thumbnailPaths: string[] | undefined;
+
+  const [, thumbnailResults] = await Promise.all([
+    uploadBytes(storageRef, file, metadata),
+    generateThumbnails(file).catch((err) => {
+      console.warn('Thumbnail generation failed, continuing without:', err);
+      return [];
+    }),
+  ]);
+
+  // Upload thumbnails + get original URL in parallel
+  const thumbnailUploads = thumbnailResults.map(async (thumb) => {
+    const thumbPath = `thumbnails/${userId}/${filename}_${thumb.width}.webp`;
+    const thumbRef = ref(storage, thumbPath);
+    await uploadBytes(thumbRef, thumb.blob, webpMeta);
+    const thumbUrl = await getDownloadURL(thumbRef);
+    return { name: thumb.name, url: thumbUrl, path: thumbPath };
+  });
+
+  const [url, ...thumbResults] = await Promise.all([
+    getDownloadURL(storageRef),
+    ...thumbnailUploads,
+  ]);
+
+  if (thumbResults.length > 0) {
+    thumbnailData = { small: '', medium: '' };
+    thumbnailPaths = [];
+    for (const t of thumbResults) {
+      thumbnailData[t.name] = t.url;
+      thumbnailPaths.push(t.path);
+    }
+  }
 
   // Create document in Firestore with transaction to update project imageCount
   const imageDocRef = doc(collection(db, IMAGES_COLLECTION));
   const projectDocRef = doc(db, PROJECTS_COLLECTION, projectId);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const imageData: Record<string, any> = {
+    projectId,
+    url,
+    storagePath,
+    title,
+    description: description || '',
+    userId,
+    likeCount: 0,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (thumbnailData) {
+    imageData.thumbnails = thumbnailData;
+    imageData.thumbnailPaths = thumbnailPaths;
+  }
 
   await runTransaction(db, async (transaction) => {
     const projectSnap = await transaction.get(projectDocRef);
@@ -223,17 +281,7 @@ export const uploadImage = async (
       throw new Error('Project not found');
     }
 
-    transaction.set(imageDocRef, {
-      projectId,
-      url,
-      storagePath,
-      title,
-      description: description || '',
-      userId,
-      likeCount: 0,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    transaction.set(imageDocRef, imageData);
 
     transaction.update(projectDocRef, {
       imageCount: increment(1),
@@ -277,6 +325,7 @@ export const deleteImage = async (imageId: string): Promise<void> => {
     const imageData = imageSnap.data();
     const storagePath = imageData?.storagePath;
     projectId = imageData?.projectId;
+    const thumbPaths: string[] = imageData?.thumbnailPaths || [];
 
     // Delete from Storage (best-effort)
     if (storagePath) {
@@ -285,6 +334,15 @@ export const deleteImage = async (imageId: string): Promise<void> => {
         await deleteObject(storageRef);
       } catch (error) {
         console.warn('Failed to delete file from storage:', error);
+      }
+    }
+
+    // Delete thumbnails (best-effort)
+    for (const tp of thumbPaths) {
+      try {
+        await deleteObject(ref(storage, tp));
+      } catch (error) {
+        console.warn('Failed to delete thumbnail from storage:', error);
       }
     }
 

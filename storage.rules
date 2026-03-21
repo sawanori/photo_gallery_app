@@ -26,6 +26,17 @@ service firebase.storage {
                       request.auth.uid == userId;
     }
 
+    // Thumbnails folder
+    match /thumbnails/{userId}/{thumbnailId} {
+      allow read: if true;
+      allow create: if isAuthenticated() &&
+                      request.auth.uid == userId &&
+                      isImageType() &&
+                      isValidSize();
+      allow delete: if isAuthenticated() &&
+                      request.auth.uid == userId;
+    }
+
     // User profile images
     match /profiles/{userId}/{fileName} {
       allow read: if true;

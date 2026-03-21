@@ -11,7 +11,7 @@ import {
   updateInvitationAccess,
   updateSessionAccess,
 } from '@/services/invitationService';
-import { getImagesByIdsOrdered } from '@/services/imageService';
+import { getImagesByIds } from '@/services/imageService';
 import { getLikedImageIds } from '@/services/likeService';
 
 interface UseInvitationResult {
@@ -20,9 +20,14 @@ interface UseInvitationResult {
   isValid: boolean;
 }
 
+/** Extract filename from storagePath for sorting */
+function extractSortName(storagePath: string): string {
+  return (storagePath.split('/').pop() || '').toLowerCase();
+}
+
 export function useInvitation(token: string): UseInvitationResult {
   const { user, isLoading: authLoading, signIn } = useAuth();
-  const { setInvitation, setImages, setLikedIds, setAllImageIds } = useGallery();
+  const { setInvitation, setAllImages, setLikedIds } = useGallery();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isValid, setIsValid] = useState(false);
@@ -80,18 +85,24 @@ export function useInvitation(token: string): UseInvitationResult {
         // 5. Store token in localStorage for session recovery
         localStorage.setItem('gallery_token', token);
 
-        // 6 & 7. Fetch first page of images and liked status in parallel
-        const PAGE_SIZE = 20;
+        // 6 & 7. Fetch all image metadata and liked status in parallel
         const [images, likedImageIds] = await Promise.all([
-          getImagesByIdsOrdered(invitation.imageIds.slice(0, PAGE_SIZE)),
+          getImagesByIds(invitation.imageIds),
           getLikedImageIds(currentUser.uid),
         ]);
+
+        // Sort by filename (storagePath)
+        images.sort((a, b) => {
+          const nameA = extractSortName(a.storagePath);
+          const nameB = extractSortName(b.storagePath);
+          return nameA.localeCompare(nameB, 'ja');
+        });
+
         const likedSet = new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id)));
 
         // 8. Update context
         setInvitation(invitation);
-        setAllImageIds(invitation.imageIds);
-        setImages(images);
+        setAllImages(images);
         setLikedIds(likedSet);
         setIsValid(true);
       } catch (err) {
@@ -104,7 +115,7 @@ export function useInvitation(token: string): UseInvitationResult {
     };
 
     initializeGallery();
-  }, [authLoading, user, token, signIn, setInvitation, setImages, setLikedIds, setAllImageIds]);
+  }, [authLoading, user, token, signIn, setInvitation, setAllImages, setLikedIds]);
 
   return { isLoading: isLoading || authLoading, error, isValid };
 }
