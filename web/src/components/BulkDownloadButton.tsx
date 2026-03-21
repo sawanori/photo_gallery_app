@@ -9,20 +9,20 @@ const DownloadProgressModal = dynamic(() => import('./DownloadProgressModal'), {
 });
 
 export default function BulkDownloadButton() {
-  const { images, invitation } = useGallery();
+  const { allImages, invitation } = useGallery();
   const { isDownloading, progress, startDownload, cancelDownload } = useBulkDownload();
 
   const handleClick = () => {
-    if (images.length === 0) return;
+    if (allImages.length === 0) return;
     const zipName = invitation?.clientName || 'photos';
-    startDownload(images, zipName);
+    startDownload(allImages, zipName);
   };
 
   return (
     <>
       <button
         onClick={handleClick}
-        disabled={isDownloading || images.length === 0}
+        disabled={isDownloading || allImages.length === 0}
         className="
           flex items-center gap-2 px-4 py-2 rounded-lg
           bg-ink text-white hover:bg-ink/85
