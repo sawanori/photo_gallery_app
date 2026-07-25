@@ -125,7 +125,9 @@ describe('imageService（projectId対応）', () => {
 
       await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
 
-      expect(mockStorage.uploadBytes).toHaveBeenCalledWith('storageRef', mockFile);
+      expect(mockStorage.uploadBytes).toHaveBeenCalledWith('storageRef', mockFile, {
+        contentType: 'image/jpeg',
+      });
       expect(mockStorage.getDownloadURL).toHaveBeenCalledWith('storageRef');
     });
 

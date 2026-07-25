@@ -7,13 +7,13 @@ import jaJP from 'antd/locale/ja_JP';
 
 const mockGetInvitation = vi.fn();
 const mockUpdateInvitation = vi.fn();
-vi.mock('../../../../../../services/invitationService', () => ({
+vi.mock('../../../../../../../services/invitationService', () => ({
   getInvitation: (...args: unknown[]) => mockGetInvitation(...args),
   updateInvitation: (...args: unknown[]) => mockUpdateInvitation(...args),
   getGalleryUrl: (token: string) => `http://localhost:3002/gallery/${token}`,
 }));
 
-vi.mock('../../../../../../contexts/AuthContext', () => ({
+vi.mock('../../../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },

@@ -8,11 +8,11 @@ import jaJP from 'antd/locale/ja_JP';
 const mockUploadImage = vi.fn();
 const mockRouterPush = vi.fn();
 
-vi.mock('../../../../../../services/imageService', () => ({
+vi.mock('../../../../../../../services/imageService', () => ({
   uploadImage: (...args: unknown[]) => mockUploadImage(...args),
 }));
 
-vi.mock('../../../../../../contexts/AuthContext', () => ({
+vi.mock('../../../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },
@@ -79,19 +79,12 @@ describe('ProjectImageUploadPage', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectImageUploadPage />);
 
-    // Enter title
-    await waitFor(() => {
-      expect(screen.getByLabelText(/タイトル/)).toBeInTheDocument();
-    });
-    await user.type(screen.getByLabelText(/タイトル/), 'テスト画像');
-
-    // Create a test file and upload
+    // タイトル入力欄は無く、ファイル名から拡張子を除いたものがタイトルになる
     const file = new File(['dummy'], 'test.jpg', { type: 'image/jpeg' });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
 
-    // Click upload button
-    const uploadBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+    const uploadBtn = await screen.findByRole('button', { name: /枚をアップロード/ });
     await user.click(uploadBtn);
 
     await waitFor(() => {
@@ -99,7 +92,7 @@ describe('ProjectImageUploadPage', () => {
         'project-1',
         'admin-uid',
         expect.any(File),
-        'テスト画像'
+        'test'
       );
     });
   });
@@ -120,19 +113,11 @@ describe('ProjectImageUploadPage', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectImageUploadPage />);
 
-    // Enter title
-    await waitFor(() => {
-      expect(screen.getByLabelText(/タイトル/)).toBeInTheDocument();
-    });
-    await user.type(screen.getByLabelText(/タイトル/), 'テスト画像');
-
-    // Create a test file and upload
     const file = new File(['dummy'], 'test.jpg', { type: 'image/jpeg' });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
 
-    // Click upload button
-    const uploadBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+    const uploadBtn = await screen.findByRole('button', { name: /枚をアップロード/ });
     await user.click(uploadBtn);
 
     await waitFor(() => {

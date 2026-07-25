@@ -10,16 +10,16 @@ const mockCreateInvitation = vi.fn();
 const mockGetGalleryUrl = vi.fn();
 const mockRouterPush = vi.fn();
 
-vi.mock('../../../../../../services/imageService', () => ({
+vi.mock('../../../../../../../services/imageService', () => ({
   getImagesByProject: (...args: unknown[]) => mockGetImagesByProject(...args),
 }));
 
-vi.mock('../../../../../../services/invitationService', () => ({
+vi.mock('../../../../../../../services/invitationService', () => ({
   createInvitation: (...args: unknown[]) => mockCreateInvitation(...args),
   getGalleryUrl: (...args: unknown[]) => mockGetGalleryUrl(...args),
 }));
 
-vi.mock('../../../../../../contexts/AuthContext', () => ({
+vi.mock('../../../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },
