@@ -3,6 +3,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  setDoc,
   updateDoc,
   deleteDoc,
   query,
@@ -26,7 +27,7 @@ import {
   deleteObject,
 } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
-import { generateThumbnails } from '../utils/thumbnailGenerator';
+import type { ThumbnailResult } from '../utils/thumbnailGenerator';
 import {
   getInvitationsByProject,
   getActiveInvitationsByProject,
@@ -111,25 +112,45 @@ const syncInvitationsOnImageDelete = async (
 };
 
 /**
+ * arrayUnion に一度に渡す ID の最大数。
+ * 公式に上限の明示は無いが、1回のコミットを肥大させないため分割する。
+ */
+const ARRAY_UNION_CHUNK = 300;
+
+/**
  * 新画像IDをアクティブ招待に追加（アトミック操作）
  * arrayUnionは重複追加を防ぐ
+ *
+ * 以前は画像1枚ごとに呼んでいたため、同じ招待ドキュメントへ枚数分の書き込みが
+ * 集中していた。現在は finalizeUploadBatch から**複数IDをまとめて**呼ぶ。
  */
 const syncInvitationsOnImageUpload = async (
   projectId: string,
-  newImageId: string
+  newImageIds: string[]
 ): Promise<void> => {
+  if (newImageIds.length === 0) return;
   try {
     const activeInvitations = await getActiveInvitationsByProject(projectId);
     if (activeInvitations.length === 0) return;
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < newImageIds.length; i += ARRAY_UNION_CHUNK) {
+      chunks.push(newImageIds.slice(i, i + ARRAY_UNION_CHUNK));
+    }
+
     await Promise.all(
-      activeInvitations.map((inv) =>
-        updateDoc(doc(db, INVITATIONS_COLLECTION, inv.id), {
-          imageIds: arrayUnion(newImageId),
-          updatedAt: serverTimestamp(),
-        }).catch((error) =>
-          console.warn(`Failed to sync invitation ${inv.id} on upload:`, error)
-        )
-      )
+      activeInvitations.map(async (inv) => {
+        for (const chunk of chunks) {
+          try {
+            await updateDoc(doc(db, INVITATIONS_COLLECTION, inv.id), {
+              imageIds: arrayUnion(...chunk),
+              updatedAt: serverTimestamp(),
+            });
+          } catch (error) {
+            console.warn(`Failed to sync invitation ${inv.id} on upload:`, error);
+          }
+        }
+      })
     );
   } catch (error) {
     console.warn('Failed to sync invitations on image upload:', error);
@@ -203,11 +224,64 @@ export const getImage = async (imageId: string): Promise<Image | null> => {
   return docToImage(docSnap);
 };
 
-// Upload image with project association (transaction for imageCount sync)
-export const uploadImage = async (
+/**
+ * プロジェクトの存在を1回だけ確認する。
+ *
+ * 以前は画像1枚ごとにトランザクション内で確認していたため、枚数分の読み取りが発生していた。
+ * バッチの開始時に1回呼べば十分である。
+ *
+ * @throws プロジェクトが存在しない場合（従来のトランザクションと同じメッセージ）
+ */
+export const assertProjectExists = async (projectId: string): Promise<void> => {
+  const snap = await getDoc(doc(db, PROJECTS_COLLECTION, projectId));
+  if (!snap.exists()) {
+    throw new Error('Project not found');
+  }
+};
+
+/**
+ * アップロード1バッチ分の後処理をまとめて行う。
+ *
+ * `projects.imageCount` の加算と招待への画像ID追加は、いずれも**同じドキュメント**への
+ * 書き込みになる。これを画像1枚ごとに行うと書き込みが集中して競合し、
+ * アップロード全体が遅くなる。ここでまとめて実行する。
+ *
+ * 呼び出し元のアップロードは既に成功しているため、この関数は**例外を投げない**。
+ * 失敗した場合はログに残し、画像自体は保存済みのままとする。
+ */
+export const finalizeUploadBatch = async (
+  projectId: string,
+  imageIds: string[]
+): Promise<void> => {
+  if (imageIds.length === 0) return;
+
+  try {
+    await updateDoc(doc(db, PROJECTS_COLLECTION, projectId), {
+      imageCount: increment(imageIds.length),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.warn('Failed to update project imageCount:', error);
+  }
+
+  await syncInvitationsOnImageUpload(projectId, imageIds);
+};
+
+/**
+ * 画像1枚を Storage と Firestore に保存する。
+ *
+ * この関数は `projects` と `invitations` に**一切書き込まない**。
+ * それらの更新は finalizeUploadBatch がバッチ単位で行う。
+ * ここで書き込むと同じドキュメントへの書き込みが枚数分集中してしまう。
+ *
+ * サムネイルは呼び出し元（prepareUpload）が生成済みのものを受け取る。
+ * 関数内で生成すると画像を2回デコードすることになる。
+ */
+export const uploadImageFile = async (
   projectId: string,
   userId: string,
   file: File,
+  thumbnailResults: ThumbnailResult[],
   title: string,
   description?: string
 ): Promise<Image> => {
@@ -216,20 +290,13 @@ export const uploadImage = async (
   const storagePath = `images/${userId}/${filename}`;
   const storageRef = ref(storage, storagePath);
 
-  // Generate thumbnails + upload original in parallel
   const metadata = { contentType: file.type || 'image/jpeg' };
   const webpMeta = { contentType: 'image/webp' };
 
   let thumbnailData: { small: string; medium: string } | undefined;
   let thumbnailPaths: string[] | undefined;
 
-  const [, thumbnailResults] = await Promise.all([
-    uploadBytes(storageRef, file, metadata),
-    generateThumbnails(file).catch((err) => {
-      console.warn('Thumbnail generation failed, continuing without:', err);
-      return [];
-    }),
-  ]);
+  await uploadBytes(storageRef, file, metadata);
 
   // Upload thumbnails + get original URL in parallel
   const thumbnailUploads = thumbnailResults.map(async (thumb) => {
@@ -254,9 +321,9 @@ export const uploadImage = async (
     }
   }
 
-  // Create document in Firestore with transaction to update project imageCount
+  // 新規ドキュメントへの書き込みなので競合しない。トランザクションは不要。
+  // プロジェクトの存在確認は assertProjectExists がバッチ開始時に済ませている。
   const imageDocRef = doc(collection(db, IMAGES_COLLECTION));
-  const projectDocRef = doc(db, PROJECTS_COLLECTION, projectId);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const imageData: Record<string, any> = {
@@ -275,27 +342,26 @@ export const uploadImage = async (
     imageData.thumbnailPaths = thumbnailPaths;
   }
 
-  await runTransaction(db, async (transaction) => {
-    const projectSnap = await transaction.get(projectDocRef);
-    if (!projectSnap.exists()) {
-      throw new Error('Project not found');
-    }
+  await setDoc(imageDocRef, imageData);
 
-    transaction.set(imageDocRef, imageData);
-
-    transaction.update(projectDocRef, {
-      imageCount: increment(1),
-      updatedAt: serverTimestamp(),
-    });
-  });
-
-  const newDoc = await getDoc(imageDocRef);
-  const newImage = docToImage(newDoc) as Image;
-
-  // トランザクション成功後にベストエフォートで招待同期
-  await syncInvitationsOnImageUpload(projectId, newImage.id);
-
-  return newImage;
+  // 書いたばかりのドキュメントを読み直さず、手元のデータから組み立てる。
+  // Firestore 上の createdAt / updatedAt はサーバー時刻のままで、
+  // クライアント時刻になるのはこの戻り値だけ（呼び出し元は件数にしか使っていない）。
+  const now = new Date();
+  return {
+    id: imageDocRef.id,
+    projectId,
+    url,
+    storagePath,
+    title,
+    description: description || '',
+    userId,
+    likeCount: 0,
+    thumbnails: thumbnailData,
+    thumbnailPaths,
+    createdAt: now,
+    updatedAt: now,
+  };
 };
 
 // Update image

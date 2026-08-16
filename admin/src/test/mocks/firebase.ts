@@ -15,6 +15,7 @@ export const mockFirestore = {
   addDoc: vi.fn(),
   getDoc: vi.fn(),
   getDocs: vi.fn(),
+  setDoc: vi.fn(),
   updateDoc: vi.fn(),
   deleteDoc: vi.fn(),
   query: vi.fn(),
@@ -26,7 +27,7 @@ export const mockFirestore = {
   increment: vi.fn((n: number) => n),
   getCountFromServer: vi.fn(),
   arrayRemove: vi.fn((val: unknown) => ({ _type: 'arrayRemove', value: val })),
-  arrayUnion: vi.fn((val: unknown) => ({ _type: 'arrayUnion', value: val })),
+  arrayUnion: vi.fn((...vals: unknown[]) => ({ _type: 'arrayUnion', values: vals })),
   Timestamp: { fromDate: vi.fn((d: Date) => d) },
   // コールバックを実行してトランザクション内ロジックを検証可能にする
   runTransaction: vi.fn(async (_db: unknown, callback: (t: typeof mockTransaction) => Promise<unknown>) => {

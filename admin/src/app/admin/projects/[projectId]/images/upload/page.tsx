@@ -4,14 +4,30 @@ import { useState } from 'react';
 import { Upload, Button, Card, message, Progress, Segmented, Typography } from 'antd';
 import { UploadOutlined, ArrowLeftOutlined, InboxOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
-import { uploadImage } from '@/services/imageService';
+import {
+  assertProjectExists,
+  finalizeUploadBatch,
+  uploadImageFile,
+} from '@/services/imageService';
 import { useAuth } from '@/contexts/AuthContext';
-import { compressImage } from '@/utils/imageCompression';
+import { prepareUpload } from '@/utils/prepareUpload';
+import { runWithConcurrency } from '@/utils/uploadQueue';
 import type { UploadFile } from 'antd';
 
 const { Dragger } = Upload;
 const { Text } = Typography;
 const MAX_FILES = 1000;
+/**
+ * 同時に処理する枚数。実測で調整する値であり、最適値は回線とマシンによる。
+ * docs/admin-upload/measurement.md を参照。
+ */
+const UPLOAD_CONCURRENCY = 4;
+/**
+ * imageCount と招待同期をまとめる単位。
+ * 全件終了後に1回だけにすると速いが、途中でブラウザを閉じたときに
+ * 全枚数分の集計が抜ける。ここで区切って被害を限定する。
+ */
+const FINALIZE_CHUNK = 50;
 
 const SYSTEM_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.gitkeep']);
 
@@ -121,20 +137,65 @@ export default function ProjectImageUploadPage() {
       setUploading(true);
       setProgress({ current: 0, total: files.length });
 
+      // プロジェクトの存在確認は1回だけ。以前は画像ごとにトランザクション内で確認していた。
+      await assertProjectExists(projectId);
+
       let successCount = 0;
       let failCount = 0;
 
-      for (const file of files) {
-        try {
-          const compressed = await compressImage(file);
+      // 集約待ちの画像ID。FINALIZE_CHUNK 件たまるたびにまとめて反映する。
+      //
+      // onSettled は同期関数なのでここでは await できない。集約はプロミスの連鎖に積み、
+      // 最後にまとめて待つ。連鎖にすることで集約同士が並行に走らず、
+      // 同じドキュメントへの書き込みが重ならない。
+      let pendingIds: string[] = [];
+      let finalizeChain: Promise<void> = Promise.resolve();
+
+      const queueFinalize = () => {
+        if (pendingIds.length === 0) return;
+        const batch = pendingIds;
+        pendingIds = [];
+        finalizeChain = finalizeChain.then(() =>
+          finalizeUploadBatch(projectId, batch)
+        );
+      };
+
+      const results = await runWithConcurrency(
+        files,
+        UPLOAD_CONCURRENCY,
+        async (file) => {
+          const prepared = await prepareUpload(file);
           const title = file.name.replace(/\.[^/.]+$/, '');
-          await uploadImage(projectId, user.uid, compressed, title);
-          successCount++;
-        } catch (error) {
-          console.error(`Failed to upload ${file.name}:`, error);
-          failCount++;
+          return uploadImageFile(
+            projectId,
+            user.uid,
+            prepared.file,
+            prepared.thumbnails,
+            title
+          );
+        },
+        {
+          onSettled: (result) => {
+            if (result.ok) {
+              successCount++;
+              pendingIds.push(result.value.id);
+              // アップロードの途中で区切って反映する。全件終了後に1回だけにすると、
+              // 途中でブラウザを閉じたときに全枚数分の集計が抜ける。
+              if (pendingIds.length >= FINALIZE_CHUNK) queueFinalize();
+            } else {
+              failCount++;
+            }
+            setProgress((prev) => ({ ...prev, current: prev.current + 1 }));
+          },
         }
-        setProgress((prev) => ({ ...prev, current: prev.current + 1 }));
+      );
+
+      // 端数を反映し、積んだ集約がすべて終わるまで待つ
+      queueFinalize();
+      await finalizeChain;
+
+      for (const result of results) {
+        if (!result.ok) console.error('Failed to upload:', result.error);
       }
 
       if (failCount === 0) {

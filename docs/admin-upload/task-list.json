@@ -1,0 +1,464 @@
+{
+  "feature": "admin の画像アップロード高速化",
+  "version": 1,
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "title": "変更前の所要時間を実測して記録する",
+      "goal": "改善の効果を後から検証できる基準値を残す。これが無いと『速くなった』を証明できない",
+      "scope": [
+        "同一条件でのアップロード所要時間の計測",
+        "枚数・合計サイズ・回線・1枚あたり平均の記録",
+        "ブラウザ開発者ツールのネットワークタブで1枚あたりのリクエスト数を確認"
+      ],
+      "non_scope": [
+        "コードの変更",
+        "本番データの削除や整理"
+      ],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx",
+        "admin/src/services/imageService.ts"
+      ],
+      "files_to_create": [
+        "docs/admin-upload/measurement.md"
+      ],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "検証用のプロジェクトを1つ決める。本番の納品プロジェクトを使う場合は、あとで削除できる枚数に留める",
+        "同じ画像セット（できれば50枚以上、4MB超を含む）を用意する。以降の計測でも同じセットを使う",
+        "cd admin && npm run dev で管理画面を起動し、アップロードを実行して所要時間を計測する",
+        "開発者ツールのネットワークタブで、画像1枚あたりに発生するリクエスト数を数える",
+        "measurement.md に「変更前」として、枚数・合計サイズ・回線種別・所要時間・1枚あたり平均・1枚あたりリクエスト数を表で記録する",
+        "アクティブな招待の件数も記録する（招待数が同期コストに直結するため）"
+      ],
+      "done_definition": [
+        "measurement.md に変更前の実測値が記録されている",
+        "枚数・合計サイズ・所要時間・1枚あたり平均が数値で入っている",
+        "同じ条件を再現するために必要な情報（画像セット・プロジェクト・招待数）が書かれている",
+        "推測値ではなく実際に計測した値である"
+      ],
+      "verify_commands": [],
+      "risk_level": "low",
+      "status": "partially_done",
+      "implementation_note": "コードから数えた往復数（変更前11・変更後7）は measurement.md に記録済み。所要時間の実測はブラウザ操作が必要なため未実施。"
+    },
+    {
+      "task_id": "task_002",
+      "title": "デコードを1回にまとめる前処理を作る",
+      "goal": "4MB超の画像で発生している二重デコードを解消する。圧縮結果とサムネイルの出力仕様は現状と一致させる",
+      "scope": [
+        "createImageBitmap を1回だけ実行して圧縮後ファイルとサムネイル2枚を作る関数",
+        "既存の compressImage / generateThumbnails と同一の出力仕様の維持",
+        "ユニットテスト"
+      ],
+      "non_scope": [
+        "compressImage / generateThumbnails の削除（他からの利用と既存テストのため残す）",
+        "圧縮品質・サムネイル寸法の変更",
+        "imageService の変更（task_003 で行う）"
+      ],
+      "files_to_read": [
+        "admin/src/utils/imageCompression.ts",
+        "admin/src/utils/thumbnailGenerator.ts"
+      ],
+      "files_to_create": [
+        "admin/src/utils/prepareUpload.ts",
+        "admin/src/utils/prepareUpload.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": [
+        "task_001"
+      ],
+      "implementation_steps": [
+        "prepareUpload(file) を実装する。戻り値は { file: File; thumbnails: ThumbnailResult[] }",
+        "非画像ファイルは元ファイルをそのまま返し、サムネイルは空配列にする（compressImage の現行挙動に合わせる）",
+        "createImageBitmap を1回だけ呼ぶ。以降の圧縮とサムネイル生成はこの1つのビットマップから行う",
+        "圧縮は file.size > 4MB のときのみ行う。最大寸法3840、品質0.85、4MB を超えたら0.7で再試行、元より大きくなったら元ファイルを返す。これは imageCompression.ts の現行ロジックと同一にする",
+        "出力形式は元が image/png なら image/webp、それ以外は image/jpeg。ファイル名の拡張子も現行と同じ規則で置換する",
+        "サムネイルは幅384と640、WebP、品質0.7、拡大はしない。thumbnailGenerator.ts と同一にする",
+        "サムネイルは圧縮後ではなく元のビットマップから生成する（画質が同等以上になり、追加コストもない）。この差分を実装計画の Assumptions に追記する",
+        "finally でビットマップを close する",
+        "prepareUpload.test.ts で、4MB以下は圧縮しない / 4MB超は圧縮する / 非画像はスキップ / サムネイル幅が384と640 / 元画像が384未満なら拡大しない、を検証する",
+        "cd admin && npx vitest run と npx eslint src を実行する"
+      ],
+      "done_definition": [
+        "prepareUpload が createImageBitmap を1回しか呼ばない（テストでモックして呼び出し回数を検証する）",
+        "圧縮の閾値・最大寸法・品質・出力形式が imageCompression.ts と一致している",
+        "サムネイルの幅・形式・品質・非拡大が thumbnailGenerator.ts と一致している",
+        "cd admin && npx vitest run が全パスし、テスト数が103を下回らない",
+        "cd admin && npx eslint src のエラーが 0"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npx eslint src"
+      ],
+      "risk_level": "medium",
+      "status": "done",
+      "implementation_note": "admin/src/utils/prepareUpload.ts と同テストを作成。createImageBitmap が1回だけであること、圧縮の閾値/寸法/品質/形式とサムネイルの幅/形式/非拡大が既存実装と一致することを16件で検証。"
+    },
+    {
+      "task_id": "task_003",
+      "title": "imageService を「1枚ごと」と「バッチごと」に分離する",
+      "goal": "1枚あたりの往復を約11回から7回に減らし、同一ドキュメントへの書き込み集中をなくす",
+      "scope": [
+        "uploadImageFile（1枚分。Storage と images ドキュメントのみ）",
+        "assertProjectExists（バッチ開始時に1回）",
+        "finalizeUploadBatch（imageCount 加算と招待同期をまとめて実行）",
+        "getDoc による読み直しの廃止",
+        "runTransaction から setDoc への変更"
+      ],
+      "non_scope": [
+        "deleteImage / deleteImages の変更（引き続き runTransaction + increment(-1)）",
+        "保存されるフィールド構成の変更",
+        "Storage のパス・形式・メタデータの変更",
+        "アップロード画面の変更（task_006 で行う）"
+      ],
+      "files_to_read": [
+        "admin/src/services/imageService.ts",
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/imageService.test.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/imageService.ts"
+      ],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "assertProjectExists(projectId) を追加する。projects/{projectId} を getDoc し、存在しなければ現行と同じ 'Project not found' を投げる",
+        "uploadImage を uploadImageFile(projectId, userId, file, thumbnails, title, description?) に変更する。サムネイルは prepareUpload の結果を引数で受け取り、関数内では生成しない",
+        "元画像とサムネイルのアップロード、getDownloadURL の並列実行は現行の構造を維持する（ここは既に並列化されている）",
+        "画像ドキュメントの作成を runTransaction から setDoc(imageDocRef, imageData) に変える。新規ドキュメントなので競合は起きない。createdAt / updatedAt は serverTimestamp() のまま変えない",
+        "imageCount の increment(1) を uploadImageFile から削除する",
+        "getDoc(imageDocRef) による読み直しを削除し、戻り値を手元のデータから組み立てる。createdAt / updatedAt は戻り値のみクライアント時刻の近似になる（Firestore 上はサーバー時刻のまま）",
+        "syncInvitationsOnImageUpload を複数ID対応に書き換える。arrayUnion(...ids) は300件ずつに分割して呼ぶ",
+        "finalizeUploadBatch(projectId, imageIds) を追加する。imageIds が空なら何もしない。projects に increment(imageIds.length) を1回、アクティブ招待を1回クエリして各招待に分割 arrayUnion を適用する",
+        "finalizeUploadBatch は例外を投げない。imageCount の失敗と招待同期の失敗を区別して console.warn に出す",
+        "uploadImage という名前の関数が残っていないことを grep で確認する（呼び出し元は task_006 で更新する）"
+      ],
+      "done_definition": [
+        "uploadImageFile が projects と invitations に一切書き込まない（コードを読んで確認できる）",
+        "uploadImageFile 内に runTransaction と getDoc(imageDocRef) が存在しない",
+        "images ドキュメントの createdAt / updatedAt が serverTimestamp() のままである",
+        "finalizeUploadBatch が imageIds の件数に関わらず、projects への書き込み1回とアクティブ招待1件あたり最大 ceil(件数/300) 回の書き込みで完了する",
+        "finalizeUploadBatch が例外を投げない",
+        "cd admin && npm run build が成功する"
+      ],
+      "verify_commands": [
+        "cd admin && npm run build",
+        "cd admin && npx eslint src"
+      ],
+      "risk_level": "high",
+      "status": "done",
+      "implementation_note": "uploadImage を uploadImageFile に分割し、assertProjectExists と finalizeUploadBatch を追加。runTransaction と getDoc の読み直しを撤去し setDoc に変更。syncInvitationsOnImageUpload を複数ID対応（300件ずつ分割）に変更。uploadImageFile 内の Firestore 書き込みは setDoc 1回のみであることを確認済み。"
+    },
+    {
+      "task_id": "task_004",
+      "title": "既存テストを新しい契約に更新する",
+      "goal": "招待同期の実行場所が変わったことをテストに反映する。カバレッジの観点は落とさない",
+      "scope": [
+        "uploadImage を参照している既存テストの新シグネチャへの追随",
+        "招待同期テスト4件の finalizeUploadBatch への移設",
+        "assertProjectExists のテスト追加"
+      ],
+      "non_scope": [
+        "テストを削除して通すこと",
+        "期待値を緩めて通すこと",
+        "deleteImage 側のテストの変更"
+      ],
+      "files_to_read": [
+        "admin/src/services/__tests__/imageService.test.ts",
+        "admin/src/test/mocks/firebase.ts",
+        "admin/src/services/imageService.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/__tests__/imageService.test.ts"
+      ],
+      "dependencies": [
+        "task_003"
+      ],
+      "implementation_steps": [
+        "imageService.test.ts の uploadImage 呼び出し（95 / 126 / 151 / 274 / 398 / 428 / 457 / 486 行付近）を uploadImageFile の新シグネチャに更新する",
+        "招待同期のテスト4件（371-512行付近）を finalizeUploadBatch に対する検証へ移す。移す観点は次の4つで、1つも減らさない: (1) アクティブ招待に同期される (2) 非アクティブ招待は対象外 (3) 同期に失敗しても呼び出し元は成功扱い (4) 複数の招待すべてに反映される",
+        "finalizeUploadBatch に複数IDを渡したとき、arrayUnion が1招待あたり1回（300件以下の場合）で呼ばれることを検証するテストを追加する",
+        "imageCount が increment(件数) で1回だけ呼ばれることを検証するテストを追加する",
+        "assertProjectExists がプロジェクト不存在時に 'Project not found' を投げることを検証するテストを追加する",
+        "uploadImageFile が projects / invitations に書き込まないことを検証するテストを追加する（updateDoc が呼ばれないこと）",
+        "cd admin && npx vitest run を実行し全パスを確認する"
+      ],
+      "done_definition": [
+        "cd admin && npx vitest run が全パスする",
+        "テスト数がベースライン（103）を下回らない",
+        "招待同期の4観点がすべてテストで担保されている",
+        "テストの削除や期待値の緩和で通していない（差分を読んで確認できる）"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run"
+      ],
+      "risk_level": "high",
+      "status": "done",
+      "implementation_note": "招待同期の4観点を finalizeUploadBatch に対する検証へ移設し、削除も緩和もしていない。加えて複数IDまとめ・300件超の分割・複数招待への反映・imageCount 1回のみ・uploadImageFile が projects/invitations に書かないこと・getDoc を呼ばないこと・assertProjectExists の2ケースを追加。firebase モックに setDoc を追加し arrayUnion を可変長対応にした。"
+    },
+    {
+      "task_id": "task_005",
+      "title": "同時実行数を制限するワーカープールを作る",
+      "goal": "並列アップロードの土台を、UI から切り離した状態で作りテストする",
+      "scope": [
+        "同時実行数を制限して順に処理する関数",
+        "1件完了ごとのコールバック",
+        "1件失敗しても残りを継続",
+        "入力順を保った結果配列"
+      ],
+      "non_scope": [
+        "アップロード画面への組み込み（task_006）",
+        "中断・再開機能",
+        "リトライ機能"
+      ],
+      "files_to_read": [
+        "mobile/src/save/saveBatch.ts"
+      ],
+      "files_to_create": [
+        "admin/src/utils/uploadQueue.ts",
+        "admin/src/utils/uploadQueue.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": [
+        "task_001"
+      ],
+      "implementation_steps": [
+        "runWithConcurrency(items, concurrency, worker, onSettled) を実装する。worker は (item, index) を受け取り Promise を返す",
+        "結果は { ok: true, value } | { ok: false, error } の配列で、入力と同じ順序で返す",
+        "worker が投げても全体を止めない。その項目だけ失敗として記録する",
+        "onSettled は1件終わるごとに呼ぶ。完了順で呼ばれる（入力順ではない）",
+        "mobile/src/save/saveBatch.ts に同種のワーカープールがあるので、実装方針を揃える（ただしコードは共有しない。別パッケージのため）",
+        "uploadQueue.test.ts で、同時実行数を超えないこと（実行中カウンタの最大値を検証）、1件失敗しても残りが完走すること、結果が入力順であること、onSettled が件数分呼ばれることを検証する",
+        "cd admin && npx vitest run と npx eslint src を実行する"
+      ],
+      "done_definition": [
+        "同時実行数の上限を超えないことがテストで検証されている",
+        "1件失敗しても残りが完走することがテストで検証されている",
+        "結果配列が入力順であることがテストで検証されている",
+        "cd admin && npx vitest run が全パスする",
+        "cd admin && npx eslint src のエラーが 0"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npx eslint src"
+      ],
+      "risk_level": "low",
+      "status": "done",
+      "implementation_note": "admin/src/utils/uploadQueue.ts と同テストを作成。同時実行数の上限遵守・1件失敗時の完走・入力順の結果・onSettled の呼び出しを10件で検証。"
+    },
+    {
+      "task_id": "task_006",
+      "title": "アップロード画面を並列＋バッチ集約に置き換える",
+      "goal": "直列ループをワーカープールに置き換え、集約を50枚ごとに行う。UI の挙動は変えない",
+      "scope": [
+        "for ループのワーカープールへの置換",
+        "開始時の assertProjectExists",
+        "50枚ごとと最後の finalizeUploadBatch",
+        "prepareUpload の適用",
+        "進捗・成功/失敗カウント・エラー継続の維持"
+      ],
+      "non_scope": [
+        "UI レイアウトの変更",
+        "ファイル選択・重複除去・自然順ソート・1000枚上限の変更",
+        "新しい画面状態の追加"
+      ],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx",
+        "admin/src/utils/uploadQueue.ts",
+        "admin/src/utils/prepareUpload.ts",
+        "admin/src/services/imageService.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx"
+      ],
+      "dependencies": [
+        "task_003",
+        "task_005"
+      ],
+      "implementation_steps": [
+        "handleUpload の冒頭で assertProjectExists(projectId) を呼ぶ。失敗したら1枚もアップロードせずエラー表示して終了する",
+        "同時実行数を定数 UPLOAD_CONCURRENCY = 4 として定義する。task_007 で調整するため、マジックナンバーを直書きしない",
+        "for ループを runWithConcurrency に置き換える。worker は prepareUpload → uploadImageFile を行う",
+        "成功した画像IDを配列に貯める。50件たまるたびに finalizeUploadBatch を呼び、配列を空にする",
+        "全件終了後、残りがあれば finalizeUploadBatch を呼ぶ",
+        "onSettled で進捗カウンタを更新する。setProgress は関数形式（prev => ...）で更新し、並列でも取りこぼさないようにする",
+        "成功/失敗カウントと完了メッセージの文言は現状のまま維持する",
+        "完了後の router.push も現状のまま維持する",
+        "cd admin && npm run build と npx eslint src を実行する",
+        "cd admin && npm run dev で実際に10枚程度アップロードし、進捗が総数に達すること・プロジェクト詳細に遷移すること・枚数が正しいことを目視で確認する"
+      ],
+      "done_definition": [
+        "直列の for ループが残っていない",
+        "存在しないプロジェクトIDで1枚もアップロードされずエラーになる",
+        "10枚のアップロードで進捗が10/10に達し、完了メッセージが出て遷移する",
+        "Firebase コンソールで images の件数・projects.imageCount・招待の imageIds が一致している",
+        "cd admin && npm run build が成功する",
+        "cd admin && npx eslint src のエラーが 0"
+      ],
+      "verify_commands": [
+        "cd admin && npm run build",
+        "cd admin && npx eslint src",
+        "cd admin && npx vitest run"
+      ],
+      "risk_level": "medium",
+      "status": "done_pending_manual",
+      "implementation_note": "アップロード画面を runWithConcurrency（同時実行4）に置換。開始時に assertProjectExists、50件たまるごとと最後に finalizeUploadBatch。集約はプロミス連鎖で直列化し、同じドキュメントへの書き込みが重ならないようにした。ブラウザでの実操作確認は未実施。"
+    },
+    {
+      "task_id": "task_007",
+      "title": "変更後を実測し同時実行数を調整する",
+      "goal": "改善を実測で確認し、同時実行数を根拠のある値にする",
+      "scope": [
+        "task_001 と同一条件での再計測",
+        "同時実行数を変えた比較",
+        "保存結果の同一性の確認",
+        "measurement.md への記録"
+      ],
+      "non_scope": [
+        "推測値での報告",
+        "計測せずに『速くなった』と結論すること"
+      ],
+      "files_to_read": [
+        "docs/admin-upload/measurement.md",
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "docs/admin-upload/measurement.md",
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx"
+      ],
+      "dependencies": [
+        "task_006"
+      ],
+      "implementation_steps": [
+        "task_001 と同じ画像セット・同じ枚数・同じ回線で計測する。条件が違えば比較にならないので、違う場合は条件を揃え直す",
+        "同時実行数 2 / 4 / 8 の3通りで計測する。回線とマシンによって最適値が変わるため、決め打ちしない",
+        "開発者ツールで1枚あたりのリクエスト数を数え、変更前の値と比較する",
+        "Firebase コンソールで、アップロードした画像のフィールド構成・Storage のパス・サムネイルの寸法が変更前と一致することを確認する",
+        "projects.imageCount と招待の imageIds が実際の枚数と一致し、重複が無いことを確認する",
+        "最も速かった同時実行数を UPLOAD_CONCURRENCY に設定する。差が小さい場合は小さい方（サーバー負荷が低い方）を選ぶ",
+        "measurement.md に変更後の値と採用した同時実行数、その理由を記録する"
+      ],
+      "done_definition": [
+        "measurement.md に変更前後の値が同一条件で並んでいる",
+        "1枚あたりのリクエスト数が変更前より減っている",
+        "同時実行数の比較結果と採用理由が記録されている",
+        "保存結果の同一性を Firebase コンソールで確認した記録がある",
+        "改善幅が実測値で書かれている（推測や『速くなった』だけの記述でない）"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_008",
+      "title": "CLAUDE.md にアップロードの仕組みを追記する",
+      "goal": "次のセッションが imageCount と招待同期のタイミングを誤解しないようにする",
+      "scope": [
+        "アップロードがバッチ集約 + 並列である旨の追記",
+        "imageCount と招待同期が50枚ごとに実行される旨の追記",
+        "中断時に不整合が起こり得る旨の追記"
+      ],
+      "non_scope": [
+        "他計画が扱う CLAUDE.md の更新内容",
+        "README の新規作成"
+      ],
+      "files_to_read": [
+        "CLAUDE.md",
+        "docs/admin-upload/implementation-plan.md"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "CLAUDE.md"
+      ],
+      "dependencies": [
+        "task_007"
+      ],
+      "implementation_steps": [
+        "Admin Panel の節に、アップロードが並列＋バッチ集約であることを1〜2文で書く",
+        "projects.imageCount と招待の imageIds が1枚ごとではなく50枚ごとに更新されることを明記する",
+        "アップロード中にブラウザを閉じると直近49枚分が反映されない場合があることを明記する",
+        "他の計画（docs/implementation-plan.md task_012、docs/native-app/ task_018）も CLAUDE.md を触るため、競合したら両方の内容を反映してからコミットする"
+      ],
+      "done_definition": [
+        "CLAUDE.md にアップロードの集約タイミングが書かれている",
+        "中断時の不整合について書かれている",
+        "記載した内容が実装と一致している"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_009",
+      "title": "[任意] 招待とカウントの再同期ボタンを追加する",
+      "goal": "アップロード中断で生じた不整合を、管理画面から復旧できるようにする",
+      "scope": [
+        "プロジェクト詳細画面に再同期ボタンを追加",
+        "実際の画像件数から imageCount を再計算",
+        "アクティブ招待の imageIds を実際の画像IDで補完"
+      ],
+      "non_scope": [
+        "自動での定期同期",
+        "招待から画像IDを削除する処理（arrayUnion のみで、余分なIDの除去はしない）"
+      ],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/page.tsx",
+        "admin/src/services/imageService.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/imageService.ts",
+        "admin/src/app/admin/projects/[projectId]/page.tsx"
+      ],
+      "dependencies": [
+        "task_007"
+      ],
+      "implementation_steps": [
+        "resyncProject(projectId) を追加する。getImagesByProject で実際の画像を取得し、imageCount を実件数で上書きし、アクティブ招待に不足しているIDを arrayUnion で補う",
+        "プロジェクト詳細画面に「再同期」ボタンを追加し、実行前に確認ダイアログを出す",
+        "実行結果（更新した件数）をメッセージで表示する",
+        "cd admin && npx vitest run と npm run build を実行する"
+      ],
+      "done_definition": [
+        "中断後に再同期を実行すると imageCount が実件数と一致する",
+        "アクティブ招待の imageIds に不足していた画像IDが追加される",
+        "cd admin && npx vitest run が全パスする"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "medium"
+    }
+  ],
+  "implementation_status": {
+    "updated": "2026-08-16",
+    "summary": "task_002〜task_006 を実装。admin の自動検証はすべて通過。所要時間の実測とブラウザでの実操作確認は未実施。",
+    "verified_in_session": [
+      "cd admin && npx vitest run : 12 files / 142 tests passed（ベースライン 103 から +39）",
+      "cd admin && npx eslint src : 0 errors / 1 warning（ベースライン維持）",
+      "cd admin && npm run build : 成功",
+      "uploadImageFile 内の Firestore 呼び出しが setDoc 1回のみであることをコードで確認",
+      "web/ と mobile/ が無変更であることを git status で確認"
+    ],
+    "not_verified": [
+      "アップロード所要時間の実測（変更前・変更後とも未計測。ブラウザ操作が必要）",
+      "ブラウザでの実操作（進捗表示・完了メッセージ・遷移）",
+      "Firebase コンソールでの保存結果の同一性（images のフィールド構成・Storage のパス・サムネイル寸法・imageCount・招待の imageIds）",
+      "同時実行数 2/4/8 の比較（現在は 4 の決め打ち）"
+    ],
+    "remaining_tasks": [
+      "task_001 変更前の所要時間の実測（本来は変更前に取るべきだったが未取得。git stash で戻して測るか、改善後の値のみで判断する）",
+      "task_007 変更後の実測と同時実行数の調整",
+      "task_008 CLAUDE.md の更新",
+      "task_009 [任意] 再同期ボタン"
+    ]
+  }
+}
