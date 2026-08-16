@@ -6,6 +6,7 @@ import { useGallery } from '@/contexts/GalleryContext';
 import {
   getInvitationByToken,
   validateInvitation,
+  INVALID_INVITATION_MESSAGE,
   createSession,
   getSession,
   updateInvitationAccess,
@@ -51,7 +52,9 @@ export function useInvitation(token: string): UseInvitationResult {
         // 2. Fetch invitation by token
         const invitation = await getInvitationByToken(token);
         if (!invitation) {
-          setError('招待リンクが見つかりません。');
+          // 「存在しない」と「無効・期限切れ」を区別しない。区別すると
+          // トークンが実在するかどうかを第三者に伝えてしまう。
+          setError(INVALID_INVITATION_MESSAGE);
           setIsValid(false);
           return;
         }
@@ -59,7 +62,7 @@ export function useInvitation(token: string): UseInvitationResult {
         // 3. Validate invitation
         const validation = validateInvitation(invitation);
         if (!validation.valid) {
-          setError(validation.reason || '無効なリンクです。');
+          setError(validation.reason || INVALID_INVITATION_MESSAGE);
           setIsValid(false);
           setInvitation(invitation);
           return;

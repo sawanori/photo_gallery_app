@@ -1,8 +1,4 @@
 import {
-  collection,
-  query,
-  where,
-  getDocs,
   doc,
   getDoc,
   setDoc,
@@ -16,15 +12,28 @@ import { Invitation, Session } from '@/types';
 const INVITATIONS_COLLECTION = 'invitations';
 const SESSIONS_COLLECTION = 'sessions';
 
+/**
+ * 招待をトークンで取得する。
+ *
+ * **コレクションクエリ（list）を使ってはいけない。** 招待ドキュメントの ID は
+ * トークンそのものであり、単一ドキュメント取得（get）で引く。
+ * `where('token','==',token)` で引く実装に戻すと list が必要になり、
+ * その list を許可すると匿名認証しただけの第三者が招待を全件列挙して
+ * トークンを平文で収穫できる状態に戻る（2026-08-17 に実際に列挙できることを確認した）。
+ *
+ * 見つからない場合と、ルールに拒否された場合（無効化済み・期限切れ）を
+ * どちらも null に正規化する。呼び出し側で区別すると、
+ * トークンが実在するかどうかを第三者に伝えてしまう。
+ */
 export const getInvitationByToken = async (token: string): Promise<Invitation | null> => {
-  const q = query(
-    collection(db, INVITATIONS_COLLECTION),
-    where('token', '==', token)
-  );
-  const snapshot = await getDocs(q);
-  if (snapshot.empty) return null;
+  let docSnap;
+  try {
+    docSnap = await getDoc(doc(db, INVITATIONS_COLLECTION, token));
+  } catch {
+    return null;
+  }
+  if (!docSnap.exists()) return null;
 
-  const docSnap = snapshot.docs[0];
   const data = docSnap.data();
   return {
     id: docSnap.id,
@@ -42,17 +51,27 @@ export const getInvitationByToken = async (token: string): Promise<Invitation | 
   };
 };
 
+/**
+ * 招待が閲覧可能かどうか。
+ *
+ * 理由の文言を1つに統一している。無効化・期限切れ・閲覧期限切れを撃ち分けると、
+ * トークンが実在することを第三者に伝えてしまう。加えて Firestore ルール側でも
+ * 無効・期限切れの招待は取得自体が拒否され、呼び出し側には「見つからない」として
+ * 届くため、ここだけ細かく分けても利用者から見た文言は揃わない。
+ */
+export const INVALID_INVITATION_MESSAGE = 'このリンクは無効か、有効期限が切れています。';
+
 export const validateInvitation = (invitation: Invitation): { valid: boolean; reason?: string } => {
   if (!invitation.isActive) {
-    return { valid: false, reason: 'このリンクは無効化されています。' };
+    return { valid: false, reason: INVALID_INVITATION_MESSAGE };
   }
   if (invitation.expiresAt && new Date() > invitation.expiresAt) {
-    return { valid: false, reason: 'このリンクの有効期限が切れています。' };
+    return { valid: false, reason: INVALID_INVITATION_MESSAGE };
   }
   if (invitation.createdAt) {
     const viewingDeadline = new Date(invitation.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
     if (new Date() > viewingDeadline) {
-      return { valid: false, reason: 'このリンクの閲覧期限が切れています。' };
+      return { valid: false, reason: INVALID_INVITATION_MESSAGE };
     }
   }
   return { valid: true };

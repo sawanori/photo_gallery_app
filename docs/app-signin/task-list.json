@@ -1,0 +1,519 @@
+{
+  "feature": "アプリのID＋合言葉サインイン",
+  "version": 2,
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "title": "invitationCredentials と signInRateLimits の Firestore ルールを追加する",
+      "goal": "ID と合言葉の両方を知らない限り認証情報が読めない状態を作り、レート制限用カウンタの読み書き経路を用意する。ハッシュを保存しない設計の土台になる。",
+      "scope": [
+        "firestore.rules に invitationCredentials の match を追加する（get のみ許可、list は書かない＝default-deny、create/delete は isAdmin() のみ）",
+        "firestore.rules に signInRateLimits の match を追加する（get/create/update は isAuthenticated() のみ許可、list は書かない）",
+        "ルールをデプロイして実際に list が permission-denied になることを確認する"
+      ],
+      "non_scope": [
+        "invitations の read を get/list に分離する（別計画 docs/implementation-plan.md の task_001/task_002。本計画の『未解決の前提条件』章の判断事項）",
+        "firestore.indexes.json の変更（単一ドキュメント取得のみのため不要）"
+      ],
+      "files_to_read": ["firestore.rules", "docs/app-signin/implementation-plan.md"],
+      "files_to_create": [],
+      "files_to_modify": ["firestore.rules"],
+      "dependencies": [],
+      "implementation_steps": [
+        "firestore.rules の invitations の match の直後に invitationCredentials の match を追加する",
+        "allow get: if isAuthenticated(); を書き、list の行は書かない。なぜ list を書かないかをコメントで残す",
+        "allow create, delete: if isAdmin(); を書く",
+        "signInRateLimits の match を追加する。allow get, create, update: if isAuthenticated();、list は書かない",
+        "signInRateLimits のコメントに『認証済みクライアントが直接書けるため悪意ある操作に対して脆弱。主たる防御はエントロピーであり、これは補助』と明記する",
+        "firebase deploy --only firestore:rules を実行する",
+        "ブラウザのコンソールで匿名サインイン後に getDocs(collection(db,'invitationCredentials')) と getDocs(collection(db,'signInRateLimits')) がいずれも permission-denied になることを確認する",
+        "getDoc(doc(db,'invitationCredentials','存在しない適当な文字列')) が permission-denied にならず『存在しない』結果になることを確認する（get 自体は許可されている設計であることの確認）"
+      ],
+      "done_definition": [
+        "firestore.rules に invitationCredentials と signInRateLimits の match がある",
+        "両コレクションとも list に対応する allow 行が存在しない",
+        "ルールがデプロイ済みである",
+        "匿名認証のクライアントから両コレクションへの getDocs(collection(...)) がいずれも permission-denied になることを実際に確認した"
+      ],
+      "verify_commands": ["firebase deploy --only firestore:rules"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_002",
+      "title": "合言葉の鍵導出モジュールを実装する（web 側）",
+      "goal": "ID と合言葉から credentialKey を計算する。ハッシュを保存せず、ドキュメントIDとして直接使える値を作る。admin 側との相互運用のためのテストベクタも生成する。",
+      "scope": [
+        "web/src/services/passphrase.ts を作る",
+        "normalize・derivePassphraseKey（PBKDF2-SHA256、210000回、32バイト、base64url）を実装する",
+        "許可文字集合の定数と検証関数を実装する",
+        "docs/app-signin/credential-test-vectors.json に既知の入出力ペアを3〜5件、実際に計算して書き出す",
+        "テストを書く"
+      ],
+      "non_scope": [
+        "admin 側のハッシュ生成（task_007 で Web Crypto を使って別実装する）",
+        "Firestore への読み書き"
+      ],
+      "files_to_read": ["web/src/services/manifestService.ts", "docs/app-signin/implementation-plan.md"],
+      "files_to_create": [
+        "web/src/services/passphrase.ts",
+        "web/src/services/passphrase.test.ts",
+        "docs/app-signin/credential-test-vectors.json"
+      ],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "ALLOWED_CHARS = '23456789abcdefghjkmnpqrstuvwxyz' を定数にする",
+        "normalize(raw): 前後の空白除去、ハイフンと空白の除去、小文字化を行う関数を書く",
+        "isValidCharset(value): 全文字が ALLOWED_CHARS に含まれるか検証する関数を書く",
+        "FIXED_SALT をソースコード内の定数にする。変更すると既存の全認証情報が無効になる旨をコメントに残す",
+        "derivePassphraseKey(signInId, passphrase): normalize(signInId) + ':' + normalize(passphrase) を入力に、crypto.pbkdf2Sync(input, FIXED_SALT, 210000, 32, 'sha256') を計算し、Buffer.toString('base64url') で返す",
+        "toString('base64url') が実行環境の Node で使えることを確認する。使えない場合は base64 から手動で urlsafe に変換する関数を追加する",
+        "derivePassphraseKey を使って3〜5件のテストベクタ（signInId・passphrase・期待されるcredentialKey）を実際に計算し、docs/app-signin/credential-test-vectors.json に書き出す",
+        "テスト: 同じ入力で同じ結果になる、normalize の各種入力（大文字・ハイフン付き・前後空白）が同じ結果になる、isValidCharset が 0/1/i/l/o を拒否する、credential-test-vectors.json の全件が derivePassphraseKey の出力と一致する"
+      ],
+      "done_definition": [
+        "normalize / derivePassphraseKey / isValidCharset / ALLOWED_CHARS が export されている",
+        "docs/app-signin/credential-test-vectors.json が存在し、3件以上のテストベクタを含む",
+        "passphrase.test.ts が credential-test-vectors.json を読み込んで検証している",
+        "テストが通る"
+      ],
+      "verify_commands": ["cd web && npm test", "cd web && npm run lint"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_003",
+      "title": "manifestService.ts の isUsable を export する",
+      "goal": "招待の有効性判定を signinService.ts と共有し、二重実装による食い違いを防ぐ。既存の manifest の挙動は一切変えない。",
+      "scope": [
+        "manifestService.ts 内の isUsable 関数を export する",
+        "挙動を変更しない"
+      ],
+      "non_scope": [
+        "isUsable のロジック自体の変更"
+      ],
+      "files_to_read": ["web/src/services/manifestService.ts", "web/src/services/manifestService.test.ts"],
+      "files_to_create": [],
+      "files_to_modify": ["web/src/services/manifestService.ts"],
+      "dependencies": [],
+      "implementation_steps": [
+        "function isUsable(...) の宣言に export を付ける",
+        "resolveManifest など既存の呼び出し箇所は変更しない"
+      ],
+      "done_definition": [
+        "isUsable が export されている",
+        "既存の web/src/services/manifestService.test.ts が全て通る（新規テストの追加は不要）"
+      ],
+      "verify_commands": ["cd web && npm test", "cd web && npm run lint"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_004",
+      "title": "サインイン検証ロジックを実装する（web 側）",
+      "goal": "ID と合言葉から招待トークンを解決する。存在しない ID と合言葉違いを構造的に区別しない。",
+      "scope": [
+        "web/src/services/signinService.ts を作る",
+        "resolveSignIn(db, signInId, passphrase, now) を実装する",
+        "テストを書く"
+      ],
+      "non_scope": [
+        "HTTP の組み立て（task_006）",
+        "レート制限（task_005 で別モジュールにする）",
+        "ロックアウト（設計上、存在しない）"
+      ],
+      "files_to_read": [
+        "web/src/services/manifestService.ts",
+        "web/src/services/passphrase.ts",
+        "web/src/services/manifestService.test.ts"
+      ],
+      "files_to_create": [
+        "web/src/services/signinService.ts",
+        "web/src/services/signinService.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": ["task_002", "task_003"],
+      "implementation_steps": [
+        "入力検証: signInId は isValidCharset かつ8文字。passphrase は normalize 後 isValidCharset かつ12文字。いずれか不満なら bad_request を返し、この時点では derivePassphraseKey を呼ばない",
+        "derivePassphraseKey(signInId, passphrase) で credentialKey を計算する（形式チェックを通過した入力に対しては常に計算する）",
+        "invitationCredentials/{credentialKey} を getDoc で取得。存在しなければ unauthorized",
+        "invitationId を読み、invitations/{invitationId} を取得。存在しなければ unauthorized（データ不整合の場合もあり得るため、404 的な区別はしない）",
+        "isUsable(invitation, now) で判定。false なら forbidden",
+        "token と clientName を返す",
+        "戻り値の型は { ok: true, token, clientName } | { ok: false, status: 400|401|403, code: 'bad_request'|'unauthorized'|'forbidden' }（'locked' は存在しない）",
+        "テスト: 成功、合言葉違い、存在しないID、認証情報はあるが招待が無効化済み、期限切れ招待、不正な文字を含む入力、ハイフン付き合言葉が正規化されて通ること、『合言葉違い』と『存在しないID』が全く同じ応答オブジェクトになることを toEqual で確認"
+      ],
+      "done_definition": [
+        "resolveSignIn が bad_request・unauthorized・forbidden・成功を返し分ける",
+        "存在しない ID と合言葉違いが完全に同じ結果オブジェクトになることをテストで確認している",
+        "isUsable を manifestService からimportして使っている（再実装していない）",
+        "テストが通る"
+      ],
+      "verify_commands": ["cd web && npm test", "cd web && npm run lint"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_005",
+      "title": "Firestore ベースのレート制限を実装する（web 側）",
+      "goal": "サーバーレスの複数インスタンスに分散しても機能するレート制限を、Firestore 上のカウンタで実現する。",
+      "scope": [
+        "web/src/services/signInRateLimiter.ts を作る",
+        "IP のハッシュ化、時間窓バケットの算出、runTransaction による原子的な加算と閾値判定を実装する",
+        "テストを書く"
+      ],
+      "non_scope": [
+        "IP 取得の完全性の保証（x-forwarded-for が無い場合はレート制限をスキップする方針とする）",
+        "signInRateLimits の古いドキュメントの自動削除（Firestore TTL の設定は運用作業。本タスクの対象外）"
+      ],
+      "files_to_read": ["web/src/services/likeService.ts", "web/src/app/api/native/manifest/route.ts"],
+      "files_to_create": [
+        "web/src/services/signInRateLimiter.ts",
+        "web/src/services/signInRateLimiter.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "hashIp(ip): Node の crypto.createHash('sha256') で IP をハッシュ化する関数を書く",
+        "bucketId(ipHash, now, windowMs): Math.floor(now / windowMs) を使ってバケットIDを組み立てる",
+        "checkAndIncrement(db, ip, now): ip が無ければ { limited: false } を返す。あれば runTransaction 内で該当バケットの count を読み、閾値（30）を超えていれば加算せず { limited: true } を返し、超えていなければ count を+1して { limited: false } を返す",
+        "閾値・時間窓（1分30回）を定数として export する",
+        "テスト: 閾値未満は許可され count が増える、閾値到達で拒否される、時間窓が変わればバケットが変わり許可に戻る、ip が undefined なら常に許可される"
+      ],
+      "done_definition": [
+        "checkAndIncrement が export されている",
+        "runTransaction を使い、読み取りと加算がテスト上アトミックに扱われている",
+        "テストが通る"
+      ],
+      "verify_commands": ["cd web && npm test", "cd web && npm run lint"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_006",
+      "title": "POST /api/native/signin を追加する",
+      "goal": "アプリから叩けるエンドポイントを用意する。応答方針は既存の manifest API に揃える。",
+      "scope": [
+        "web/src/app/api/native/signin/route.ts を作る",
+        "入力の型検査、レート制限の呼び出し、resolveSignIn の呼び出し、Cache-Control: no-store を実装する"
+      ],
+      "non_scope": ["検証ロジック本体（task_004）", "レート制限本体（task_005）"],
+      "files_to_read": ["web/src/app/api/native/manifest/route.ts", "web/src/services/signinService.ts", "web/src/services/signInRateLimiter.ts"],
+      "files_to_create": ["web/src/app/api/native/signin/route.ts"],
+      "files_to_modify": [],
+      "dependencies": ["task_004", "task_005"],
+      "implementation_steps": [
+        "manifest/route.ts の構造を踏襲する（runtime='nodejs'、dynamic='force-dynamic'、json ヘルパーで Cache-Control: no-store を付ける）",
+        "request.json() の失敗や body が object でない場合は 400 bad_request",
+        "signInId・passphrase が string でなければ 400 bad_request",
+        "request.headers.get('x-forwarded-for') の先頭要素を IP として checkAndIncrement に渡す。limited なら 429 rate_limited",
+        "resolveSignIn(await getServerDb(), signInId, passphrase, new Date()) を呼ぶ",
+        "戻り値の code を HTTP ステータスに対応付ける（bad_request=400、unauthorized=401、forbidden=403）",
+        "例外は 500 internal_error に丸め、詳細を応答に含めない"
+      ],
+      "done_definition": [
+        "curl で 400 / 401 / 403 / 429 / 200 が期待どおり返ることを手動で確認した（既存の manifest route と同様、自動テストの対象ファイルは無い）",
+        "全応答に cache-control: no-store が付いている",
+        "cd web && npm run build が通る"
+      ],
+      "verify_commands": ["cd web && npm run build", "cd web && npm run lint"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_007",
+      "title": "管理画面の発行・再発行ロジックを実装する",
+      "goal": "ID と合言葉を生成し、ハッシュ（credentialKey）だけを Firestore に保存する。web 側と同じ計算結果になることをテストで固定する。",
+      "scope": [
+        "admin/src/services/credentialService.ts を作る",
+        "ID・合言葉の生成、Web Crypto でのハッシュ化、issueCredential・reissueCredential・getCredentialSummary を実装する",
+        "テストを書く"
+      ],
+      "non_scope": ["UI（task_009 / task_010）", "『アクセスを無効化』（トークン再生成。task_008 で invitationService.ts に実装する）"],
+      "files_to_read": [
+        "admin/src/services/invitationService.ts",
+        "web/src/services/passphrase.ts",
+        "docs/app-signin/credential-test-vectors.json"
+      ],
+      "files_to_create": [
+        "admin/src/services/credentialService.ts",
+        "admin/src/services/__tests__/credentialService.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": ["task_001", "task_002"],
+      "implementation_steps": [
+        "ALLOWED_CHARS・FIXED_SALT を web/src/services/passphrase.ts と全く同じ値で定義する（コメントで参照元を明記する）",
+        "crypto.getRandomValues で ID 8文字・合言葉12文字を生成する（剰余による偏りを避ける実装にする）",
+        "arrayBufferToBase64Url(buffer): ブラウザには Buffer が無いため、手動で base64url エンコードする関数を書く",
+        "deriveCredentialKey(signInId, passphrase): TextEncoder で UTF-8 バイト化し、crypto.subtle.importKey → crypto.subtle.deriveBits（PBKDF2, SHA-256, 210000回, 256bit）で導出し、arrayBufferToBase64Url で文字列化する",
+        "issueCredential(invitationId, createdBy): 生成・ハッシュ化を行い、invitationCredentials/{credentialKey} に { invitationId, createdAt: serverTimestamp(), createdBy } を書き込み、invitations/{invitationId} に signInId・credentialKey を書き込む。平文の signInId と passphrase を戻り値で返す",
+        "reissueCredential(invitationId, createdBy): invitations.credentialKey が存在すれば deleteDoc(invitationCredentials/{旧credentialKey}) を実行してから issueCredential を呼ぶ",
+        "getCredentialSummary(invitationId): invitations ドキュメントの signInId をそのまま返す（invitationCredentials は読まない）",
+        "テスト: 生成文字列が ALLOWED_CHARS のみで構成される、長さが正しい、docs/app-signin/credential-test-vectors.json の全件で deriveCredentialKey の出力が期待値と一致する（クロス実装検証）、reissueCredential が旧ドキュメントの deleteDoc を呼ぶ"
+      ],
+      "done_definition": [
+        "issueCredential / reissueCredential / getCredentialSummary が export されている",
+        "deriveCredentialKey が credential-test-vectors.json の全件について web 側と同じ値を返すことをテストで確認している",
+        "テストが通る"
+      ],
+      "verify_commands": ["cd admin && npx vitest run", "cd admin && npm run lint"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_008",
+      "title": "admin の invitationService.ts を拡張する（型・アクセス無効化）",
+      "goal": "招待の型に signInId・credentialKey を反映し、『アクセスを無効化』（トークン再生成）を実装する。",
+      "scope": [
+        "Invitation 型に signInId?・credentialKey? を追加する",
+        "docToInvitation にこの2フィールドのマッピングを追加する",
+        "regenerateInvitationToken(id) を実装する（トークンのみ再生成。signInId/credentialKey は変更しない）",
+        "テストを書く"
+      ],
+      "non_scope": ["UI（task_010）", "合言葉の再発行（task_007）"],
+      "files_to_read": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "Invitation interface に signInId?: string、credentialKey?: string を追加する",
+        "docToInvitation の戻り値に data.signInId、data.credentialKey を追加する（無ければ undefined のままでよい）",
+        "regenerateInvitationToken(id: string): Promise<string> を追加する。nanoid(21) で新トークンを生成し、updateDoc(doc(db,'invitations',id), { token: newToken, updatedAt: serverTimestamp() }) を実行し、新トークンを返す",
+        "テスト: signInId・credentialKey がドキュメントにある場合に docToInvitation が反映すること、regenerateInvitationToken が新しいランダムトークンで updateDoc を呼ぶこと、signInId/credentialKey には触れないこと"
+      ],
+      "done_definition": [
+        "Invitation 型に signInId?・credentialKey? がある",
+        "regenerateInvitationToken が export されている",
+        "既存の invitationService.test.ts の全テストと追加したテストが通る"
+      ],
+      "verify_commands": ["cd admin && npx vitest run", "cd admin && npm run lint"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_009",
+      "title": "招待作成時に ID と合言葉を表示する",
+      "goal": "発行した認証情報を、その場で確実に控えられるようにする。合言葉は二度と表示できない。",
+      "scope": [
+        "招待作成完了後のモーダルに ID・合言葉・ギャラリーURL を並べる",
+        "それぞれにコピーボタンを付ける",
+        "合言葉に『閉じると再表示できない』旨の注意書きを付ける"
+      ],
+      "non_scope": ["再発行・無効化（task_010）"],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/__tests__/page.test.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/__tests__/page.test.tsx"
+      ],
+      "dependencies": ["task_007"],
+      "implementation_steps": [
+        "招待作成の成功後に issueCredential(invitation.id, user.uid) を呼ぶ",
+        "結果をモーダルで表示する。合言葉は xxxx-xxxx-xxxx の形に整形して表示する",
+        "コピーボタンは navigator.clipboard.writeText を使い、失敗時に message.error を出す",
+        "合言葉の下に『この画面を閉じると再表示できません』の注意書きを表示する",
+        "既存テストの期待値を更新し、ID と合言葉がモーダルに表示されることを検証するテストを追加する"
+      ],
+      "done_definition": [
+        "招待作成後に ID と合言葉がモーダルに表示される",
+        "コピーボタンをクリックすると navigator.clipboard.writeText が呼ばれる",
+        "既存テストが通り、新しい期待値（ID・合言葉の表示）を検証するテストが追加されている"
+      ],
+      "verify_commands": ["cd admin && npx vitest run", "cd admin && npm run build"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_010",
+      "title": "招待詳細に ID 表示・再発行・無効化を追加する",
+      "goal": "合言葉を忘れた場合の再発行と、漏洩時のアクセス無効化を管理者が行えるようにする。",
+      "scope": [
+        "招待詳細画面に現行の signInId を表示する（invitationCredentials は読まない）",
+        "『合言葉を再発行』ボタンと確認ダイアログを追加する",
+        "『アクセスを無効化』ボタンと確認ダイアログを追加する（新設）",
+        "未発行の招待には『発行する』ボタンを出す"
+      ],
+      "non_scope": ["クライアント自身による再設定"],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/__tests__/page.test.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/__tests__/page.test.tsx"
+      ],
+      "dependencies": ["task_007", "task_008"],
+      "implementation_steps": [
+        "invitation.signInId をそのまま表示する（未発行なら『未発行』と表示し『発行する』ボタンを出す）",
+        "『合言葉を再発行』ボタンに確認ダイアログを付ける。文言: 『新しいIDと合言葉を発行します。すでにサインイン済みの端末は影響を受けず、引き続き開けます。古いIDと合言葉は今後使えなくなります。よろしいですか？』",
+        "確認後 reissueCredential を呼び、結果をモーダルで表示する（合言葉は一度だけ）",
+        "『アクセスを無効化』ボタンに確認ダイアログを付ける。文言: 『招待リンクとこの招待へのアクセスをすべて無効化します。この操作を行うと、この招待を開いていたすべての端末（アプリ・ブラウザ問わず）で今後アクセスできなくなります。リンクや合言葉が流出した場合に使用してください。よろしいですか？』",
+        "確認後 regenerateInvitationToken を呼び、新しいギャラリーURLを表示する",
+        "テストを追加する（3ボタンそれぞれの表示条件、確認ダイアログの文言、成功時の表示）"
+      ],
+      "done_definition": [
+        "詳細画面に signInId が表示される（未発行時は『未発行』表示）",
+        "再発行すると新しい ID と合言葉が表示される",
+        "無効化すると新しいギャラリーURLが表示される",
+        "未発行の招待から発行できる",
+        "テストが通る"
+      ],
+      "verify_commands": ["cd admin && npx vitest run", "cd admin && npm run build"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_011",
+      "title": "アプリの通信層を実装する",
+      "goal": "サインイン API を叩き、結果を型付きで返す。禁止文字の事前検出を含む。",
+      "scope": [
+        "mobile/src/auth/signIn.ts を作る",
+        "入力の正規化・許可文字チェック・各エラーコードの対応を実装する",
+        "テストを書く"
+      ],
+      "non_scope": ["画面（task_013）"],
+      "files_to_read": ["mobile/src/config.ts", "mobile/src/save/manifest.ts", "docs/app-signin/implementation-plan.md"],
+      "files_to_create": ["mobile/src/auth/signIn.ts", "mobile/src/auth/signIn.test.ts"],
+      "files_to_modify": ["mobile/src/config.ts"],
+      "dependencies": [],
+      "implementation_steps": [
+        "config.ts に SIGNIN_ENDPOINT = `${WEB_ORIGIN}/api/native/signin` を追加する",
+        "ALLOWED_CHARS = '23456789abcdefghjkmnpqrstuvwxyz' を定数にする（web/admin と同じ文字集合）",
+        "normalizeInput(raw): 前後の空白・ハイフン・内部の空白を除去し小文字化する",
+        "validateCharset(value): ALLOWED_CHARS 以外の文字が含まれていれば false を返す",
+        "signIn(signInId, passphrase): まず normalizeInput と validateCharset を行い、不正なら { ok: false, reason: 'invalid_chars' } を即座に返す（fetch しない）",
+        "妥当なら fetch で POST し、status を判別可能な結果型に対応付ける: 200→{ok:true,token,clientName}、400→{ok:false,reason:'bad_request'}、401→{ok:false,reason:'unauthorized'}、403→{ok:false,reason:'forbidden'}、429→{ok:false,reason:'rate_limited'}、その他!ok→{ok:false,reason:'server'}",
+        "タイムアウト（15秒）を AbortController で実装する。abort/例外は { ok: false, reason: 'network' } を返す",
+        "テスト: 各 status の対応付け、不正な文字を含む入力で fetch が呼ばれないこと、ハイフン付き入力の正規化、ネットワーク失敗・タイムアウト時の扱い"
+      ],
+      "done_definition": [
+        "signIn が判別可能な結果型を返す",
+        "不正な文字を含む入力では fetch が呼ばれないことをテストで確認している",
+        "テストが通る",
+        "URL・TextEncoder など、実装計画の Repair Loop 章に列挙した API を使用していない"
+      ],
+      "verify_commands": ["cd mobile && npm test", "cd mobile && npm run typecheck"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_012",
+      "title": "アプリの起動分岐を純関数に切り出す",
+      "goal": "『保存済みトークンがあり起動リンクが無い場合はサインイン画面を出さない』という分岐を自動テストで担保する。",
+      "scope": [
+        "mobile/src/navigation/launchDecision.ts を作る",
+        "decideLaunchScreen({ hasDeepLink, hasSavedToken }) を実装する",
+        "テストを書く"
+      ],
+      "non_scope": ["App.tsx への組み込み（task_013）"],
+      "files_to_read": ["mobile/App.tsx", "mobile/src/navigation/resolveInitialUrl.ts"],
+      "files_to_create": ["mobile/src/navigation/launchDecision.ts", "mobile/src/navigation/launchDecision.test.ts"],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "type LaunchScreen = 'gallery' | 'signin' を定義する",
+        "decideLaunchScreen({ hasDeepLink, hasSavedToken }: { hasDeepLink: boolean; hasSavedToken: boolean }): LaunchScreen を実装する。hasDeepLink または hasSavedToken が true なら 'gallery'、両方 false なら 'signin'",
+        "テスト: リンクのみ→gallery、保存済みトークンのみ→gallery、両方→gallery、両方無し→signin"
+      ],
+      "done_definition": [
+        "decideLaunchScreen が export されている",
+        "『保存済みトークンがあり起動リンクが無い場合に gallery を返す』テストが存在し通る",
+        "全4パターンのテストが通る"
+      ],
+      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_013",
+      "title": "アプリのサインイン画面と App.tsx への統合",
+      "goal": "リンクが無くても、ID と合言葉でギャラリーを開けるようにする。",
+      "scope": [
+        "mobile/src/screens/SignInScreen.tsx を作る",
+        "App.tsx で launchDecision を使って分岐を差し替える",
+        "NoInvitationScreen を削除する"
+      ],
+      "non_scope": ["リンク方式の変更（従来どおり動かす）"],
+      "files_to_read": [
+        "mobile/App.tsx",
+        "mobile/src/screens/NoInvitationScreen.tsx",
+        "mobile/src/navigation/launchDecision.ts",
+        "mobile/src/auth/signIn.ts"
+      ],
+      "files_to_create": ["mobile/src/screens/SignInScreen.tsx"],
+      "files_to_modify": ["mobile/App.tsx"],
+      "dependencies": ["task_011", "task_012"],
+      "implementation_steps": [
+        "SignInScreen を実装する（UI Plan のとおり。KeyboardAvoidingView を使う）",
+        "送信中は入力とボタンを無効化し ActivityIndicator を表示する",
+        "signIn の reason ごとに文言を対応付ける: invalid_chars→『入力できない文字が含まれています』、空入力→『ID と合言葉を入力してください』、unauthorized→『ID または合言葉が違います』、rate_limited→『アクセスが集中しています。しばらく待ってからお試しください』、forbidden→『この招待は現在ご利用いただけません。撮影担当者にお問い合わせください』、network/server→『通信に失敗しました。電波状況をご確認ください』",
+        "App.tsx で decideLaunchScreen({ hasDeepLink: !!sourceUrl, hasSavedToken }) を使って表示を決める",
+        "サインイン成功時は galleryUrlForToken でギャラリー URL を組み立て、トークンを SecureStore の TOKEN_KEY に保存する",
+        "NoInvitationScreen.tsx を削除し、参照を全て置き換える"
+      ],
+      "done_definition": [
+        "リンク無しで起動するとサインイン画面が出る",
+        "正しい ID と合言葉でギャラリーが開く",
+        "誤った入力でエラー文言が出る（ロック中の文言は存在しない）",
+        "リンクからの起動が従来どおり動く",
+        "typecheck とテストが通る",
+        "mobile/src/screens/NoInvitationScreen.tsx が存在しない"
+      ],
+      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_014",
+      "title": "実機で確認して記録する",
+      "goal": "実際の端末で受け入れ基準を満たすことを確認し、結果を残す。",
+      "scope": [
+        "iOS 実機で acceptance-checks.json の各項目を確認する",
+        "Android 実機でも主要な流れを確認する",
+        "結果を docs/native-app/device-test-log.md に追記する"
+      ],
+      "non_scope": ["ストア提出"],
+      "files_to_read": ["docs/app-signin/acceptance-checks.json", "docs/native-app/device-test-log.md"],
+      "files_to_create": [],
+      "files_to_modify": ["docs/native-app/device-test-log.md"],
+      "dependencies": ["task_006", "task_009", "task_010", "task_013"],
+      "implementation_steps": [
+        "web をプレビューにデプロイする（docs/native-app/eas-build-setup.md の手順）",
+        "eas build --platform ios --profile preview でビルドし、USB でインストールする",
+        "各 check を実施し、合否と根拠を記録する",
+        "落ちた項目は task_id に対応付けて修正する"
+      ],
+      "done_definition": [
+        "acceptance-checks.json の全項目に合否が付いている",
+        "未実施の項目は理由とともに未実施と明記されている",
+        "device-test-log.md に追記されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_015",
+      "title": "[任意] ブラウザ側にもサインイン画面を追加する",
+      "goal": "アプリを入れない利用者も、リンクを失くした場合に ID と合言葉で開けるようにする。",
+      "scope": [
+        "web に /signin ページを追加する",
+        "既存の /api/native/signin を流用し、成功時に /gallery/{token} へ遷移する"
+      ],
+      "non_scope": ["セッションの永続化（今回はトークンで遷移するのみ）"],
+      "files_to_read": ["web/src/app/(gallery)/gallery/[token]/page.tsx", "web/src/app/api/native/signin/route.ts"],
+      "files_to_create": ["web/src/app/signin/page.tsx"],
+      "files_to_modify": [],
+      "dependencies": ["task_006"],
+      "implementation_steps": [
+        "入力フォームを作る（アプリと同じ文言・同じ正規化・同じ許可文字チェック）",
+        "成功時に router.push で /gallery/{token} へ遷移する",
+        "エンドポイント名が native 専用に見えるため、必要なら /api/signin へ移して native からの参照も更新する"
+      ],
+      "done_definition": [
+        "ブラウザで ID と合言葉を入れるとギャラリーが開く",
+        "cd web && npm run build が通る"
+      ],
+      "verify_commands": ["cd web && npm run build", "cd web && npm test"],
+      "risk_level": "low",
+      "optional": true
+    }
+  ]
+}

@@ -33,7 +33,12 @@ service cloud.firestore {
 
     // Users collection
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      // read を get / list に分ける。read のままだと list も許可され、
+      // 匿名認証しただけの第三者が管理者のメールアドレスと役割を列挙できる
+      // （2026-08-17 に実際に列挙できることを確認した）。
+      // web は users を一切読まない。admin は自分自身の取得と管理者としての一覧のみ。
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
       allow create: if isAuthenticated() && request.auth.uid == userId;
       allow update: if isOwner(userId) || isAdmin();
       allow delete: if isAdmin();
@@ -46,7 +51,12 @@ service cloud.firestore {
 
     // Images collection
     match /images/{imageId} {
-      allow read: if isAuthenticated();
+      // 単体取得は許可し、列挙は管理者のみにする。
+      // web は招待に含まれる imageId で1件ずつ取得しており、コレクションクエリは使わない
+      // （web/src/services 配下に images への getDocs は無いことを確認済み）。
+      // admin は projectId などで絞ったクエリを使うが、管理者として実行される。
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
       allow create: if isRegisteredUser() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
@@ -58,7 +68,14 @@ service cloud.firestore {
 
     // Likes collection
     match /likes/{likeId} {
-      allow read: if isAuthenticated();
+      // 単体取得は許可する（ID が `{userId}_{imageId}` 形式で、他人の ID を組み立てるには
+      // 相手の userId を知っている必要があるため、ここを絞っても得るものが少ない）。
+      // 列挙は「自分の分だけ」に限定する。list のルールは返却され得る各ドキュメントに対して
+      // 評価されるため、userId で絞っていないクエリはこの条件を満たせず拒否される。
+      // web の getLikedImageIds は where('userId','==',uid) で絞っているので通る。
+      allow get: if isAuthenticated();
+      allow list: if isAdmin() ||
+        (isAuthenticated() && resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated() &&
         request.resource.data.userId == request.auth.uid;
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
@@ -66,7 +83,24 @@ service cloud.firestore {
 
     // Invitations collection
     match /invitations/{invitationId} {
-      allow read: if isAuthenticated();
+      // ドキュメント ID は招待トークンそのもの。
+      //
+      // list を禁止するのが要点。read のままだと list も許可され、匿名認証しただけの
+      // 第三者が招待を全件列挙して token を平文で収穫できる。つまり第三者が
+      // 全クライアントのギャラリーを開けてしまう
+      // （2026-08-17 に実際に列挙できることを確認し、この変更で塞いだ）。
+      //
+      // web は token をドキュメント ID として単一取得（get）するため list は不要。
+      // admin は一覧表示のために list を使うので管理者には許可する。
+      //
+      // get の条件に isActive と expiresAt を入れているのは、無効化・期限切れの招待を
+      // Firestore の側でも拒否するため。web 側の validateInvitation だけに頼らない。
+      // 拒否されたことと存在しないことは web 側で同じ結果に正規化している。
+      allow get: if isAdmin() ||
+        (isAuthenticated() &&
+         resource.data.isActive == true &&
+         resource.data.expiresAt > request.time);
+      allow list: if isAdmin();
       allow create: if isAdmin() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;

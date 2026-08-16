@@ -7,6 +7,7 @@ vi.mock('firebase/firestore', () => ({
   collection: (...args: unknown[]) => mockFirestore.collection(...args),
   doc: (...args: unknown[]) => mockFirestore.doc(...args),
   addDoc: (...args: unknown[]) => mockFirestore.addDoc(...args),
+  setDoc: (...args: unknown[]) => mockFirestore.setDoc(...args),
   getDoc: (...args: unknown[]) => mockFirestore.getDoc(...args),
   getDocs: (...args: unknown[]) => mockFirestore.getDocs(...args),
   updateDoc: (...args: unknown[]) => mockFirestore.updateDoc(...args),
@@ -25,6 +26,8 @@ vi.mock('../../lib/firebase', () => ({
 
 vi.mock('nanoid', () => ({
   nanoid: () => 'abc123def456ghi789012',
+  // createInvitation はトークンをドキュメント ID にするため customAlphabet を使う
+  customAlphabet: () => () => 'abc123def456ghi789012',
 }));
 
 let invitationService: typeof import('../invitationService');
@@ -39,7 +42,8 @@ describe('invitationService（projectId対応）', () => {
     it('projectIdフィールドを含むドキュメントを作成する', async () => {
       const mockDocRef = { id: 'new-invitation-id' };
       mockFirestore.collection.mockReturnValue('invitations-collection');
-      mockFirestore.addDoc.mockResolvedValue(mockDocRef);
+      mockFirestore.doc.mockReturnValue(mockDocRef);
+      mockFirestore.setDoc.mockResolvedValue(undefined);
       mockFirestore.getDoc.mockResolvedValue(
         createMockDocSnapshot('new-invitation-id', {
           ...sampleInvitation,
@@ -57,7 +61,7 @@ describe('invitationService（projectId対応）', () => {
         expiresAt: new Date('2025-12-31'),
       });
 
-      expect(mockFirestore.addDoc).toHaveBeenCalledWith(
+      expect(mockFirestore.setDoc).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
           projectId: 'project-1',
@@ -69,7 +73,8 @@ describe('invitationService（projectId対応）', () => {
     it('21文字のtokenを生成する', async () => {
       const mockDocRef = { id: 'new-invitation-id' };
       mockFirestore.collection.mockReturnValue('invitations-collection');
-      mockFirestore.addDoc.mockResolvedValue(mockDocRef);
+      mockFirestore.doc.mockReturnValue(mockDocRef);
+      mockFirestore.setDoc.mockResolvedValue(undefined);
       mockFirestore.getDoc.mockResolvedValue(
         createMockDocSnapshot('new-invitation-id', {
           ...sampleInvitation,
@@ -89,10 +94,45 @@ describe('invitationService（projectId対応）', () => {
       expect(result.token).toHaveLength(21);
     });
 
+    // ドキュメント ID をトークンにする設計の回帰防止。
+    // ここが addDoc（自動採番）に戻ると web は招待をコレクションクエリでしか引けなくなり、
+    // list を許可せざるを得なくなる。list を許可すると匿名認証しただけの第三者が
+    // 招待を全件列挙してトークンを平文で収穫できる。
+    it('ドキュメントIDにトークンを使う（自動採番しない）', async () => {
+      const mockDocRef = { id: 'abc123def456ghi789012' };
+      mockFirestore.collection.mockReturnValue('invitations-collection');
+      mockFirestore.doc.mockReturnValue(mockDocRef);
+      mockFirestore.setDoc.mockResolvedValue(undefined);
+      mockFirestore.getDoc.mockResolvedValue(
+        createMockDocSnapshot('abc123def456ghi789012', {
+          ...sampleInvitation,
+          token: 'abc123def456ghi789012',
+          expiresAt: { toDate: () => new Date('2025-12-31') },
+        })
+      );
+
+      const result = await invitationService.createInvitation({
+        projectId: 'project-1',
+        clientName: 'テスト',
+        createdBy: 'admin-uid',
+        imageIds: ['image-1'],
+        expiresAt: new Date('2025-12-31'),
+      });
+
+      expect(mockFirestore.doc).toHaveBeenCalledWith(
+        expect.anything(),
+        'invitations',
+        'abc123def456ghi789012'
+      );
+      expect(mockFirestore.addDoc).not.toHaveBeenCalled();
+      expect(result.id).toBe(result.token);
+    });
+
     it('isActive=true, accessCount=0で初期化する', async () => {
       const mockDocRef = { id: 'new-invitation-id' };
       mockFirestore.collection.mockReturnValue('invitations-collection');
-      mockFirestore.addDoc.mockResolvedValue(mockDocRef);
+      mockFirestore.doc.mockReturnValue(mockDocRef);
+      mockFirestore.setDoc.mockResolvedValue(undefined);
       mockFirestore.getDoc.mockResolvedValue(
         createMockDocSnapshot('new-invitation-id', {
           ...sampleInvitation,
@@ -108,7 +148,7 @@ describe('invitationService（projectId対応）', () => {
         expiresAt: new Date('2025-12-31'),
       });
 
-      expect(mockFirestore.addDoc).toHaveBeenCalledWith(
+      expect(mockFirestore.setDoc).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
           isActive: true,

@@ -1,7 +1,7 @@
 import {
   collection,
   doc,
-  addDoc,
+  setDoc,
   getDoc,
   getDocs,
   updateDoc,
@@ -14,7 +14,18 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { nanoid } from 'nanoid';
+import { customAlphabet } from 'nanoid';
+
+/**
+ * 招待トークンに使う文字。nanoid の既定から `_` を除いてある。
+ *
+ * トークンはそのまま Firestore のドキュメント ID になる。Firestore は
+ * `__` で始まり `__` で終わる ID を予約しており、`_` を含めると
+ * ごく稀にそのような ID が生成されて書き込みが失敗する。
+ */
+const TOKEN_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-';
+const generateToken = customAlphabet(TOKEN_ALPHABET, 21);
 
 export interface Invitation {
   id: string;
@@ -115,9 +126,17 @@ export const createInvitation = async (params: {
     throw new Error('imageIds must not be empty');
   }
 
-  const token = nanoid(21);
+  // トークンをドキュメント ID にする。
+  //
+  // web はこの ID で単一ドキュメント取得（get）して招待を引く。
+  // 以前は `where('token','==',token)` のコレクションクエリで引いていたが、
+  // それだと list を許可する必要があり、匿名認証しただけの第三者が招待を
+  // 全件列挙してトークンを平文で収穫できる状態になる
+  // （2026-08-17 に実際に列挙できることを確認した）。
+  const token = generateToken();
 
-  const docRef = await addDoc(collection(db, INVITATIONS_COLLECTION), {
+  const docRef = doc(db, INVITATIONS_COLLECTION, token);
+  await setDoc(docRef, {
     token,
     projectId: params.projectId,
     clientName: params.clientName,
