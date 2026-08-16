@@ -16,6 +16,8 @@ describe('IosSaveGuide', () => {
   });
 
   afterEach(() => {
+    delete window.__NATIVE_GALLERY__;
+    delete window.ReactNativeWebView;
     vi.restoreAllMocks();
   });
 
@@ -51,5 +53,12 @@ describe('IosSaveGuide', () => {
 
     expect(screen.queryByText('写真を保存するには')).not.toBeInTheDocument();
     expect(localStorage.getItem('ios_save_guide_dismissed')).toBe('1');
+  });
+
+  it('ネイティブシェル内では表示しない', () => {
+    vi.mocked(isIos).mockReturnValue(true);
+    window.ReactNativeWebView = { postMessage: vi.fn() };
+    render(<IosSaveGuide />);
+    expect(screen.queryByText('写真を保存するには')).not.toBeInTheDocument();
   });
 });

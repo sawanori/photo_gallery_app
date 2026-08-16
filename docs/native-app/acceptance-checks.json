@@ -1,0 +1,303 @@
+{
+  "feature": "写真閲覧画面のネイティブ化（WebView シェル + フォトライブラリ直接保存）",
+  "version": 2,
+  "review_note": "v2 は Gemini(gemini-3.5-flash) と Codex の敵対的レビューで指摘された未計測の失敗モード（認可、origin 偽装、hydration、バージョン skew、Android 権限、容量・通信量、WebView クラッシュ、アクセシビリティ）を追加した。裁定の全件は docs/native-app/adversarial-review.md を参照。",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "iOS 実機 / 単体保存（主要ユーザーフロー）",
+      "rule": "保存ボタンを1回押すと、ブラウザ遷移も長押し操作もなく写真アプリに画像が追加される",
+      "expected_result": "写真アプリの最近の項目に当該画像が1枚追加され、web 側にトースト『写真に保存しました』が出る",
+      "manual_or_automated": "manual",
+      "verification_method": "preview ビルドを iOS 実機にインストールし、デモ招待リンクからギャラリーを開いて保存ボタンを押す。写真アプリを開いて追加を確認し、結果を docs/native-app/device-test-log.md に記録する"
+    },
+    {
+      "id": "check_002",
+      "target": "Android 実機 / 単体保存（主要ユーザーフロー）",
+      "rule": "同じ操作でギャラリー（フォト）アプリに画像が追加される",
+      "expected_result": "ギャラリーに当該画像が1枚追加される",
+      "manual_or_automated": "manual",
+      "verification_method": "preview APK を Android 実機にインストールし、同じ手順を実施してギャラリーを確認する。アプリ専用キャッシュ経由でも MediaStore に登録されることをここで確定させる"
+    },
+    {
+      "id": "check_003",
+      "target": "iOS / 権限（認証・権限の振る舞い）",
+      "rule": "初回保存時の権限ダイアログが書き込み専用であり、フォトライブラリの読み取り権限を要求しない",
+      "expected_result": "ダイアログに写真の追加のみを許可する旨が表示される。設定アプリの当該アプリの写真項目が『追加のみ』になっている",
+      "manual_or_automated": "manual",
+      "verification_method": "アプリを削除して再インストールし初回保存を実行する。ダイアログの文言を撮影し、設定アプリ > 該当アプリ > 写真 の表示を確認する"
+    },
+    {
+      "id": "check_004",
+      "target": "Android / マニフェスト権限（Google Play ポリシー）",
+      "rule": "生成された AndroidManifest.xml に READ_MEDIA_IMAGES / READ_MEDIA_VIDEO / READ_EXTERNAL_STORAGE が含まれない",
+      "expected_result": "保存専用アプリとして広範な写真読み取り権限を宣言していない。含まれる場合はその理由と Play への申告方針が記録されている",
+      "manual_or_automated": "manual",
+      "verification_method": "npx expo prebuild --platform android --clean を実行し、android/app/src/main/AndroidManifest.xml の uses-permission を全て列挙して docs/native-app/android-permissions.md と突き合わせる"
+    },
+    {
+      "id": "check_005",
+      "target": "権限拒否時のエラーハンドリング",
+      "rule": "写真への保存を拒否した状態で保存を押すと案内モーダルが出て設定アプリを開ける。アプリはクラッシュしない",
+      "expected_result": "『写真への保存が許可されていません』のモーダルと『設定を開く』ボタンが表示され、押すと OS の設定画面が開く",
+      "manual_or_automated": "manual",
+      "verification_method": "設定アプリで写真アクセスを『なし』にしてから保存を押す。モーダルの表示と設定画面遷移を確認する"
+    },
+    {
+      "id": "check_006",
+      "target": "ネットワーク断時のエラーハンドリング",
+      "rule": "機内モードで保存を押すと download_failed として失敗が報告され、アプリはクラッシュしない",
+      "expected_result": "web 側に保存失敗の表示が出る。アプリは操作可能なまま残る",
+      "manual_or_automated": "manual",
+      "verification_method": "ギャラリー表示後に機内モードへ切り替え、保存ボタンを押す。表示とアプリの生存を確認する"
+    },
+    {
+      "id": "check_007",
+      "target": "一括保存（主要ユーザーフロー・スケール）",
+      "rule": "お気に入りの一括保存で 200 枚以上が順に保存され、進捗が current/total で更新される",
+      "expected_result": "200 枚以上が写真アプリ／ギャラリーに追加され、進捗表示が単調増加して total に達する",
+      "manual_or_automated": "manual",
+      "verification_method": "デモ招待で 200 枚以上をお気に入りにしてから一括保存を実行し、保存枚数を写真アプリ側で数えて突き合わせる。30 枚だけの確認で代替しない"
+    },
+    {
+      "id": "check_008",
+      "target": "一括保存 / 空き容量不足",
+      "rule": "端末の空き容量が必要量に満たない場合、1枚も保存を開始せず必要容量を提示する",
+      "expected_result": "insufficient_storage として案内が出る。保存は開始されず、途中でクラッシュしない",
+      "manual_or_automated": "manual",
+      "verification_method": "空き容量を意図的に減らした端末（またはダミーファイルで埋めた端末）で大量の一括保存を試みる"
+    },
+    {
+      "id": "check_009",
+      "target": "一括保存 / セルラー通信",
+      "rule": "Wi-Fi でない状態の一括保存でデータ量の警告が出て、続行の確認が求められる",
+      "expected_result": "おおよそのダウンロード量が提示され、続行と中止が選べる",
+      "manual_or_automated": "manual",
+      "verification_method": "Wi-Fi を切ってモバイル通信のみにした状態で一括保存を押す"
+    },
+    {
+      "id": "check_010",
+      "target": "一括保存のキャンセル",
+      "rule": "保存中にキャンセルすると以降の保存が止まり、保存済み件数を含む結果が報告される",
+      "expected_result": "『N枚を保存しました』と表示され、写真アプリの追加枚数が N と一致する。保存済みの画像は消えない",
+      "manual_or_automated": "manual",
+      "verification_method": "一括保存を開始し途中でキャンセルする。表示された N と実際の追加枚数を突き合わせる"
+    },
+    {
+      "id": "check_011",
+      "target": "一括保存 / バックグラウンド移行",
+      "rule": "保存中にアプリをバックグラウンドへ回して戻したとき、進捗が固まったまま復旧不能にならない",
+      "expected_result": "中断が検知され、中断済みとして結果が返り、再実行できる状態になる。無限に進捗が止まったままにならない",
+      "manual_or_automated": "manual",
+      "verification_method": "一括保存中にホームボタンで別アプリへ切り替え、30秒後に復帰する。iOS / Android の両方で実施する"
+    },
+    {
+      "id": "check_012",
+      "target": "ブリッジの入力検証 / origin（セキュリティ）",
+      "rule": "許可 origin 以外の URL は保存されず invalid_url として拒否される。とくにサブドメイン偽装を通さない",
+      "expected_result": "https://firebasestorage.googleapis.com.evil.tld/... と http:// と許可外ホストが全て拒否される",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/save/validate.test.ts と mobile/src/navigation/isAllowedNavigation.test.ts で検証し、cd mobile && npm test で実行する。startsWith 比較でないことをテストが担保する"
+    },
+    {
+      "id": "check_013",
+      "target": "ブリッジの入力検証 / パス traversal（セキュリティ）",
+      "rule": "filename に '../' やパス区切り、NUL を含む値を渡してもアプリのサンドボックス外にファイルが書かれない",
+      "expected_result": "該当 filename が拒否または無害化され、書き込み先が常にキャッシュディレクトリ配下になる",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/save/validate.test.ts で '../../etc/passwd'、'a/b.jpg'、NUL 入り、拡張子なしの値を検証する"
+    },
+    {
+      "id": "check_014",
+      "target": "ブリッジの nonce（セキュリティ）",
+      "rule": "nonce を持たない、または誤った nonce のメッセージがネイティブ側で無視される",
+      "expected_result": "保存が実行されず、アプリもクラッシュしない",
+      "manual_or_automated": "automated",
+      "verification_method": "handleMessage のユニットテストで nonce 不一致・欠落・不正 JSON・未知の type を渡し、いずれも保存が呼ばれないことを検証する"
+    },
+    {
+      "id": "check_015",
+      "target": "認可（セキュリティ・Phase 2 の中核）",
+      "rule": "招待に含まれない imageId を要求すると 403 で拒否され、ネイティブは保存しない",
+      "expected_result": "/api/native/manifest が 403 を返し、部分的にも許可しない。期限切れ・無効化された招待も拒否される",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/app/api/native/manifest/route.test.ts で、他招待の imageId、期限切れ招待、無効化された招待、存在しないトークンを検証し、cd web && npm test で実行する"
+    },
+    {
+      "id": "check_016",
+      "target": "認可（Phase 2 完了の確認）",
+      "rule": "ネイティブが web から直接受け取った URL を保存する経路が存在しない",
+      "expected_result": "mobile/ のコードに web 由来の URL をそのまま保存へ渡す実装が残っていない",
+      "manual_or_automated": "manual",
+      "verification_method": "mobile/src 配下を grep し、saveOne / saveMany の入力がマニフェスト API のレスポンス由来のみであることをコードレビューで確認する"
+    },
+    {
+      "id": "check_017",
+      "target": "WebView のナビゲーション制限（セキュリティ）",
+      "rule": "WebView 内で自オリジン外へのリンクを踏んでも WebView 内で遷移せず、OS の既定ブラウザが開く",
+      "expected_result": "外部リンク（例: LINE 共有リンク）で WebView の表示が変わらず、別アプリ／ブラウザが前面に出る",
+      "manual_or_automated": "manual",
+      "verification_method": "ギャラリー内の外部リンクをタップし、WebView の URL が変わらないことと外部ブラウザが開くことを確認する"
+    },
+    {
+      "id": "check_018",
+      "target": "ネイティブ検出のフォールバック（Android の注入不達）",
+      "rule": "injectedJavaScriptBeforeContentLoaded が間に合わなくても、User-Agent 検出でネイティブと判定される",
+      "expected_result": "window.__NATIVE_GALLERY__ が未定義でも、detectNativeShell() が既定値を返しネイティブ挙動になる",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/lib/nativeBridge.test.ts で注入グローバル無し + User-Agent に PhotoGalleryApp/ ありのケースを検証する。加えて Android 実機で navigator.userAgent に接尾辞が含まれることを目視確認する"
+    },
+    {
+      "id": "check_019",
+      "target": "ブリッジのバージョン skew（運用リスク）",
+      "rule": "古いアプリ binary に対して新しい web が未対応機能を使おうとしたとき、黙って失敗せずブラウザ挙動にフォールバックする",
+      "expected_result": "supports に無い機能では従来のブラウザ挙動が動き、必要ならアプリ更新の案内が出る。無反応にならない",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/lib/nativeBridge.test.ts で supports を絞った状態を作り、supportsFeature が false のときにフォールバック経路が呼ばれることを検証する"
+    },
+    {
+      "id": "check_020",
+      "target": "WebView プロセスのクラッシュ復帰",
+      "rule": "WebView プロセスが落ちても白画面のまま沈黙せず、自動でリロードされる",
+      "expected_result": "画面が復帰する。連続クラッシュ時は読み込みエラー画面に落ちる",
+      "manual_or_automated": "manual",
+      "verification_method": "開発ビルドで WebView プロセスを強制終了させる（iOS はメモリ圧迫、Android は adb でレンダラを kill）。onContentProcessDidTerminate / onRenderProcessGone の発火とリロードを確認する"
+    },
+    {
+      "id": "check_021",
+      "target": "ディープリンク / ギャラリー（主要ユーザーフロー）",
+      "rule": "インストール済み端末で https://<domain>/gallery/{token} を開くとアプリが起動し、そのトークンのギャラリーが表示される",
+      "expected_result": "ブラウザを経由せずアプリが前面に出て、当該招待の写真が並ぶ",
+      "manual_or_automated": "manual",
+      "verification_method": "メモアプリ等に貼ったリンクをタップする。iOS はアプリ起動を目視、Android は adb shell pm get-app-links <package> で verified を併せて確認する"
+    },
+    {
+      "id": "check_022",
+      "target": "ディープリンク / お気に入り（パスとクエリの保持）",
+      "rule": "https://<domain>/liked?token={token} を開くと、お気に入り画面がそのトークンで表示される",
+      "expected_result": "ギャラリー一覧ではなくお気に入り画面が開き、トークンが正しく引き継がれる",
+      "manual_or_automated": "manual",
+      "verification_method": "お気に入りページの URL をタップして起動し、表示される画面と内容を確認する。resolveInitialUrl.test.ts でも同ケースを自動検証する"
+    },
+    {
+      "id": "check_023",
+      "target": "アプリ未インストール時のフォールバック（回帰リスク）",
+      "rule": "アプリ未インストールの端末で同じ招待リンクを開くと、従来どおりブラウザでギャラリーが表示される",
+      "expected_result": "エラーやストアへの強制遷移が起きず、現在と同じ web ギャラリーが開く",
+      "manual_or_automated": "manual",
+      "verification_method": "アプリ未インストールの iOS / Android 端末で招待リンクを開き、表示・お気に入り・保存ガイドが従来どおり動くことを確認する"
+    },
+    {
+      "id": "check_024",
+      "target": "未リンク起動時の挙動",
+      "rule": "履歴がない状態でアプリアイコンから起動すると案内画面が出る。白画面やクラッシュにならない",
+      "expected_result": "『受け取った招待リンクから開いてください』の画面が表示される",
+      "manual_or_automated": "manual",
+      "verification_method": "アプリを削除して再インストールし、リンクを経由せずアイコンから起動する"
+    },
+    {
+      "id": "check_025",
+      "target": "web からアプリへの導線",
+      "rule": "ブラウザで web ギャラリーを開いたモバイルユーザーにアプリの案内が提示される",
+      "expected_result": "iOS Safari で Smart App Banner、Android Chrome で案内バナーが表示される。ネイティブシェル内では表示されない",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS Safari / Android Chrome でデモ招待を開いて表示を確認し、アプリ内 WebView でも開いて非表示を確認する"
+    },
+    {
+      "id": "check_026",
+      "target": "web のブラウザ挙動（回帰リスク）",
+      "rule": "通常のブラウザで /gallery/{token} を開いたとき、保存ボタン・保存ガイド・ZIP・共有の挙動が変更前と同一である",
+      "expected_result": "PC Chrome では blob ダウンロード、iOS Safari では新規タブ + IosSaveGuide、Android Chrome では新規タブ + AndroidSaveGuide、ZIP ボタンは ZIP を生成する",
+      "manual_or_automated": "manual",
+      "verification_method": "PC Chrome / iOS Safari / Android Chrome の3環境でデモ招待を開き、4つの操作を実施して変更前の挙動と突き合わせる"
+    },
+    {
+      "id": "check_027",
+      "target": "hydration（回帰リスク）",
+      "rule": "ネイティブ分岐の追加によって hydration mismatch の警告が発生しない",
+      "expected_result": "ブラウザ3環境とアプリ内 WebView のいずれでも、コンソールに hydration 関連の警告・エラーが出ない",
+      "manual_or_automated": "manual",
+      "verification_method": "各環境の開発者コンソール（アプリ内は開発ビルドのリモートデバッグ）を開いてページを読み込み、警告の有無を確認する"
+    },
+    {
+      "id": "check_028",
+      "target": "web のネイティブ分岐（自動テスト）",
+      "rule": "ネイティブ検出・フィーチャ判定・UI 分岐がテストで守られる",
+      "expected_result": "注入グローバルあり／User-Agent のみ／ReactNativeWebView のみ／何もなし の4経路が区別され、DownloadButton の分岐が両方向で検証される",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/lib/nativeBridge.test.ts と web/src/components/DownloadButton.test.tsx を追加し、cd web && npm test で実行する"
+    },
+    {
+      "id": "check_029",
+      "target": "web のビルドと lint（回帰リスク）",
+      "rule": "web のテストが全パスし、ビルドが成功し、lint のエラー数がベースラインを超えない",
+      "expected_result": "cd web && npm test が全パス（テスト数はベースライン 22 から増加）、npm run build が成功、npm run lint のエラーが 16 以下",
+      "manual_or_automated": "automated",
+      "verification_method": "3コマンドを実行し、出力をそのまま記録する"
+    },
+    {
+      "id": "check_030",
+      "target": "mobile の型検査・テスト・構成診断",
+      "rule": "mobile の型検査とユニットテストが通り、Expo の構成診断が致命的な問題を報告しない",
+      "expected_result": "cd mobile && npm run typecheck と npm test がエラーなし、npx expo-doctor が致命的な問題なし",
+      "manual_or_automated": "automated",
+      "verification_method": "3コマンドを実行して出力を記録する。validate.ts が expo モジュールを import していないことも grep で確認する"
+    },
+    {
+      "id": "check_031",
+      "target": "アクセシビリティ / 読み上げ",
+      "rule": "保存の開始・進捗・完了・失敗が VoiceOver / TalkBack で読み上げられる",
+      "expected_result": "スクリーンリーダー利用者が保存の進行と結果を音声だけで把握できる",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機で VoiceOver、Android 実機で TalkBack を有効にして単体保存と一括保存を実行し、読み上げ内容を docs/native-app/a11y-check.md に記録する"
+    },
+    {
+      "id": "check_032",
+      "target": "アクセシビリティ / フォーカス",
+      "rule": "権限拒否・容量不足などのモーダルがフォーカストラップを持ち、閉じたら発火元へフォーカスが戻る",
+      "expected_result": "モーダル表示中に背後の要素へフォーカスが抜けない。閉じた後の操作が継続できる",
+      "manual_or_automated": "manual",
+      "verification_method": "スクリーンリーダーとキーボード（外付け）でモーダルを開閉し、フォーカスの移動を追跡する"
+    },
+    {
+      "id": "check_033",
+      "target": "Firestore データの整合（データベースの振る舞い）",
+      "rule": "アプリからのお気に入り操作が web と同じコレクション・同じ ID 体系で書かれ、不整合なドキュメントを作らない",
+      "expected_result": "アプリで付けたお気に入りが likes コレクションに web と同形式で作成され、admin から同じように読める",
+      "manual_or_automated": "manual",
+      "verification_method": "アプリでお気に入りを1件付け、Firebase コンソールで likes のドキュメント ID とフィールド構成を web 経由のものと比較する"
+    },
+    {
+      "id": "check_034",
+      "target": "お気に入りの端末間引き継ぎ（別計画への依存）",
+      "rule": "同じ招待リンクをブラウザとアプリの両方で開いたとき、お気に入りの状態が一致する",
+      "expected_result": "ブラウザで付けたお気に入りがアプリでも選択済みとして表示される",
+      "manual_or_automated": "manual",
+      "verification_method": "docs/implementation-plan.md の task_004（いいねを招待単位に変更）の完了後に実施する。未完了の時点ではこの項目は不合格であり、ストア公開の前提条件として扱う。未完了のまま pass と記録しない"
+    },
+    {
+      "id": "check_035",
+      "target": "前提条件の充足（セキュリティ・別計画への依存）",
+      "rule": "匿名認証のみのクライアントから invitations / images のコレクションクエリが permission-denied になる",
+      "expected_result": "別計画の task_001 / task_002 が完了しており、招待リンクがアクセス境界として機能している",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで匿名サインイン後に getDocs(collection(db,'invitations')) と getDocs(collection(db,'images')) を実行し、結果を docs/native-app/prerequisite-status.md に記録する。推測で完了と書かない"
+    },
+    {
+      "id": "check_036",
+      "target": "キャッシュの後始末",
+      "rule": "保存完了後にアプリのキャッシュディレクトリへ一時ファイルが残らない",
+      "expected_result": "200 枚の一括保存後、gallery キャッシュディレクトリが空になっている",
+      "manual_or_automated": "manual",
+      "verification_method": "一括保存の直後に開発ビルドのログまたはデバッガでキャッシュディレクトリの中身を列挙し、空であることを確認する。キャンセルした場合と失敗した場合も同様に確認する"
+    },
+    {
+      "id": "check_037",
+      "target": "招待トークンの取り扱い（プライバシー）",
+      "rule": "端末に保存されるのは招待トークン1件のみで、ログに出力されず、招待失効時に削除される",
+      "expected_result": "SecureStore に clientName / clientEmail が保存されていない。デバッグログとクラッシュログにトークンが現れない",
+      "manual_or_automated": "manual",
+      "verification_method": "SecureStore の内容を開発ビルドで列挙し、アプリのログ出力を grep してトークン文字列が含まれないことを確認する。プライバシーポリシーの記載内容と突き合わせる"
+    }
+  ]
+}

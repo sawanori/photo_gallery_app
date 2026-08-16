@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useIsNativeShell } from '@/hooks/useIsNativeShell';
 
 const STORAGE_KEY = 'welcome_guide_dismissed';
 
 export default function WelcomeGuide() {
   const [show, setShow] = useState(false);
+  const { isNative } = useIsNativeShell();
 
   useEffect(() => {
     const dismissed = localStorage.getItem(STORAGE_KEY);
@@ -35,7 +37,9 @@ export default function WelcomeGuide() {
     {
       num: 3,
       title: 'ダウンロード',
-      desc: 'お気に入りページからまとめて ZIP ダウンロードが可能です。',
+      desc: isNative
+        ? '保存ボタンで端末の写真アプリに直接保存できます。まとめて保存も可能です。'
+        : 'お気に入りページからまとめて ZIP ダウンロードが可能です。',
     },
   ];
 
@@ -66,12 +70,20 @@ export default function WelcomeGuide() {
           ))}
         </div>
 
-        <p className="text-xs text-muted mt-4 leading-relaxed">
-          ※ スマートフォンは機種・ブラウザにより保存方法が異なります。PC からのダウンロードを推奨します。
-        </p>
-        <p className="text-xs text-muted mt-2 leading-relaxed">
-          ※ 推奨ブラウザ: Google Chrome。Safari では表示が不安定になる場合があります。
-        </p>
+        {isNative ? (
+          <p className="text-xs text-muted mt-4 leading-relaxed">
+            ※ 保存した写真は端末の写真アプリに追加されます。まとめて保存する場合は、完了するまでアプリを閉じないでください。
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-muted mt-4 leading-relaxed">
+              ※ スマートフォンは機種・ブラウザにより保存方法が異なります。PC からのダウンロードを推奨します。
+            </p>
+            <p className="text-xs text-muted mt-2 leading-relaxed">
+              ※ 推奨ブラウザ: Google Chrome。Safari では表示が不安定になる場合があります。
+            </p>
+          </>
+        )}
 
         <button
           onClick={handleDismiss}

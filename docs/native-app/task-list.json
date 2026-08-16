@@ -1,0 +1,1166 @@
+{
+  "feature": "写真閲覧画面のネイティブ化（WebView シェル + フォトライブラリ直接保存）",
+  "version": 2,
+  "review_note": "v2 は Gemini(gemini-3.5-flash) と Codex による敵対的レビューを反映。採用・却下の全件は docs/native-app/adversarial-review.md を参照。",
+  "tasks": [
+    {
+      "task_id": "task_000",
+      "status": "closed_rejected",
+      "resolution": "2026-08-16 ユーザー判断により却下。Web Share API 経由の保存は動作しないのではなく、手順が煩雑で求めるユーザビリティに達しないため採用しない。詳細は docs/native-app/decisions.md の D1。本タスクの実測は実施せず、ネイティブアプリの実装へ進む。",
+      "title": "[ゲート0・判断済み/却下] Web Share API による一括共有を実機で計測する",
+      "goal": "アプリを配布せずに目的（フォトライブラリへの保存）をどこまで達成できるかを実測し、続行可否をユーザーが判断できる材料を残す",
+      "scope": [
+        "iOS Safari での navigator.share 複数ファイル共有の実機確認",
+        "Android Chrome での同等確認",
+        "枚数ごとの成否・手数・所要時間の記録"
+      ],
+      "non_scope": [
+        "一括共有機能の本実装",
+        "この結果による計画の自動中止（判断はユーザーが行う）",
+        "本番 web コードの変更"
+      ],
+      "files_to_read": [
+        "web/src/components/ShareButton.tsx",
+        "web/src/utils/device.ts"
+      ],
+      "files_to_create": [
+        "docs/native-app/web-share-measurement.md"
+      ],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "使い捨ての検証ページかブラウザのコンソールから navigator.share({ files: [...] }) に複数の File を渡す。本番コードは変更しない",
+        "iOS 実機で 1 / 5 / 20 / 50 枚を試す。共有シートに保存の選択肢が出るか、何枚まで受け付けるか、写真アプリに実際に入るか、手数と所要時間を記録する",
+        "Android Chrome でも同じ枚数を試す",
+        "失敗・制限はエラーをそのまま記録する。動くはずという推測で埋めない",
+        "docs/native-app/web-share-measurement.md に端末・OS バージョン・枚数ごとの結果を表で記録し、所見を1段落書く",
+        "結果をユーザーに提示し、続行するかを確認する。確認が取れるまで task_001 以降に進まない"
+      ],
+      "done_definition": [
+        "iOS / Android 各1機種以上で4段階の枚数を実測した結果が記録されている",
+        "動かなかったケースの実際のエラーが記録されている",
+        "本番の web コードが変更されていない（git status で確認）",
+        "ユーザーから続行または中止の判断を得ている"
+      ],
+      "verify_commands": [
+        "cd web && npm test"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_001",
+      "status": "partially_done",
+      "resolution": "2026-08-16 方針は決定済み（docs/native-app/decisions.md の D2 / D3）。配布形態は公開ストアを第一候補・TestFlight 外部配布を代替（最終確定は task_015）。配信ドメインは独自ドメインを用意する方針で確定。未了なのは (1) 具体的なドメイン名の確定 (2) bundleIdentifier / package 名の確定 (3) Apple Developer Program と Google Play Console の登録 (4) eas login / eas init の4点で、いずれも人間が実施する。",
+      "title": "[ゲート1・人間が実施] 配布形態と配信ドメインを決め、開発者アカウントを登録する",
+      "goal": "以降の実装が依存する2つの決定と、対話が必要なアカウント登録を先に片付ける",
+      "scope": [
+        "配布形態の決定（公開ストア / TestFlight + Play 内部テスト / Play 限定公開）",
+        "ユニバーサルリンクに使う配信ドメインの確定",
+        "Apple Developer Program と Google Play Console の登録",
+        "EAS へのログインと eas init"
+      ],
+      "non_scope": [
+        "コードの変更",
+        "eas.json の内容決定（task_002 で行う）"
+      ],
+      "files_to_read": [
+        "docs/native-app/implementation-plan.md"
+      ],
+      "files_to_create": [
+        "docs/native-app/decisions.md"
+      ],
+      "files_to_modify": [],
+      "dependencies": [
+        "task_000"
+      ],
+      "implementation_steps": [
+        "配布形態を決める。クライアントが特定少数なら TestFlight / Play 内部テスト / Play 限定公開が App Store 4.2 の審査圧力を大きく下げる。決定と理由を decisions.md に書く",
+        "配信ドメインを確定する。*.vercel.app のプレビュー用ホストのまま進めない。独自ドメインにする場合は DNS と Vercel の設定を完了させる",
+        "Apple Developer Program / Google Play Console に登録する。費用は申込時点の公式価格を確認する",
+        "npx eas login と npx eas init を人間が実行する。これらは対話必須のためエージェントでは実行できない",
+        "確定した WEB_ORIGIN、bundleIdentifier、package 名、Apple Team ID を decisions.md に記録する"
+      ],
+      "done_definition": [
+        "decisions.md に配布形態・配信ドメイン・bundleIdentifier・package 名・Apple Team ID が記録されている",
+        "配信ドメインが *.vercel.app のプレビューホストでない",
+        "EAS プロジェクトが作成され、プロジェクト ID が記録されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_002",
+      "title": "mobile/ に Expo プロジェクトの土台を作る（SDK を明示 pin）",
+      "goal": "TypeScript + Expo の空アプリが起動し、typecheck とテストが通り、Android マニフェストに不要な読み取り権限が入らない状態にする",
+      "scope": [
+        "SDK バージョンを明示 pin した package.json",
+        "app.config.ts（scheme / 識別子 / 権限文言 / blockedPermissions / media-library プラグイン）",
+        "tsconfig.json、eas.json、.env.example",
+        "jest-expo によるテスト実行環境"
+      ],
+      "non_scope": [
+        "WebView の実装（task_003）",
+        "eas login / eas build の実行（task_001 と task_014）",
+        "front/ への一切の変更"
+      ],
+      "files_to_read": [
+        "docs/native-app/decisions.md",
+        "front/package.json",
+        "front/app.json",
+        "CLAUDE.md"
+      ],
+      "files_to_create": [
+        "mobile/package.json",
+        "mobile/app.config.ts",
+        "mobile/tsconfig.json",
+        "mobile/eas.json",
+        "mobile/jest.config.js",
+        "mobile/.gitignore",
+        "mobile/.env.example",
+        "mobile/src/config.ts",
+        "mobile/App.tsx"
+      ],
+      "files_to_modify": [],
+      "dependencies": [
+        "task_001"
+      ],
+      "implementation_steps": [
+        "npx create-expo-app@latest mobile --template blank-typescript で雛形を作る。作成された Expo SDK の実バージョンを確認し、package.json で明示 pin する（キャレット任せにしない）",
+        "pin したバージョンの公式ドキュメントで MediaLibrary.saveToLibraryAsync、File.downloadFileAsync、requestPermissionsAsync(writeOnly) の3つが存在することを確認する。SDK 56 以降では saveToLibraryAsync が expo-media-library-legacy へ移動しているため、import 元が変わる。差異があれば implementation-plan.md の Assumptions を更新してから進む",
+        "npx expo install react-native-webview expo-media-library expo-file-system expo-linking expo-secure-store expo-keep-awake expo-network を実行する（npm install ではなく expo install）",
+        "app.config.ts に scheme、ios.bundleIdentifier、android.package を decisions.md の値で設定する",
+        "ios.infoPlist.NSPhotoLibraryAddUsageDescription に日本語の説明文を設定する（例: 選んだ写真を端末の写真アプリに保存するために使用します）",
+        "plugins に ['expo-media-library', { savePhotosPermission: '<同文>', preventAutomaticLimitedAccessAlert: true }] を追加する。読み取り系の granularPermissions は指定しない",
+        "android.blockedPermissions に READ_MEDIA_IMAGES / READ_MEDIA_VIDEO / READ_EXTERNAL_STORAGE を指定する。保存専用アプリのため読み取り権限は宣言しない",
+        "WEB_ORIGIN を process.env.EXPO_PUBLIC_WEB_ORIGIN から読み、.env.example に記載する",
+        "mobile/src/config.ts に WEB_ORIGIN、ALLOWED_IMAGE_ORIGINS（https://firebasestorage.googleapis.com と https://photo-gallery-app-20251204.firebasestorage.app）、STORAGE_PATH_PREFIX、MAX_BATCH_ITEMS=500、MAX_TOTAL_BYTES=2*1024**3、MAX_FILE_BYTES=50*1024*1024 を定義する",
+        "jest-expo をインストールし jest.config.js を作成する。package.json の scripts に typecheck: 'tsc --noEmit' と test: 'jest' を追加する",
+        "App.tsx は SafeAreaView とテキストのみのプレースホルダにする",
+        "cd mobile && npm run typecheck、npm test、npx expo-doctor を実行して通ることを確認する"
+      ],
+      "done_definition": [
+        "cd mobile && npm run typecheck がエラーなしで完了する",
+        "cd mobile && npm test が実行でき（テスト0件でもランナーが起動する）エラーにならない",
+        "cd mobile && npx expo-doctor が致命的な問題を報告しない",
+        "package.json の expo バージョンがキャレットなしで pin されている",
+        "app.config.ts に scheme / bundleIdentifier / package / NSPhotoLibraryAddUsageDescription / blockedPermissions が全て存在する",
+        "pin した SDK に3つの主要 API が存在することをドキュメントで確認した旨が implementation-plan.md に反映されている",
+        "front/ 配下のファイルが1つも変更されていない（git status で確認）"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test",
+        "cd mobile && npx expo-doctor"
+      ],
+      "risk_level": "medium",
+      "status": "done",
+      "implementation_note": "Expo SDK 57 で mobile/ を作成。SDK は package.json で pin。typecheck / jest / expo-doctor(21/21) が通ることを確認済み。計画は SDK 55 想定だったため implementation-plan.md の Assumptions を 57 の実測値に更新した。"
+    },
+    {
+      "task_id": "task_003",
+      "title": "WebView シェル、厳密な origin 制限、クラッシュ復帰を実装する",
+      "goal": "本番 web のギャラリーが全画面 WebView で表示され、自オリジン外へ遷移せず、WebView プロセスが落ちても白画面のまま止まらない",
+      "scope": [
+        "WebView のマウントと SafeArea 対応",
+        "URL パースによる厳密な origin 一致チェック",
+        "外部リンクを OS 既定ブラウザで開く処理",
+        "カスタム User-Agent 接尾辞の付与",
+        "読み込みエラー画面と再試行",
+        "WebView プロセスのクラッシュからの自動復帰",
+        "pull-to-refresh"
+      ],
+      "non_scope": [
+        "ブリッジ（task_004）",
+        "保存処理（task_005 / task_006）",
+        "起動 URL 解決（task_011）"
+      ],
+      "files_to_read": [
+        "mobile/src/config.ts",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx"
+      ],
+      "files_to_create": [
+        "mobile/src/screens/GalleryWebView.tsx",
+        "mobile/src/screens/LoadErrorScreen.tsx",
+        "mobile/src/navigation/isAllowedNavigation.ts",
+        "mobile/src/navigation/isAllowedNavigation.test.ts"
+      ],
+      "files_to_modify": [
+        "mobile/App.tsx"
+      ],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "isAllowedNavigation.ts に純関数を実装する。new URL(u) でパースし、protocol が 'https:' かつ new URL(u).origin === WEB_ORIGIN のときのみ true。startsWith を使わない（https://<origin>.evil.tld が通ってしまうため）。javascript: / data: / blob: / intent: / file: は全て false",
+        "isAllowedNavigation.test.ts で正規 URL、サブドメイン偽装（https://<origin>.evil.tld）、http、javascript:、data:、パース不能な文字列を検証する",
+        "GalleryWebView.tsx で WebView をマウントする。onShouldStartLoadWithRequest で isAllowedNavigation を使い、false のときは Linking.canOpenURL を確認してから openURL する。開けない場合はユーザーに通知する",
+        "WebView の userAgent プロップに既定 UA + ' PhotoGalleryApp/<appVersion>' を設定する。これが最も確実なネイティブ検出手段になる",
+        "originWhitelist に WEB_ORIGIN のみを指定する",
+        "onError / onHttpError で LoadErrorScreen に切り替え、再試行で reload する",
+        "onContentProcessDidTerminate（iOS）と onRenderProcessGone（Android）を実装し、WebView を自動リロードする。連続クラッシュ時は LoadErrorScreen に落とす",
+        "pullToRefreshEnabled を有効にし、SafeAreaView でノッチとホームインジケータを避ける",
+        "iOS / Android で起動し、ギャラリー表示・外部リンクの外部ブラウザ起動・機内モードでのエラー画面を確認する"
+      ],
+      "done_definition": [
+        "ギャラリー一覧が WebView に表示される",
+        "isAllowedNavigation.test.ts でサブドメイン偽装 URL が拒否されることが検証されている",
+        "外部ドメインのリンクで OS の既定ブラウザが開き、WebView は元のページに留まる",
+        "WebView の User-Agent に PhotoGalleryApp/<version> が含まれる（web 側の navigator.userAgent で確認）",
+        "機内モードで LoadErrorScreen が表示され、復帰後に再試行で読み込める",
+        "WebView プロセスを強制終了させても自動リロードされ、白画面のまま止まらない",
+        "cd mobile && npm run typecheck と npm test が通る"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "medium",
+      "status": "done_pending_device",
+      "implementation_note": "GalleryWebView / LoadErrorScreen / isAllowedNavigation を実装。origin 完全一致・危険スキーム拒否・サブドメイン偽装拒否をユニットテストで検証済み（12件）。onContentProcessDidTerminate / onRenderProcessGone のリカバリも実装。実機での挙動は未検証。"
+    },
+    {
+      "task_id": "task_004",
+      "title": "多重検出・nonce・バージョン交渉を備えたブリッジを実装する",
+      "goal": "web が自分をネイティブシェル内だと確実に判定でき、双方向にメッセージを送受信でき、アプリと web のバージョンがずれても黙って壊れない",
+      "scope": [
+        "メッセージ型定義と supports 一覧",
+        "起動ごとの nonce 生成と注入",
+        "多重のネイティブ検出（User-Agent / ReactNativeWebView / 注入グローバル）",
+        "native の onMessage ディスパッチ",
+        "native → web の CustomEvent 配送",
+        "web 側の検出・フィーチャ判定・送受信ユーティリティ"
+      ],
+      "non_scope": [
+        "実際の保存処理（task_005 / task_006）",
+        "UI の分岐（task_007）"
+      ],
+      "files_to_read": [
+        "docs/native-app/implementation-plan.md",
+        "mobile/src/screens/GalleryWebView.tsx"
+      ],
+      "files_to_create": [
+        "mobile/src/bridge/protocol.ts",
+        "mobile/src/bridge/inject.ts",
+        "mobile/src/bridge/handleMessage.ts",
+        "web/src/lib/nativeBridge.ts"
+      ],
+      "files_to_modify": [
+        "mobile/src/screens/GalleryWebView.tsx"
+      ],
+      "dependencies": [
+        "task_003"
+      ],
+      "implementation_steps": [
+        "protocol.ts に implementation-plan.md 9.1 のメッセージ型を定義する。web→native は saveImage / saveImages / cancelSave / openSettings、native→web は saveProgress / saveResult",
+        "アプリ起動ごとにランダムな nonce を生成し、inject.ts が window.__NATIVE_GALLERY__ = { bridgeVersion, supports, platform, appVersion, nonce } を定義する文字列を返す。末尾に true; を付ける（react-native-webview の要件）",
+        "injectedJavaScriptBeforeContentLoaded に注入するが、Android では experimental で 100% 信頼できないため、injectedJavaScript（コンテンツ読み込み後）にも同じ内容を冪等に注入する",
+        "web/src/lib/nativeBridge.ts に detectNativeShell() を実装する。① window.__NATIVE_GALLERY__ があればそれを返す ② なければ navigator.userAgent に 'PhotoGalleryApp/' が含まれるか window.ReactNativeWebView が存在するかを見て、既定値 { bridgeVersion:1, supports:['saveImage','saveImages','cancelSave','openSettings'], nonce:null } を返す ③ どちらでもなければ null。全て typeof window === 'undefined' で早期 return する",
+        "supportsFeature(name) を実装する。supports に含まれない機能は false を返し、呼び出し側はブラウザ挙動にフォールバックする",
+        "postToNative(msg) は nonce を自動付与する。window.ReactNativeWebView が無ければ no-op で false を返す",
+        "subscribeToNative(handler) は 'native-gallery' CustomEvent を購読し、解除関数を返す",
+        "handleMessage.ts で JSON.parse を try/catch し、v !== 1・nonce 不一致・未知の type は黙って無視する。例外を投げない",
+        "native→web は webviewRef.injectJavaScript で window.dispatchEvent(new CustomEvent('native-gallery', { detail: <json> })) を実行する。JSON はエスケープして埋め込む",
+        "疎通を1往復確認する。確認用のデバッグコードは確認後に削除する"
+      ],
+      "done_definition": [
+        "WebView 内で detectNativeShell() が非 null を返す",
+        "注入グローバルを人為的に削除しても、User-Agent 検出でネイティブと判定される",
+        "web から postToNative を呼ぶと native の onMessage が発火し、nonce が一致する",
+        "誤った nonce のメッセージが native 側で無視される",
+        "supports に無い機能名で supportsFeature を呼ぶと false が返る",
+        "不正 JSON・未知の type を送ってもアプリがクラッシュしない",
+        "通常のブラウザで detectNativeShell() が null を返し、postToNative が例外を投げない",
+        "cd mobile && npm run typecheck、npm test、cd web && npm run build が通る"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test",
+        "cd web && npm run build"
+      ],
+      "risk_level": "medium",
+      "status": "done_pending_device",
+      "implementation_note": "protocol / inject / handleMessage を実装。nonce・バージョン交渉・多重検出（注入グローバル / User-Agent / ReactNativeWebView）を実装し、web 側の検出とフォールバックを16件のテストで検証済み。実機での往復疎通は未検証。"
+    },
+    {
+      "task_id": "task_005",
+      "title": "単体画像のフォトライブラリ保存を実装する",
+      "goal": "web から saveImage を送ると、iOS では書き込み専用権限のみで写真アプリに、Android ではギャラリーに画像が保存される",
+      "scope": [
+        "入力検証（origin 完全一致、バケット・パス接頭辞、filename、nonce）",
+        "書き込み専用権限の要求",
+        "ファイル名を明示したキャッシュへのダウンロードと保存、キャッシュ削除",
+        "エラーコードの正規化",
+        "検証ロジックのユニットテスト"
+      ],
+      "non_scope": [
+        "一括保存（task_006）",
+        "アルバム分け（task_019）",
+        "サーバー側の認可（task_008）"
+      ],
+      "files_to_read": [
+        "front/src/screens/ImagesScreen.tsx",
+        "web/src/app/api/image/route.ts",
+        "mobile/src/config.ts",
+        "mobile/src/bridge/protocol.ts"
+      ],
+      "files_to_create": [
+        "mobile/src/save/validate.ts",
+        "mobile/src/save/saveToLibrary.ts",
+        "mobile/src/save/validate.test.ts"
+      ],
+      "files_to_modify": [
+        "mobile/src/bridge/handleMessage.ts"
+      ],
+      "dependencies": [
+        "task_004"
+      ],
+      "implementation_steps": [
+        "validate.ts は expo モジュールを一切 import しない純関数モジュールにする。Node のテストランナーでネイティブ依存が解決できずクラッシュするのを避けるため、この制約を守る",
+        "validateSaveItem({url, filename}) を実装する。new URL でパースし protocol が https:、new URL(url).origin が ALLOWED_IMAGE_ORIGINS に完全一致（startsWith を使わない）、パスが STORAGE_PATH_PREFIX に一致、filename から '/' '\\\\' '..' NUL を拒否、拡張子が jpg/jpeg/png/heic/webp でなければ URL のパスから再導出し、それも取れなければ .jpg にフォールバックする。戻り値に sanitizedFilename を含める",
+        "saveToLibrary.ts に saveOne(item) を実装する。1) validate 2) MediaLibrary.requestPermissionsAsync(true) が granted でなければ permission_denied 3) const destination = new File(Paths.cache, sanitizedFilename) 4) File.downloadFileAsync(url, destination) 5) 保存前に file.exists と拡張子を確認 6) MediaLibrary.saveToLibraryAsync(file.uri) 7) finally でキャッシュファイルを削除",
+        "destination に Directory ではなく File を渡す。Directory を渡すとファイル名がレスポンス由来になり、拡張子が付かず saveToLibraryAsync の要件（URI に拡張子が必要）を満たせない可能性がある",
+        "同名ファイルが既に存在する場合の扱いを決める（ランダム suffix を付けるか上書きするか）。決めた方針をコードコメントに残す",
+        "ダウンロード後にサイズが MAX_FILE_BYTES を超えていたら削除して save_failed を返す",
+        "エラーは permission_denied / download_failed / save_failed / invalid_url / insufficient_storage のいずれかに正規化する。ネイティブの例外メッセージを web に渡さない",
+        "handleMessage.ts で saveImage を saveOne に配線し、結果を saveResult として返す",
+        "validate.test.ts で許可 origin、サブドメイン偽装（https://firebasestorage.googleapis.com.evil.tld）、http、パス接頭辞外、'../' 入り filename、拡張子なし filename を検証する",
+        "iOS 実機で権限ダイアログが書き込み専用の文言で出ること、写真アプリに入ることを確認する",
+        "Android 実機でギャラリーに入ることを確認する。saveToLibraryAsync に渡す URI が file:/// 始まりであること、アプリ専用キャッシュ配下のファイルが正しく MediaStore に登録されることを実機で確認する。登録されない場合のみ、公開領域への書き出しに設計変更する"
+      ],
+      "done_definition": [
+        "iOS 実機で1枚保存が成功し、写真アプリに画像が存在する",
+        "Android 実機で1枚保存が成功し、ギャラリーに画像が存在する",
+        "iOS の権限要求が書き込み専用であり、読み取り権限を要求しない",
+        "validate.test.ts で許可外 origin・サブドメイン偽装・path traversal・拡張子欠落が検証されている",
+        "validate.ts が expo モジュールを import していない（grep で確認）",
+        "権限拒否・機内モードのいずれでもクラッシュせず、対応するエラーコードが web に返る",
+        "保存後にキャッシュディレクトリに一時ファイルが残っていない"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "high",
+      "status": "code_done_unverified",
+      "implementation_note": "validate / saveToLibrary を実装。SDK 57 では saveToLibraryAsync を expo-media-library/legacy から import する必要があることを実物で確認し反映。検証ロジックは18件のテストで確認済み。実機での保存・権限ダイアログは未検証。"
+    },
+    {
+      "task_id": "task_006",
+      "title": "一括保存を実装する（進捗・キャンセル・容量・通信量・中断対策）",
+      "goal": "全件が順に保存され、進捗が web に届き、キャンセルでき、容量不足やセルラー通信で事前に止められ、部分失敗が報告される",
+      "scope": [
+        "空き容量の事前チェックと必要容量の算出",
+        "セルラー接続時の警告",
+        "同時実行数を制限したダウンロードと直列保存",
+        "requestId 単位の進捗通知とキャンセル",
+        "部分失敗の集計",
+        "保存中の画面スリープ抑止とバックグラウンド中断の検知"
+      ],
+      "non_scope": [
+        "バックグラウンド転送（task_020）",
+        "レジューム可能ダウンロード",
+        "アルバム分け（task_019）"
+      ],
+      "files_to_read": [
+        "mobile/src/save/saveToLibrary.ts",
+        "mobile/src/bridge/handleMessage.ts",
+        "web/src/hooks/useBulkDownload.ts"
+      ],
+      "files_to_create": [
+        "mobile/src/save/saveBatch.ts",
+        "mobile/src/save/storage.ts"
+      ],
+      "files_to_modify": [
+        "mobile/src/bridge/handleMessage.ts"
+      ],
+      "dependencies": [
+        "task_005"
+      ],
+      "implementation_steps": [
+        "storage.ts で端末の空き容量を取得し、必要容量（items の合計サイズ推定 + 安全マージン）と比較する関数を実装する。不足なら insufficient_storage を返して1件も保存しない",
+        "expo-network で接続種別を判定し、Wi-Fi でない場合は saveResult ではなく事前の確認要求として web に通知する。web が続行を選んだら実行する",
+        "saveBatch.ts に saveMany(requestId, items, onProgress, isCancelled) を実装する。items.length が MAX_BATCH_ITEMS を超える、または合計が MAX_TOTAL_BYTES を超える場合は超過分を失敗として計上する。無言で切り捨てない",
+        "ダウンロードは同時実行数3のワーカープール。MediaLibrary への保存は競合を避けるため1件ずつ直列に実行する",
+        "各件の完了時に saveProgress を送る。100ms 単位で間引く",
+        "handleMessage.ts に requestId をキーとするキャンセルフラグの Map を持たせる。cancelSave でフラグを立て、各件の処理前にチェックして中断する。中断時は errorCode 'cancelled' と savedCount を含む saveResult を返す",
+        "権限が拒否された場合は1件目で中断し permission_denied を返す。全件をループしない",
+        "activateKeepAwakeAsync / deactivateKeepAwake で保存中の画面スリープを抑止し、finally で必ず解除する",
+        "AppState を購読し、保存中にバックグラウンドへ移行したら記録する。復帰時に処理が中断されていれば進捗を固まらせず、中断済みとして saveResult を返して再実行可能な状態にする",
+        "処理完了・中断・例外のいずれの経路でも saveResult が必ず1回だけ送られることを保証する",
+        "実機で200枚以上の一括保存、低容量端末での容量不足、セルラー接続、バックグラウンド移行を確認する"
+      ],
+      "done_definition": [
+        "実機で200枚以上の一括保存が完了し、全件が写真アプリ／ギャラリーに存在する",
+        "空き容量が不足する状況で1件も保存されず insufficient_storage が返る",
+        "セルラー接続時にデータ量の確認が web に通知される",
+        "保存中に進捗が current/total で更新される",
+        "キャンセルすると以降が止まり、保存済み件数を含む saveResult が返る",
+        "1件失敗しても残りが継続し failedCount に計上される",
+        "上限超過分が失敗として報告される（無言で切り捨てられない）",
+        "バックグラウンド移行後に復帰したとき、進捗が固まったまま復旧不能にならない",
+        "どの経路でも saveResult が重複送信されない"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "high",
+      "status": "code_done_unverified",
+      "implementation_note": "saveBatch / storage を実装。ダウンロード3並列＋保存はミューテックスで直列。空き容量チェック・上限超過の失敗計上・キャンセル・バックグラウンド検知を実装。実機での200枚保存・容量不足・中断は未検証。"
+    },
+    {
+      "task_id": "task_007",
+      "title": "web 側の UI をネイティブ時に分岐させる（hydration mismatch を起こさない方法で）",
+      "goal": "ネイティブシェル内では保存がボタン1回で完了し、案内と ZIP 導線が消える。通常ブラウザの挙動は変わらず、hydration 警告も出ない",
+      "scope": [
+        "useIsNativeShell（mount 後判定）と useNativeSave の実装",
+        "DownloadButton の onClick 内分岐（マークアップ不変）",
+        "一括保存への差し替え",
+        "案内 UI と共有ボタンの非表示",
+        "DownloadProgressModal の保存モードと aria-live",
+        "権限拒否・容量不足・セルラー・部分失敗・ブリッジ未対応の案内 UI"
+      ],
+      "non_scope": [
+        "新しい画面の追加",
+        "ブラウザ側の既存挙動の変更",
+        "デザインの刷新"
+      ],
+      "files_to_read": [
+        "web/src/lib/nativeBridge.ts",
+        "web/src/services/downloadService.ts",
+        "web/src/hooks/useBulkDownload.ts",
+        "web/src/components/DownloadProgressModal.tsx"
+      ],
+      "files_to_create": [
+        "web/src/hooks/useIsNativeShell.ts",
+        "web/src/hooks/useNativeSave.ts"
+      ],
+      "files_to_modify": [
+        "web/src/components/DownloadButton.tsx",
+        "web/src/components/BulkDownloadButton.tsx",
+        "web/src/app/(gallery)/liked/page.tsx",
+        "web/src/components/IosSaveGuide.tsx",
+        "web/src/components/AndroidSaveGuide.tsx",
+        "web/src/components/ShareButton.tsx",
+        "web/src/components/WelcomeGuide.tsx",
+        "web/src/components/DownloadProgressModal.tsx"
+      ],
+      "dependencies": [
+        "task_004"
+      ],
+      "implementation_steps": [
+        "useIsNativeShell.ts を実装する。useState(false) + useEffect で mount 後に detectNativeShell() の結果を state に入れる。サーバーレンダリング時は常に false 相当になるため hydration mismatch が起きない。レンダリング分岐は必ずこのフック経由で行う",
+        "DownloadButton はマークアップを一切変えない。onClick の中で detectNativeShell() を直接呼び、ネイティブなら saveOne、そうでなければ現行の downloadSingleImage を呼ぶ。ここは描画に関わらないため mount ゲートが不要",
+        "useNativeSave.ts を実装する。requestId は crypto.randomUUID() で発行。saveOne / saveMany / cancel と isSaving / progress / lastResult を返す。subscribeToNative で自分の requestId のみ処理する。supportsFeature が false の機能はブラウザ挙動にフォールバックし、必要ならアプリ更新の案内を出す",
+        "filename は image.storagePath の末尾（拡張子込み）を使い、無ければ image.title と URL から導出する。ネイティブ側でも再検証されるが web 側でも整える",
+        "BulkDownloadButton とお気に入りページの ZIP ボタンは useIsNativeShell が true のとき文言を『すべて保存』『お気に入りを保存 (N枚)』にし saveMany を呼ぶ",
+        "IosSaveGuide / AndroidSaveGuide は既存の useEffect 内の表示条件にネイティブ判定を足す。新しい分岐構造を作らない",
+        "ShareButton は useIsNativeShell が true のとき null を返す",
+        "WelcomeGuide の『PC からのダウンロードを推奨します』をネイティブ時のみ差し替える",
+        "DownloadProgressModal に mode プロップ（'zip' | 'save'、既定 'zip'）を追加し、'save' のとき『保存中 (current/total)』と『アプリを閉じないでください』を表示する。進捗と結果は aria-live='polite' の領域に出す",
+        "権限拒否・容量不足・セルラー確認・部分失敗・ブリッジ未対応の5種類の案内 UI を実装する。権限拒否の『設定を開く』は postToNative({type:'openSettings'}) を送る。native 側に openSettings ハンドラ（Linking.openSettings）を追加する",
+        "モーダルにフォーカストラップを実装し、閉じたら発火元へフォーカスを戻す",
+        "PC Chrome / iOS Safari / Android Chrome の3環境で、変更前と挙動が同一であることとコンソールに hydration 警告が出ないことを確認する",
+        "cd web && npm test / npm run build / npm run lint を実行しベースラインを下回らないことを確認する"
+      ],
+      "done_definition": [
+        "ネイティブシェル内で保存ボタンを押すとブリッジが呼ばれ、ブラウザ遷移が発生しない",
+        "ネイティブシェル内で IosSaveGuide / AndroidSaveGuide / ShareButton が表示されない",
+        "ネイティブシェル内で ZIP ボタンが『すべて保存』になっている",
+        "通常ブラウザ3環境で保存ボタン・保存ガイド・ZIP・共有の挙動が変更前と同一である",
+        "3環境いずれのコンソールにも hydration 関連の警告が出ない",
+        "supports に無い機能を使おうとしたとき、黙って失敗せずブラウザ挙動にフォールバックする",
+        "cd web && npm test が全パス、npm run build が成功、npm run lint のエラーが 16 以下"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build",
+        "cd web && npm run lint"
+      ],
+      "risk_level": "medium",
+      "status": "done_pending_manual",
+      "implementation_note": "nativeBridge / useIsNativeShell / useNativeSave を追加し、DownloadButton・BulkDownloadButton・liked ページ・保存ガイド・ShareButton・WelcomeGuide・DownloadProgressModal を分岐させた。hydration 対策として useSyncExternalStore を使用。web のテストは 22 件から 44 件に増えて全通過、build 成功、lint 16 errors でベースライン維持。PC Chrome / iOS Safari / Android Chrome の3環境での手動確認は未実施。"
+    },
+    {
+      "task_id": "task_008",
+      "title": "認可済みマニフェスト API を追加し、URL の直接受け取りを廃止する",
+      "goal": "ネイティブが保存できる画像を、その招待に属するものだけに限定する。ホスト許可リストだけの状態を脱する",
+      "scope": [
+        "POST /api/native/manifest の実装",
+        "招待の有効性と画像の所属検証",
+        "ネイティブ側をマニフェスト経由に切り替え",
+        "web から URL を直接渡す経路の削除",
+        "レート制限"
+      ],
+      "non_scope": [
+        "firestore.rules / storage.rules の変更（別計画の管轄）",
+        "署名付き URL の発行（Firebase Storage の公開読み取り前提を維持）",
+        "Firebase Admin SDK の新規導入（既存のアクセス手段で実装できない場合のみ検討し、その判断を記録する）"
+      ],
+      "files_to_read": [
+        "web/src/app/api/image/route.ts",
+        "web/src/services/invitationService.ts",
+        "web/src/services/imageService.ts",
+        "web/src/types/index.ts",
+        "firestore.rules",
+        "docs/implementation-plan.md"
+      ],
+      "files_to_create": [
+        "web/src/app/api/native/manifest/route.ts",
+        "web/src/app/api/native/manifest/route.test.ts"
+      ],
+      "files_to_modify": [
+        "mobile/src/bridge/protocol.ts",
+        "mobile/src/bridge/handleMessage.ts",
+        "mobile/src/save/saveToLibrary.ts",
+        "mobile/src/save/saveBatch.ts",
+        "web/src/hooks/useNativeSave.ts"
+      ],
+      "dependencies": [
+        "task_006",
+        "task_007"
+      ],
+      "implementation_steps": [
+        "サーバー側から Firestore を読む手段を決める。別計画 task_013（サーバー側ギャラリー取得 API）と方式が衝突しないよう先に docs/implementation-plan.md を読み、採る方式と理由を実装計画に追記する",
+        "POST /api/native/manifest を実装する。リクエストは { token, imageIds }。招待を token で引き、isActive と expiresAt を検証し、imageIds が招待の imageIds に全て含まれることを確認する。含まれないものがあれば 403 を返し、部分的に許可しない",
+        "レスポンスは { items: [{ imageId, url, filename, bytes }] }。filename は storagePath の末尾から導出する",
+        "エラーは 400 / 403 / 404 / 429 を返す。招待の無効と期限切れを区別しない（情報を与えないため）",
+        "簡易なレート制限を入れる（同一トークンあたりの短時間の呼び出し回数上限）",
+        "ブリッジのメッセージを saveImages { token, imageIds } 形式に変更する。ネイティブはマニフェスト API を呼び、その結果の URL のみを保存する",
+        "web から URL と filename を直接渡す経路をコードから削除する。task_005 の validate は第二の防御として残す",
+        "route.test.ts で、招待に含まれない imageId、期限切れ招待、無効化された招待、存在しないトークンのそれぞれが拒否されることを検証する",
+        "cd web && npm test と npm run build、cd mobile && npm run typecheck を実行する"
+      ],
+      "done_definition": [
+        "招待に含まれない imageId を要求すると 403 が返る（自動テストで検証）",
+        "期限切れ・無効化された招待が拒否される（自動テストで検証）",
+        "ネイティブのコードに web から渡された URL を保存する経路が存在しない（grep で確認）",
+        "実機で単体保存と一括保存がマニフェスト経由で従来どおり動作する",
+        "cd web && npm test が全パス、npm run build が成功、npm run lint のエラーが 16 以下",
+        "cd mobile && npm run typecheck と npm test が通る"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build",
+        "cd web && npm run lint",
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "high",
+      "status": "done_pending_device",
+      "implementation_note": "POST /api/native/manifest を実装（web/src/app/api/native/manifest/route.ts + web/src/services/manifestService.ts）。ブリッジのペイロードを URL から token + imageId(s) に変更し、native は manifest 経由の URL しか保存しない（mobile/src/save/manifest.ts）。web から URL を渡す経路は削除済み（nativeBridge.ts の OutgoingMessage に url フィールドが存在しない）。認可ロジックは manifestService.test.ts の16件で検証済み（招待に属さない imageId は 403 で全体拒否、無効化・期限切れ・閲覧期限超過も 403、存在しないトークンは 404、部分的にも返さない）。サーバー側の Firestore 読み取りはクライアント SDK + サーバーインスタンスごとの匿名サインイン（web/src/lib/firebaseServer.ts）。Admin SDK を使わない理由と、コールドスタートごとに匿名ユーザーが増えるトレードオフをコードコメントに記載。実 API への疎通は未検証。"
+    },
+    {
+      "task_id": "task_009",
+      "title": "別計画のセキュリティ修正の完了を確認する",
+      "goal": "ストア公開の前提条件である別計画の3タスクが実際に完了していることを、推測でなく確認する",
+      "scope": [
+        "docs/task-list.json の task_001 / task_002 / task_004 の完了確認",
+        "本番での実地確認",
+        "結果の記録"
+      ],
+      "non_scope": [
+        "別計画のタスクを本計画で実施すること",
+        "firestore.rules の変更"
+      ],
+      "files_to_read": [
+        "docs/implementation-plan.md",
+        "docs/task-list.json",
+        "firestore.rules",
+        "web/src/services/likeService.ts",
+        "web/src/services/invitationService.ts"
+      ],
+      "files_to_create": [
+        "docs/native-app/prerequisite-status.md"
+      ],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "firestore.rules を読み、images / likes / invitations の read が get と list に分離され、list が管理者のみになっているかを確認する",
+        "web/src/services/invitationService.ts が getDoc によるドキュメント ID 直接取得になっているかを確認する",
+        "web/src/services/likeService.ts の like ID が invitationId ベースになっているかを確認する",
+        "ブラウザのコンソールから匿名認証のまま invitations / images のコレクションクエリを試し、permission-denied になることを確認する",
+        "同じ招待リンクを2つの異なるブラウザで開き、お気に入りが共有されることを確認する",
+        "各項目の実際の確認結果を prerequisite-status.md に記録する。未完了のものは未完了と明記する。推測で完了と書かない",
+        "未完了があればユーザーに報告し、ストア公開に進まない"
+      ],
+      "done_definition": [
+        "3項目それぞれについて、確認方法と実際の結果が prerequisite-status.md に記録されている",
+        "未完了の項目が未完了と明記されている",
+        "全て完了している場合のみ、ストア公開に進んでよいと記載されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium",
+      "status": "done",
+      "implementation_note": "別計画の task_001 / task_002 / task_004 の現況をコードで確認し docs/native-app/prerequisite-status.md に記録。3件すべて未完了。ただし Codex A1 の「他クライアントの写真を保存できる」問題は本計画の task_008 で塞いだ。"
+    },
+    {
+      "task_id": "task_010",
+      "title": "ディープリンク（scheme / ユニバーサルリンク / App Links）を設定する",
+      "goal": "招待リンクの https URL をタップすると、アプリがインストール済みならアプリが、未インストールならブラウザが開く",
+      "scope": [
+        "app.config.ts の associatedDomains と intentFilters",
+        "apple-app-site-association と assetlinks.json の配信",
+        "Content-Type の実地確認"
+      ],
+      "non_scope": [
+        "起動 URL の解決ロジック（task_011）",
+        "web 側のアプリ導線（task_013）"
+      ],
+      "files_to_read": [
+        "docs/native-app/decisions.md",
+        "mobile/app.config.ts",
+        "web/next.config.ts"
+      ],
+      "files_to_create": [
+        "web/public/.well-known/apple-app-site-association",
+        "web/public/.well-known/assetlinks.json"
+      ],
+      "files_to_modify": [
+        "mobile/app.config.ts",
+        "web/next.config.ts"
+      ],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "decisions.md で確定した配信ドメインを使う。未確定なら着手しない",
+        "app.config.ts の ios.associatedDomains に 'applinks:<domain>' を追加する",
+        "android.intentFilters に { autoVerify: true, action: 'VIEW', data: { scheme: 'https', host: '<domain>', pathPrefix: '/gallery' }, category: ['BROWSABLE','DEFAULT'] } を追加する。/liked についても同様に追加する",
+        "apple-app-site-association を拡張子なしで作成し、applinks.details に appIDs（<TeamID>.<bundleIdentifier>）と paths（['/gallery/*','/liked*']）を書く",
+        "assetlinks.json に package_name と sha256_cert_fingerprints を書く。フィンガープリントは人間が npx eas credentials で取得した実値を使う。プレースホルダのままコミットしない",
+        "デプロイ後 curl -I で両ファイルが 200 と application/json を返すことを確認する。AASA の Content-Type が正しくない場合のみ next.config.ts の headers() で明示する",
+        "iOS 実機で招待リンクからアプリが開くことを確認する",
+        "Android 実機で adb shell pm get-app-links <package> により verified 状態を確認する"
+      ],
+      "done_definition": [
+        "curl -I で AASA と assetlinks.json が 200 と application/json を返す",
+        "iOS 実機で https の招待リンクからアプリが起動する",
+        "Android 実機で App Links が verified になっている",
+        "未インストール端末で同じリンクがブラウザで開き従来どおり動作する",
+        "assetlinks.json のフィンガープリントが実際の署名鍵の値である"
+      ],
+      "verify_commands": [
+        "cd web && npm run build",
+        "cd mobile && npm run typecheck"
+      ],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_011",
+      "title": "起動 URL の解決（パスとクエリを保持）と未リンク起動画面を実装する",
+      "goal": "/gallery/:token と /liked?token= のどちらのリンクからでも正しい画面が開き、リンクなし起動でも白画面にならない",
+      "scope": [
+        "コールドスタート時の Linking.getInitialURL()",
+        "起動中のリンク受信",
+        "パスとクエリを保持した URL 解決",
+        "直近トークンの保存と復元",
+        "未リンク起動時の案内画面"
+      ],
+      "non_scope": [
+        "複数ギャラリーの履歴一覧",
+        "アプリ内でのトークン手入力"
+      ],
+      "files_to_read": [
+        "mobile/App.tsx",
+        "mobile/src/screens/GalleryWebView.tsx",
+        "web/src/app/(gallery)/liked/page.tsx"
+      ],
+      "files_to_create": [
+        "mobile/src/navigation/resolveInitialUrl.ts",
+        "mobile/src/navigation/resolveInitialUrl.test.ts",
+        "mobile/src/screens/NoInvitationScreen.tsx"
+      ],
+      "files_to_modify": [
+        "mobile/App.tsx",
+        "mobile/src/screens/GalleryWebView.tsx"
+      ],
+      "dependencies": [
+        "task_010"
+      ],
+      "implementation_steps": [
+        "resolveInitialUrl.ts はパスとクエリを保持する。token だけを抜き出して /gallery/<token> に組み立て直す実装にしない。/liked?token=... をタップしたらお気に入り画面が開かなければならない",
+        "https の /gallery/:token と /liked?token=、および photogallery:// の同等形式を parse する。トークンが取れない URL は null として扱う",
+        "解決順は 1) Linking.getInitialURL() 2) SecureStore の直近トークン（この場合は /gallery/<token> を組み立てる）3) null",
+        "トークンを抽出できたら SecureStore に保存する。保存するのはトークン1件のみ。clientName / clientEmail は保存しない。ログにトークンを出力しない",
+        "Linking.addEventListener('url') を購読し、起動中にリンクを受け取ったら WebView の source を差し替える。再マウントではなく source 変更で行う",
+        "token が null のときは NoInvitationScreen を表示する。アプリ単体の入口は作らない",
+        "resolveInitialUrl.test.ts で /gallery/:token、/liked?token=、custom scheme、不正 URL、null の各ケースを検証する",
+        "リンク経由起動・アイコン起動（履歴あり）・アイコン起動（履歴なし）・起動中のリンク受信・/liked リンクの5パターンを実機で確認する"
+      ],
+      "done_definition": [
+        "/gallery/:token のリンクでそのギャラリーが表示される",
+        "/liked?token= のリンクでお気に入り画面がそのトークンで表示される",
+        "アイコン起動で直近のギャラリーが表示される",
+        "履歴なしのアイコン起動で NoInvitationScreen が表示される",
+        "起動中に別の招待リンクを開くとその招待に切り替わる",
+        "SecureStore に保存されるのがトークンのみで、ログにトークンが出力されない",
+        "resolveInitialUrl.test.ts が全ケースを通る"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "medium",
+      "status": "done_pending_device",
+      "implementation_note": "resolveInitialUrl / NoInvitationScreen / App.tsx を実装。/gallery/:token と /liked?token= の両方をパスとクエリを保持して解決することを9件のテストで検証済み。SecureStore にはトークン1件のみ保存。実機での4パターン起動は未検証。"
+    },
+    {
+      "task_id": "task_012",
+      "title": "Android の生成マニフェストの権限を監査する",
+      "goal": "保存専用アプリが広範な写真読み取り権限を宣言していない状態にする。Google Play の写真アクセスポリシー違反を避ける",
+      "scope": [
+        "prebuild で生成される AndroidManifest.xml の確認",
+        "不要な READ_MEDIA_* / READ_EXTERNAL_STORAGE の除外",
+        "除外できない場合の代替案の検討と記録"
+      ],
+      "non_scope": [
+        "独自ネイティブモジュールの実装（除外不能と判明した場合のみ別途検討）",
+        "iOS 側の権限"
+      ],
+      "files_to_read": [
+        "mobile/app.config.ts",
+        "docs/native-app/implementation-plan.md"
+      ],
+      "files_to_create": [
+        "docs/native-app/android-permissions.md"
+      ],
+      "files_to_modify": [
+        "mobile/app.config.ts"
+      ],
+      "dependencies": [
+        "task_006"
+      ],
+      "implementation_steps": [
+        "npx expo prebuild --platform android --clean を実行し、生成された android/app/src/main/AndroidManifest.xml の uses-permission を全て列挙する",
+        "READ_MEDIA_IMAGES / READ_MEDIA_VIDEO / READ_MEDIA_AUDIO / READ_EXTERNAL_STORAGE が含まれていれば android.blockedPermissions で除外し、再度 prebuild して消えたことを確認する",
+        "除外した状態で実機の保存が引き続き動作することを確認する。動作しない場合は、どの権限が実際に必要かを実測して記録する",
+        "除外不能かつ必須と判明した場合は、Google Play の写真・動画権限の申告が必要になる旨と、MediaStore insert 専用の最小ネイティブモジュールという代替案を android-permissions.md に記録し、ユーザーに判断を仰ぐ",
+        "最終的な uses-permission の一覧と、それぞれが必要な理由を android-permissions.md に記録する",
+        "prebuild で生成した android/ ディレクトリを成果物として残すか .gitignore するかを決める（CNG 運用なら ignore する）"
+      ],
+      "done_definition": [
+        "生成された AndroidManifest.xml の uses-permission が android-permissions.md に全て記録されている",
+        "READ_MEDIA_IMAGES / READ_MEDIA_VIDEO / READ_EXTERNAL_STORAGE が含まれていない、または含まれる理由が記録されている",
+        "権限を除外した状態で実機の保存が動作する",
+        "cd mobile && npx expo-doctor が致命的な問題を報告しない"
+      ],
+      "verify_commands": [
+        "cd mobile && npx expo-doctor",
+        "cd mobile && npm run typecheck"
+      ],
+      "risk_level": "medium",
+      "status": "done",
+      "implementation_note": "prebuild で生成した AndroidManifest を実測。expo-media-library の plugin が READ_MEDIA_IMAGES / READ_MEDIA_VIDEO / READ_MEDIA_AUDIO / READ_MEDIA_VISUAL_USER_SELECTED / READ_EXTERNAL_STORAGE を注入しており、当初 blockedPermissions に列挙していなかった2件が残っていた。5件すべて列挙して全て tools:node=\"remove\" になることを確認。iOS 側も NSPhotoLibraryUsageDescription が注入されていたため photosPermission: false で削除し、NSPhotoLibraryAddUsageDescription のみになることを確認。"
+    },
+    {
+      "task_id": "task_013",
+      "title": "web 側にアプリへの導線を追加する",
+      "goal": "ブラウザで web ギャラリーを開いたユーザーがアプリの存在を知り、インストール・起動できる",
+      "scope": [
+        "iOS の Smart App Banner",
+        "Android 向けの案内バナー",
+        "ネイティブシェル内での非表示"
+      ],
+      "non_scope": [
+        "インストールの強制",
+        "全画面のインタースティシャル"
+      ],
+      "files_to_read": [
+        "web/src/app/layout.tsx",
+        "web/src/components/IosSaveGuide.tsx",
+        "web/src/lib/nativeBridge.ts"
+      ],
+      "files_to_create": [
+        "web/src/components/AppPromoBanner.tsx"
+      ],
+      "files_to_modify": [
+        "web/src/app/layout.tsx",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx"
+      ],
+      "dependencies": [
+        "task_015"
+      ],
+      "implementation_steps": [
+        "このタスクは v1 では任意だったが必須に格上げした。理由は、Safari で同一ドメインの universal link をタップしても Safari に留まるという Apple の仕様があり、web を先に開いたユーザーがリンク再タップではアプリに移れないため",
+        "App Store の app-id が発行されてから着手する。未発行の状態でメタタグを入れない",
+        "layout.tsx に apple-itunes-app メタタグを追加する。app-argument に現在の URL を渡す",
+        "AppPromoBanner を作り、Android では Play ストアへのリンクと閉じるボタンを置く。localStorage で dismiss を記憶する既存パターン（IosSaveGuide と同じ）に合わせる",
+        "useIsNativeShell が true のときは表示しない",
+        "cd web && npm test / npm run build / npm run lint を実行する"
+      ],
+      "done_definition": [
+        "iOS Safari で Smart App Banner が表示される",
+        "Android Chrome で案内バナーが表示され、閉じると再表示されない",
+        "ネイティブシェル内では表示されない",
+        "cd web && npm run lint のエラーが 16 以下"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build",
+        "cd web && npm run lint"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_014",
+      "title": "内部配布ビルドで実機確認する（web 側デプロイのゲート）",
+      "goal": "iOS / Android の実機で全ての受け入れ項目を実施し、結果を記録する。ここを通るまで web 側のネイティブ分岐を本番デプロイしない",
+      "scope": [
+        "preview プロファイルでのビルド（ビルド実行は人間）",
+        "実機での受け入れ確認の実施と記録",
+        "不合格項目の差し戻し"
+      ],
+      "non_scope": [
+        "ストア提出（task_015）",
+        "OTA アップデートの導入"
+      ],
+      "files_to_read": [
+        "mobile/eas.json",
+        "docs/native-app/acceptance-checks.json"
+      ],
+      "files_to_create": [
+        "docs/native-app/device-test-log.md"
+      ],
+      "files_to_modify": [
+        "mobile/eas.json"
+      ],
+      "dependencies": [
+        "task_008",
+        "task_011",
+        "task_012"
+      ],
+      "implementation_steps": [
+        "eas.json の preview プロファイルを iOS は internal distribution、Android は APK に設定する",
+        "npx eas build --platform ios --profile preview と --platform android --profile preview は対話・認証情報を伴うため人間が実行する。エージェントは実行せず依頼する",
+        "iOS 実機・Android 実機にインストールし、acceptance-checks.json の各項目を上から順に実施する",
+        "結果を device-test-log.md に、端末名・OS バージョン・アプリバージョン・各項目の合否・失敗時の実際の挙動として記録する。合否を推測で埋めない",
+        "不合格の項目は対応する task に差し戻す",
+        "全ての必須項目が合格したら、web 側のネイティブ分岐（task_007 と task_008 の web 部分）を本番デプロイしてよいと device-test-log.md に明記する"
+      ],
+      "done_definition": [
+        "iOS / Android の preview ビルドがインストールできる",
+        "device-test-log.md に実機2機種分の結果が記録されている",
+        "acceptance-checks.json の必須項目が全て pass または明示的な差し戻しとして記録されている",
+        "未実施の項目が『未検証』と明記されている（pass と混同されていない）",
+        "web 側デプロイの可否判断が記録されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_015",
+      "title": "ストア提出物を準備し 4.2 の go/no-go を判断する",
+      "goal": "提出に必要な素材と情報が揃い、App Store 4.2 のリスクに対する立場が決まっている",
+      "scope": [
+        "アイコン・スプラッシュ・スクリーンショット",
+        "プライバシーポリシー URL",
+        "審査用の恒久デモ招待",
+        "審査メモ",
+        "データ収集の申告内容",
+        "トークンの取り扱い方針",
+        "4.2 の go/no-go 判断"
+      ],
+      "non_scope": [
+        "実際の提出操作（人間が行う）",
+        "マーケティング素材"
+      ],
+      "files_to_read": [
+        "docs/native-app/decisions.md",
+        "mobile/app.config.ts",
+        "admin/src/services/invitationService.ts",
+        "web/src/types/index.ts"
+      ],
+      "files_to_create": [
+        "docs/native-app/store-submission.md",
+        "mobile/assets/icon.png",
+        "mobile/assets/splash.png"
+      ],
+      "files_to_modify": [
+        "mobile/app.config.ts"
+      ],
+      "dependencies": [
+        "task_014"
+      ],
+      "implementation_steps": [
+        "アイコンとスプラッシュを作成する。生成物は CLAUDE.md の規定により /Volumes/DB/illustration_design に出力し mobile/assets へコピーする。ボリューム未マウントならユーザーに知らせて止まる",
+        "審査用のデモ招待を admin から作成する。expiresAt を十分先に設定し isActive を true に固定する。期限切れすると審査が落ちるため運用上削除しない旨を明記する",
+        "審査メモを書く。『アカウント登録は不要。招待リンクがないと何も表示されない設計である』『ネイティブ固有の価値は写真アプリへの直接保存と一括保存である』『デモ用リンクは <URL>』の3点を必ず含める",
+        "プライバシーポリシー URL を用意する。Firebase（匿名認証・Firestore・Storage）を使う旨、写真ライブラリへは書き込みのみで読み取らない旨、招待トークンの保存と削除の方針を記載する",
+        "招待トークンを bearer credential かつ個人データに準ずるものとして扱う方針を書く。端末での保存期間、招待失効時の削除、ログへの出力禁止、問い合わせ時の消去手順を定める",
+        "App Store のプライバシー申告と Google Play の Data safety の内容を、実装を確認したうえで記載する。推測で『収集なし』と申告しない",
+        "スクリーンショットを実機から取得する。デモ招待の内容を使い、実クライアントの写真は使わない",
+        "decisions.md の配布形態に照らして 4.2 のリスクを評価し、公開ストアに出すか内部配布に留めるかを最終判断する。判断と理由を store-submission.md に記録する"
+      ],
+      "done_definition": [
+        "アイコンとスプラッシュが mobile/assets に存在し app.config.ts から参照されている",
+        "期限切れしないデモ招待が作成され URL が記録されている",
+        "審査メモの3点が記載されている",
+        "プライバシーポリシー URL が用意され、写真ライブラリへの書き込み専用アクセスと招待トークンの取り扱いに言及している",
+        "データ収集の申告内容が実装の確認に基づいて記載されている",
+        "4.2 に対する go/no-go の判断と理由が記録されている"
+      ],
+      "verify_commands": [
+        "cd mobile && npx expo-doctor"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_016",
+      "title": "web 側にネイティブ分岐のテストを追加する",
+      "goal": "ネイティブ検出、フィーチャ判定、フォールバック、UI 分岐が自動テストで守られる",
+      "scope": [
+        "nativeBridge のユニットテスト（多重検出とフォールバック含む）",
+        "保存ガイドのネイティブ時非表示テスト",
+        "DownloadButton のネイティブ分岐テスト"
+      ],
+      "non_scope": [
+        "ネイティブ側の E2E テスト",
+        "Playwright による実ブラウザテスト"
+      ],
+      "files_to_read": [
+        "web/src/components/IosSaveGuide.test.tsx",
+        "web/src/components/AndroidSaveGuide.test.tsx",
+        "web/src/lib/nativeBridge.ts"
+      ],
+      "files_to_create": [
+        "web/src/lib/nativeBridge.test.ts",
+        "web/src/components/DownloadButton.test.tsx"
+      ],
+      "files_to_modify": [
+        "web/src/components/IosSaveGuide.test.tsx",
+        "web/src/components/AndroidSaveGuide.test.tsx"
+      ],
+      "dependencies": [
+        "task_007"
+      ],
+      "implementation_steps": [
+        "nativeBridge.test.ts で、① 何もない環境で detectNativeShell() が null ② 注入グローバルがある場合にその値を返す ③ グローバルが無く User-Agent に PhotoGalleryApp/ が含まれる場合に既定値を返す ④ window.ReactNativeWebView のみの場合に既定値を返す ⑤ postToNative が ReactNativeWebView 無しでも例外を投げない、を検証する",
+        "supportsFeature が supports に無い機能で false を返し、呼び出し側がフォールバックすることを検証する",
+        "注入グローバルを設定した状態で IosSaveGuide / AndroidSaveGuide が何もレンダリングしないことを検証する。ブラウザ時に表示される既存テストは残す",
+        "DownloadButton.test.tsx で、ネイティブ時に postToNative が saveImage 形式で呼ばれ window.open が呼ばれないこと、ブラウザ時は逆であることを検証する",
+        "afterEach で window.__NATIVE_GALLERY__ / window.ReactNativeWebView / navigator.userAgent のスタブを必ず戻し、テスト間の汚染を防ぐ",
+        "cd web && npm test を実行し全パスを確認する"
+      ],
+      "done_definition": [
+        "cd web && npm test が全パスし、テスト数がベースライン（22）から増えている",
+        "多重検出の3経路すべてがテストで区別されている",
+        "cd web && npm run lint のエラーが 16 以下"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run lint"
+      ],
+      "risk_level": "low",
+      "status": "done",
+      "implementation_note": "nativeBridge.test.ts（16件）と DownloadButton.test.tsx（4件）を追加。保存ガイドのテストにもネイティブ時非表示のケースを追加。web のテストは 44 件全通過。"
+    },
+    {
+      "task_id": "task_017",
+      "title": "アクセシビリティを確認する",
+      "goal": "保存の進行状況と結果が VoiceOver / TalkBack の利用者に伝わり、モーダルのフォーカスが破綻しない",
+      "scope": [
+        "進捗・完了・失敗の読み上げ確認",
+        "モーダルのフォーカストラップと復帰",
+        "結果の記録"
+      ],
+      "non_scope": [
+        "web ギャラリー全体のアクセシビリティ監査",
+        "WCAG 準拠の宣言"
+      ],
+      "files_to_read": [
+        "web/src/components/DownloadProgressModal.tsx",
+        "web/src/hooks/useNativeSave.ts"
+      ],
+      "files_to_create": [
+        "docs/native-app/a11y-check.md"
+      ],
+      "files_to_modify": [
+        "web/src/components/DownloadProgressModal.tsx"
+      ],
+      "dependencies": [
+        "task_014"
+      ],
+      "implementation_steps": [
+        "iOS 実機で VoiceOver を有効にし、保存開始・進捗更新・完了・失敗が読み上げられるかを確認する",
+        "Android 実機で TalkBack を有効にし同じ確認を行う",
+        "権限拒否モーダルを開き、フォーカスがモーダル内に閉じ込められるか、閉じたあと発火元のボタンへ戻るかを確認する",
+        "読み上げが行われない場合は aria-live 領域の実装を修正する。進捗の頻繁な更新が読み上げを妨げる場合は、更新の間隔を空けるか節目のみ通知する",
+        "結果を a11y-check.md に記録する。未確認の項目は未確認と書く"
+      ],
+      "done_definition": [
+        "VoiceOver と TalkBack の両方で保存の開始・完了・失敗が読み上げられる",
+        "モーダルがフォーカストラップを持ち、閉じたら発火元へフォーカスが戻る",
+        "a11y-check.md に実機での確認結果が記録されている"
+      ],
+      "verify_commands": [
+        "cd web && npm test"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_018",
+      "title": "CLAUDE.md にネイティブアプリの構成を追記する",
+      "goal": "次のセッションが mobile/ の存在と役割、front/ との違いを誤解しない状態にする",
+      "scope": [
+        "プロジェクト構成への mobile/ 追記",
+        "開発コマンドの追記",
+        "ブリッジと保存フローの説明",
+        "front/ が対象外である旨の明記"
+      ],
+      "non_scope": [
+        "別計画が扱う CLAUDE.md の更新内容",
+        "README の新規作成"
+      ],
+      "files_to_read": [
+        "CLAUDE.md",
+        "docs/native-app/implementation-plan.md"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "CLAUDE.md"
+      ],
+      "dependencies": [
+        "task_007",
+        "task_011"
+      ],
+      "implementation_steps": [
+        "Project Overview に mobile/（Expo、WebView シェル）を追加する",
+        "Development Commands に cd mobile && npm start / npm run typecheck / npm test を追加する",
+        "Architecture に『UI は web に一本化し、mobile は保存機能のみをネイティブで提供する』『web ↔ native は postMessage ブリッジ』『保存可能な画像は /api/native/manifest がサーバー側で認可する』を書く",
+        "front/ が Firebase 未接続の旧 NestJS 向けアプリであり mobile/ とは別物である旨を1文で書く",
+        "別計画 docs/task-list.json の task_012 も CLAUDE.md を触るため、競合したら両方の内容を反映してからコミットする"
+      ],
+      "done_definition": [
+        "CLAUDE.md に mobile/ の節が存在する",
+        "front/ と mobile/ の違いが1文以上で説明されている",
+        "記載したコマンドが実在する"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck"
+      ],
+      "risk_level": "low",
+      "status": "done",
+      "implementation_note": "CLAUDE.md に /mobile と /web の節、開発コマンド、ブリッジの説明、SDK 57 の落とし穴、front/ が別物である旨を追記。"
+    },
+    {
+      "task_id": "task_019",
+      "title": "[任意] フル権限が得られた場合のみアルバム分けを行う",
+      "goal": "ユーザーがフォトライブラリのフル権限を許可した場合に限り、招待のクライアント名でアルバムを作って保存する",
+      "scope": [
+        "権限レベルの判定",
+        "アルバム経由の保存経路の追加",
+        "権限がない場合の既存経路へのフォールバック"
+      ],
+      "non_scope": [
+        "フル権限を必須にすること",
+        "既存の書き込み専用経路の削除"
+      ],
+      "files_to_read": [
+        "mobile/src/save/saveToLibrary.ts",
+        "mobile/src/save/saveBatch.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "mobile/src/save/saveToLibrary.ts",
+        "mobile/src/save/saveBatch.ts",
+        "mobile/src/bridge/protocol.ts"
+      ],
+      "dependencies": [
+        "task_008"
+      ],
+      "implementation_steps": [
+        "saveImages に albumName を任意フィールドとして追加する。web 側は invitation.clientName を渡す",
+        "getPermissionsAsync() の結果からフル権限かどうかを判定する。書き込み専用しかない場合はアルバム分けを行わず既存経路を使う",
+        "pin した SDK に応じて createAssetAsync + createAlbumAsync、またはモダン API の Asset.create + Album.create を使う",
+        "アルバム名はファイルシステムに安全な文字だけに正規化する",
+        "アルバム作成に失敗しても保存自体は成功として扱う",
+        "実機でフル権限・書き込み専用の両方を試す"
+      ],
+      "done_definition": [
+        "フル権限時にクライアント名のアルバムが作られそこに保存される",
+        "書き込み専用権限時は従来どおり保存されエラーにならない",
+        "アルバム作成に失敗しても写真自体は保存される"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_020",
+      "title": "[任意] バックグラウンド転送に対応する",
+      "goal": "一括保存中にアプリがバックグラウンドへ回っても転送が継続する",
+      "scope": [
+        "expo-task-manager と再開可能ダウンロードの導入",
+        "中断からの再開",
+        "完了通知"
+      ],
+      "non_scope": [
+        "プッシュ通知サーバーの構築",
+        "単体保存の変更"
+      ],
+      "files_to_read": [
+        "mobile/src/save/saveBatch.ts",
+        "docs/native-app/device-test-log.md"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "mobile/src/save/saveBatch.ts",
+        "mobile/app.config.ts",
+        "mobile/package.json"
+      ],
+      "dependencies": [
+        "task_014"
+      ],
+      "implementation_steps": [
+        "task_014 の実機ログでバックグラウンド中断が実際に問題になっているかを確認する。問題になっていなければ着手しない",
+        "expo-task-manager と再開可能ダウンロードを導入し、iOS のバックグラウンド実行モードを app.config.ts に追加する",
+        "中断したバッチの状態を永続化し、復帰時に続きから再開する",
+        "実機でバックグラウンド移行・アプリ終了・復帰の各パターンを確認する"
+      ],
+      "done_definition": [
+        "バックグラウンド移行後も転送が継続する、または復帰時に続きから再開される",
+        "実機での確認結果が device-test-log.md に追記されている"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
+      "risk_level": "high"
+    }
+  ],
+  "implementation_status": {
+    "updated": "2026-08-16",
+    "summary": "Phase 1（task_002〜task_007）と Phase 2（task_008 / task_009）、および task_011 / task_012 / task_016 / task_018 を実装。web と mobile の自動検証はすべて通過。実機での保存・権限・ディープリンクと、マニフェスト API の実疎通は未検証。",
+    "verified_in_session": [
+      "cd mobile && npm run typecheck : エラーなし",
+      "cd mobile && npm test : 3 suites / 39 tests passed",
+      "cd mobile && npx expo-doctor : 21/21 checks passed",
+      "cd web && npm test : 8 files / 58 tests passed（ベースライン 22 から増加）",
+      "cd web && npm run build : 成功。/api/native/manifest がルートとして登録されている",
+      "cd web && npm run lint : 16 errors / 7 warnings（ベースライン維持）",
+      "npx expo prebuild --platform ios : Info.plist に NSPhotoLibraryAddUsageDescription のみ、NSPhotoLibraryUsageDescription なし",
+      "npx expo prebuild --platform android : 読み取り系メディア権限5件すべてが tools:node=\"remove\"",
+      "npx pod-install ios : 成功",
+      "別計画の task_001 / task_002 / task_004 の現況をコードで確認（3件とも未完了）"
+    ],
+    "not_verified": [
+      "iOS のネイティブビルド : Xcode 26.2 に対応する iOS プラットフォームコンポーネントが未インストールで、xcodebuild -showdestinations がシミュレータを1つも返さない（インストール済みランタイムは iOS 18.4 / 18.5 のみ）。Xcode > Settings > Components から iOS のプラットフォームを入れる必要がある",
+      "Android のネイティブビルド : Android SDK に NDK が未インストール。Gradle の自動ダウンロードは約1GB のため本セッションでは実施しなかった（中断された部分ダウンロードは削除して元の状態に戻してある）",
+      "/api/native/manifest の実 Firestore への疎通（ユニットテストは Firestore をモックしている）",
+      "実機でのフォトライブラリ保存・権限ダイアログ・一括保存・キャンセル・容量不足",
+      "ディープリンクの実機動作（ドメイン未確定のため未着手）",
+      "PC Chrome / iOS Safari / Android Chrome での web 回帰の手動確認"
+    ],
+    "blocked_pending_user": [
+      "task_010 ディープリンク（配信ドメイン名の確定が必要）",
+      "task_013 アプリ導線（App Store の app-id 発行後）",
+      "task_014 EAS ビルドと実機確認（開発者アカウント登録が必要）",
+      "task_015 ストア提出準備",
+      "task_017 アクセシビリティの実機確認",
+      "別計画 docs/implementation-plan.md の task_001 / task_002 / task_004（ストア公開の前提条件。3件とも未完了）"
+    ]
+  }
+}

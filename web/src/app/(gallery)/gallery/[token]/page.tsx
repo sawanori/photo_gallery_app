@@ -20,6 +20,19 @@ interface PageProps {
   params: Promise<{ token: string }>;
 }
 
+/**
+ * 読み込み中スケルトンの高さ。
+ *
+ * 以前は `Math.random()` で毎回決めていたが、サーバーで生成した HTML と
+ * クライアントの再描画で値が食い違うため、必ず hydration の警告が出ていた
+ * （Android の WebView で実際にコンソールに出ることを確認した）。
+ * 見た目の目的は「高さがばらついて写真らしく見えること」だけなので、
+ * 固定値で十分であり、サーバーとクライアントで必ず一致する。
+ */
+const SKELETON_HEIGHTS = [
+  260, 340, 220, 300, 380, 240, 320, 280, 360, 230, 300, 350,
+] as const;
+
 export default function GalleryPage({ params }: PageProps) {
   const { token } = use(params);
   const { isLoading, error, isValid } = useInvitation(token);
@@ -39,11 +52,11 @@ export default function GalleryPage({ params }: PageProps) {
         {/* Skeleton grid */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="columns-2 md:columns-3 lg:columns-4 gap-4">
-            {Array.from({ length: 12 }).map((_, i) => (
+            {SKELETON_HEIGHTS.map((height, i) => (
               <div
                 key={i}
                 className="break-inside-avoid mb-4 rounded-lg animate-shimmer"
-                style={{ height: `${200 + Math.random() * 200}px` }}
+                style={{ height: `${height}px` }}
               />
             ))}
           </div>

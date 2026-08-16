@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.com.nonturn.photogallery"],
+        "components": [
+          {
+            "/": "/gallery/*",
+            "comment": "招待ギャラリー"
+          },
+          {
+            "/": "/liked",
+            "?": { "token": "?*" },
+            "comment": "お気に入り一覧"
+          }
+        ]
+      }
+    ]
+  }
+}
