@@ -20,7 +20,14 @@ export default function DownloadProgressModal({
   mode = 'zip',
 }: DownloadProgressModalProps) {
   const isSaveMode = mode === 'save';
-  const title = isSaveMode ? '写真に保存中...' : 'ダウンロード中...';
+  // 取得が終わったあとの ZIP 組み立ては、枚数が多いと数十秒かかる。
+  // 表示を変えないと「止まった」と受け取られるため、段階を明示する。
+  const isZipping = progress.phase === 'zipping';
+  const title = isSaveMode
+    ? '写真に保存中...'
+    : isZipping
+      ? 'ZIPを作成中...'
+      : 'ダウンロード中...';
 
   // モーダル表示中は背後のスクロールを止める。
   // Android の WebView では、ページがスクロールされた状態で position:fixed の
@@ -54,7 +61,9 @@ export default function DownloadProgressModal({
             aria-live="polite"
           >
             <span>
-              {progress.current} / {progress.total}
+              {isZipping
+                ? `${progress.total}枚を1つのファイルにまとめています`
+                : `${progress.current} / ${progress.total}`}
             </span>
             <span>{progress.percentage}%</span>
           </div>

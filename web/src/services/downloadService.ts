@@ -36,6 +36,14 @@ export interface DownloadProgress {
   current: number;
   total: number;
   percentage: number;
+  /**
+   * 'fetching' … 写真を取得している
+   * 'zipping'  … 取得を終えて ZIP を組み立てている
+   *
+   * 省略可能にしてあるのは、ネイティブ保存の進捗（NativeSaveProgress）も
+   * 同じ進捗モーダルに渡すため。あちらに段階の区別は無い。
+   */
+  phase?: 'fetching' | 'zipping';
 }
 
 export const downloadImagesAsZip = async (
@@ -66,6 +74,7 @@ export const downloadImagesAsZip = async (
           current: i + batchIndex + 1,
           total,
           percentage: Math.round(((i + batchIndex + 1) / total) * 100),
+          phase: 'fetching',
         });
       })
     );
@@ -73,6 +82,31 @@ export const downloadImagesAsZip = async (
 
   if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-  const content = await zip.generateAsync({ type: 'blob' });
+  // 取得が終わってから ZIP を組み立てる。ここは数百枚だと数十秒かかるため、
+  // 進捗を出さないと画面が固まったように見える。
+  onProgress?.({ current: total, total, percentage: 0, phase: 'zipping' });
+
+  const content = await zip.generateAsync(
+    {
+      type: 'blob',
+      // JPEG は既に圧縮済みで、再圧縮してもほとんど縮まない。
+      // 既定の DEFLATE のままだと、その効果の無い計算に時間を使うだけになる。
+      // STORE は無圧縮で格納するだけなので、生成が目に見えて速くなる。
+      compression: 'STORE',
+    },
+    (metadata) => {
+      onProgress?.({
+        current: total,
+        total,
+        percentage: Math.round(metadata.percent),
+        phase: 'zipping',
+      });
+    }
+  );
+
+  // 生成中に中止された場合はファイルを渡さない。
+  // JSZip の生成そのものは途中で止められないため、ここで捨てる。
+  if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
   saveAs(content, `${zipName}.zip`);
 };

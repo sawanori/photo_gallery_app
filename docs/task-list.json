@@ -504,7 +504,8 @@
         "cd web && npm test",
         "cd web && npm run build"
       ],
-      "risk_level": "medium"
+      "risk_level": "medium",
+      "status": "完了（2026-08-17）。generateAsync に compression: STORE を指定し、進捗に phase（fetching / zipping）を追加。100MB（2MB×50枚）での実測で DEFLATE 7.8秒 → STORE 0.6秒（13倍）、出来上がりの大きさは同一。unzip -v で Method: Stored / Cmpr: 0% を確認。テスト3件追加。実機での生成中表示の確認は未実施。"
     },
     {
       "task_id": "task_011",
