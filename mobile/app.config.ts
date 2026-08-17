@@ -11,7 +11,7 @@ import type { ExpoConfig } from 'expo/config';
  */
 
 const WEB_ORIGIN =
-  process.env.EXPO_PUBLIC_WEB_ORIGIN ?? 'https://web-photo-gallery-app.vercel.app';
+  process.env.EXPO_PUBLIC_WEB_ORIGIN ?? 'https://gallery.non-turn.com';
 
 const GALLERY_DOMAIN =
   process.env.GALLERY_DOMAIN ?? new URL(WEB_ORIGIN).host;

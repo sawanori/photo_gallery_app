@@ -241,3 +241,56 @@ Firebase 認証の iframe を遮断してもギャラリーは表示される。
 - `bridge/inject.ts` の `DEBUG_PAGE_REPORTER` と `PAGE_REPORTER_SNIPPET`
 - `web/src/app/layout.tsx` に入れた計測用の `<script>`（これは効果が無かった。
   Vercel は存在しないパスへの 404 をランタイムログに残さないため）
+
+---
+
+# 5. ユニバーサルリンク（2026-08-17）
+
+配信ドメインを `gallery.non-turn.com` に確定し、招待リンクをタップするだけで
+アプリが開く状態にした。iPhone 16 Pro Max（iOS 26.6）で動作を確認済み。
+
+## 構成
+
+| 項目 | 値 |
+|---|---|
+| 配信ドメイン | `gallery.non-turn.com` |
+| DNS | `non-turn.com` のゾーンに CNAME を1件追加（`gallery` → `cname.vercel-dns.com`） |
+| ネームサーバー | `ns-rs1.gmoserver.jp` / `ns-rs2.gmoserver.jp` |
+| Apple Team ID | `2WWB6ZA7A9` |
+| 対象パス | `/gallery/*` と `/liked?token=*` |
+
+`non-turn.com` 本体（`76.76.21.21`）とメール（`mail89.onamae.ne.jp`）には触れていない。
+サブドメインを1件足しただけである。
+
+## 詰まった点
+
+**`apple-app-site-association` が `application/octet-stream` で配信されていた。**
+このファイルは拡張子を持たないため、Next.js の既定ではそうなる。Apple はこれを
+受け付けないので、`web/next.config.ts` の `headers()` で `application/json` を明示した。
+**対処しなければユニバーサルリンクは動かなかった。**
+
+**アプリを入れ直すまで Safari で開いていた。** iOS はアプリのインストール時に
+ドメインとの結びつきを取得する。初回インストールの時点では Apple の CDN が
+まだ設定ファイルを保持していなかったため、結びつきが空のままだった。
+アンインストールして入れ直すと解決した。
+
+サーバー側が正しいかどうかは、Apple の CDN に直接問い合わせて確認できる。
+
+```
+curl https://app-site-association.cdn-apple.com/a/v1/gallery.non-turn.com
+```
+
+ここに期待した内容が返っていれば、残りの原因は端末側に絞れる。
+
+## 切り替えた設定
+
+- 管理画面の `NEXT_PUBLIC_WEB_URL` を `https://gallery.non-turn.com` に変更（Vercel の環境変数と `admin/.env.local` の両方）。**以後に発行する招待リンクは自社ドメインになる**
+- アプリの `EXPO_PUBLIC_WEB_ORIGIN`、`app.config.ts` と `src/config.ts` の既定値、
+  `eas.json` の preview プロファイルを新ドメインへ変更
+- 配布済みの旧ドメインのリンクも引き続き開ける（Vercel が両方のドメインで配信するため）
+
+## 未対応
+
+**Android の App Links は未稼働。** `web/public/.well-known/assetlinks.json` の
+`sha256_cert_fingerprints` がプレースホルダのままである。EAS の Android クレデンシャルを
+作成すると署名鍵の SHA-256 が判明するので、それを入れれば有効になる。

@@ -1,13 +1,14 @@
-# Vercel CLI からアップロードするファイルを web/ だけに絞る。
+# Vercel CLI からアップロードするファイルを、デプロイに必要な範囲へ絞る。
 #
-# web-photo-gallery-app プロジェクトは Root Directory が `web` のため、
-# CLI ではリポジトリのルートから deploy する。そのままだと他のワークスペース
-# （mobile/android は 2.3GB、admin/.next は 1.6GB）まで送ってしまう。
-# ビルドに必要なのは web/ 配下だけなので、それ以外を除外する。
+# このリポジトリには web と admin の2つの Vercel プロジェクトがあり、
+# どちらも Root Directory（それぞれ web / admin）が設定されているため、
+# CLI からはリポジトリのルートで deploy する。そのままだと関係のない
+# ワークスペース（mobile の生成物は数GB、back/uploads は 110MB）まで送ってしまう。
+#
+# web と admin は**除外しない**。片方だけ除外すると、もう一方のデプロイが壊れる。
 #
 # このファイルは CLI からのアップロードにのみ効く。Git 連携のデプロイには影響しない。
 
-admin
 mobile
 front
 back
@@ -21,4 +22,5 @@ scripts
 **/.next
 **/test-results
 **/playwright-report
+**/e2e
 *.log

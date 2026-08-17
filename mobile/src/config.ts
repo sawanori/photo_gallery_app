@@ -5,7 +5,7 @@
  * EXPO_PUBLIC_WEB_ORIGIN を差し替えるだけでよく、コードは変更しない。
  */
 
-const DEFAULT_WEB_ORIGIN = 'https://web-photo-gallery-app.vercel.app';
+const DEFAULT_WEB_ORIGIN = 'https://gallery.non-turn.com';
 
 /** ギャラリー web のオリジン。末尾スラッシュを含まない。 */
 export const WEB_ORIGIN = (

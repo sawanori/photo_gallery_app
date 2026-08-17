@@ -10,10 +10,14 @@
     },
     "preview": {
       "distribution": "internal",
-      "ios": { "simulator": false },
-      "android": { "buildType": "apk" },
+      "ios": {
+        "simulator": false
+      },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
-        "EXPO_PUBLIC_WEB_ORIGIN": "https://photo-gallery-native-test.vercel.app"
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://gallery.non-turn.com"
       }
     },
     "production": {

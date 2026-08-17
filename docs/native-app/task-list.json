@@ -49,7 +49,7 @@
     },
     {
       "task_id": "task_001",
-      "status": "partially_done",
+      "status": "done（2026-08-17）。配信ドメインは gallery.non-turn.com に確定。Apple Developer Program 登録済み。配布形態（ストア公開か TestFlight か）の最終判断は task_015 で行う。",
       "resolution": "2026-08-16 方針は決定済み（docs/native-app/decisions.md の D2 / D3）。配布形態は公開ストアを第一候補・TestFlight 外部配布を代替（最終確定は task_015）。配信ドメインは独自ドメインを用意する方針で確定。未了なのは (1) 具体的なドメイン名の確定 (2) bundleIdentifier / package 名の確定 (3) Apple Developer Program と Google Play Console の登録 (4) eas login / eas init の4点で、いずれも人間が実施する。",
       "title": "[ゲート1・人間が実施] 配布形態と配信ドメインを決め、開発者アカウントを登録する",
       "goal": "以降の実装が依存する2つの決定と、対話が必要なアカウント登録を先に片付ける",
@@ -644,7 +644,8 @@
         "cd web && npm run build",
         "cd mobile && npm run typecheck"
       ],
-      "risk_level": "high"
+      "risk_level": "high",
+      "status": "done（2026-08-17）。iOS のユニバーサルリンクは gallery.non-turn.com で稼働、実機で確認済み。カスタムスキームも稼働。Android の App Links は assetlinks.json の SHA-256 が未取得のため未稼働。"
     },
     {
       "task_id": "task_011",

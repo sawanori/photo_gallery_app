@@ -41,7 +41,10 @@
 - **判断者**: ユーザー（必要なら用意する、との回答）
 - **結論**: ユニバーサルリンク / App Links 用に独自ドメインを用意する。`web-kappa-neon-94.vercel.app` のようなプレビュー用ホストのまま進めない。
 - **理由**: 招待リンクの https URL からアプリを開くには、`apple-app-site-association` と `assetlinks.json` を安定したドメインから配信する必要がある。ドメインが変わるとリンクが機能しなくなり、既に配布済みの招待リンクが壊れる。
-- **未確定**: 具体的なドメイン名。`non-turn.com` のサブドメイン（例: `gallery.non-turn.com`）を使うか、新規取得するか。**`task_010`（ディープリンク設定）の着手前に確定が必要。**
+- **確定（2026-08-17）**: **`gallery.non-turn.com`**。`non-turn.com` のゾーンに CNAME を1件
+  追加して Vercel に向けた。会社サイト本体とメールには触れていない。
+  管理画面が発行する招待リンクもこのドメインに切り替え済み。
+  iOS のユニバーサルリンクは実機で動作を確認した（`device-test-log.md` 第5章）。
 
 ---
 
@@ -49,9 +52,9 @@
 
 | 項目 | 必要になるタスク | 決める人 |
 |---|---|---|
-| 配信ドメイン名 | `task_010` | ユーザー |
+| ~~配信ドメイン名~~ | ~~`task_010`~~ | **確定: `gallery.non-turn.com`（2026-08-17）** |
 | `ios.bundleIdentifier` / `android.package`（例: `com.nonturn.photogallery`） | `task_002` | ユーザー確認のうえ設定 |
-| Apple Team ID | `task_010`（AASA の `appIDs`） | Apple Developer Program 登録後に判明 |
-| Apple Developer Program / Google Play Console の登録 | `task_002` 以降のビルド | ユーザー（対話が必要なためエージェント不可） |
+| ~~Apple Team ID~~ | ~~`task_010`~~ | **判明: `2WWB6ZA7A9`（2026-08-17）。AASA に反映済み** |
+| Apple Developer Program | — | **登録済み（2026-08-17）**。Google Play Console は未登録 |
 | Android 署名鍵の SHA-256 フィンガープリント | `task_010`（`assetlinks.json`） | EAS のクレデンシャル作成後に判明 |
 </content>

@@ -2,7 +2,7 @@
   "applinks": {
     "details": [
       {
-        "appIDs": ["TEAMID.com.nonturn.photogallery"],
+        "appIDs": ["2WWB6ZA7A9.com.nonturn.photogallery"],
         "components": [
           {
             "/": "/gallery/*",
