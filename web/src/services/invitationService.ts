@@ -106,6 +106,23 @@ export const updateInvitationAccess = async (invitationId: string): Promise<void
   });
 };
 
+/**
+ * セッションが指す招待を貼り替える。
+ *
+ * createSession（setDoc）で作り直すと createdAt も書き換わり、
+ * セッション更新のルール（lastAccessedAt と invitationId だけ変更可）に反する。
+ * 変更するフィールドを絞った updateDoc を使う。
+ */
+export const updateSessionInvitation = async (
+  uid: string,
+  invitationId: string
+): Promise<void> => {
+  await updateDoc(doc(db, SESSIONS_COLLECTION, uid), {
+    invitationId,
+    lastAccessedAt: serverTimestamp(),
+  });
+};
+
 export const updateSessionAccess = async (uid: string): Promise<void> => {
   const ref = doc(db, SESSIONS_COLLECTION, uid);
   await updateDoc(ref, {

@@ -26,6 +26,20 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/sessions/$(request.auth.uid));
     }
 
+    /**
+     * このセッションが開いている招待の ID。
+     * お気に入りの読み書きを、その招待の範囲に閉じ込めるために使う。
+     */
+    function sessionInvitationId() {
+      return get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data.invitationId;
+    }
+
+    /** likeCount の変化が ±1 か。任意の値への書き換えを封じる。 */
+    function likeCountDeltaValid() {
+      return request.resource.data.likeCount == resource.data.likeCount + 1 ||
+             request.resource.data.likeCount == resource.data.likeCount - 1;
+    }
+
     function onlyLikeCountChanged() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       return affectedKeys.size() == 0 || affectedKeys.hasOnly(['likeCount']);
@@ -60,25 +74,34 @@ service cloud.firestore {
       allow create: if isRegisteredUser() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
-      allow update: if isAuthenticated() &&
-        (resource.data.userId == request.auth.uid || isAdmin() ||
-         (onlyLikeCountChanged() && isAuthenticated()));
+      // likeCount だけは招待の閲覧者にも書かせる必要がある（お気に入り機能）。
+      // ただし以前は「likeCount だけの変更なら誰でも可」で、匿名認証しただけの
+      // 第三者が任意の値に書き換えられた。有効なセッションを持つことと、
+      // 変化量が ±1 であることを要求する。
+      allow update: if isAdmin() ||
+        (isAuthenticated() && resource.data.userId == request.auth.uid) ||
+        (hasValidSession() && onlyLikeCountChanged() && likeCountDeltaValid());
       allow delete: if resource.data.userId == request.auth.uid || isAdmin();
     }
 
     // Likes collection
     match /likes/{likeId} {
-      // 単体取得は許可する（ID が `{userId}_{imageId}` 形式で、他人の ID を組み立てるには
-      // 相手の userId を知っている必要があるため、ここを絞っても得るものが少ない）。
-      // 列挙は「自分の分だけ」に限定する。list のルールは返却され得る各ドキュメントに対して
-      // 評価されるため、userId で絞っていないクエリはこの条件を満たせず拒否される。
-      // web の getLikedImageIds は where('userId','==',uid) で絞っているので通る。
+      // お気に入りは招待に紐づく。匿名 UID には紐づけない。
+      // UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
+      // クライアントがブラウザで選んだお気に入りがアプリで消える。
+      //
+      // 読み書きできるのは、そのセッションが開いている招待の分だけ。
+      // 招待 ID は招待トークンそのものなので、これを知っている＝ギャラリーを
+      // 開ける立場であり、その範囲を超えた情報は得られない。
       allow get: if isAuthenticated();
       allow list: if isAdmin() ||
-        (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if isAuthenticated() &&
-        request.resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        (hasValidSession() && resource.data.invitationId == sessionInvitationId());
+      allow create: if hasValidSession() &&
+        request.resource.data.invitationId == sessionInvitationId() &&
+        request.resource.data.imageId is string &&
+        likeId == request.resource.data.invitationId + '_' + request.resource.data.imageId;
+      allow delete: if hasValidSession() &&
+        resource.data.invitationId == sessionInvitationId();
     }
 
     // Invitations collection
@@ -114,8 +137,13 @@ service cloud.firestore {
     match /sessions/{sessionId} {
       allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == sessionId);
       allow create: if isAuthenticated() && request.auth.uid == sessionId;
+      // invitationId の更新を許す。招待のドキュメント ID をトークンに移行したため、
+      // 移行前に作られたセッションは古い ID を持っており、そのままだと
+      // お気に入りの読み取りが自分の招待と一致しなくなる。
+      // create で任意の invitationId を書けるので、update を許しても強度は変わらない。
       allow update: if isAuthenticated() && request.auth.uid == sessionId &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastAccessedAt']);
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['lastAccessedAt', 'invitationId']);
       allow delete: if isAdmin();
     }
   }

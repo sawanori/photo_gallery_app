@@ -1,0 +1,794 @@
+{
+  "feature": "招待制ギャラリーのセキュリティ修正と配信品質改善",
+  "version": 1,
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "title": "Firestore ルールを get / list に分離し likeCount 更新を制約する",
+      "goal": "匿名認証ユーザーが images / likes コレクションを列挙できない状態にし、likeCount の任意書き換えを封じる",
+      "scope": [
+        "images の read を get(認証済み) と list(管理者のみ) に分離",
+        "likes の read を「自分の like のみ」+ 管理者に制限",
+        "images の update から無条件の likeCount 変更許可を除去し、hasValidSession() と変化量 ±1 の制約に置き換え",
+        "既に定義済みで未使用の hasValidSession() を実際に参照させる"
+      ],
+      "non_scope": [
+        "invitations のルール変更（task_002 で行う）",
+        "storage.rules の変更",
+        "Cloud Functions による likeCount 集計"
+      ],
+      "files_to_read": [
+        "firestore.rules",
+        "web/src/services/imageService.ts",
+        "web/src/services/likeService.ts",
+        "admin/src/services/imageService.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "firestore.rules"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "web / admin のコードを読み、images と likes に対してコレクションクエリ(list)を発行している箇所を洗い出す。web の imageService は getDoc のみ、admin は projectId / imageId / userId でのクエリを使うことを確認する",
+        "images の `allow read` を `allow get: if isAuthenticated();` と `allow list: if isAdmin();` に分離する",
+        "likes の `allow read` を `allow get: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());` と `allow list: if isAdmin() || (isAuthenticated() && ...自分のuserIdで絞ったクエリのみ通る形);` に分離する",
+        "likeCountDelta を検査するヘルパー関数を追加し、request.resource.data.likeCount と resource.data.likeCount の差が 1 または -1 のときのみ許可する",
+        "images の update 条件を `isAdmin() || resource.data.userId == request.auth.uid || (hasValidSession() && onlyLikeCountChanged() && likeCountDeltaValid())` に変更する",
+        "firebase deploy --only firestore:rules でデプロイする",
+        "本番の web で招待リンクを1本開き、画像表示・お気に入り登録・お気に入り解除が動作することを確認する",
+        "ブラウザのコンソールから匿名認証のまま images / likes のコレクションクエリを試し、permission-denied になることを確認する",
+        "increment 変換後の値を rules が参照できず likeCount 制約が機能しない場合は、制約を hasValidSession() + onlyLikeCountChanged() までに縮退させ、implementation-plan.md の Assumptions と Acceptance Criteria を更新する"
+      ],
+      "done_definition": [
+        "firestore.rules に images の get / list が別々に定義されている",
+        "firestore.rules に likes の read 制限が入り、他人の like を列挙できない",
+        "hasValidSession() が実際に参照されている",
+        "デプロイ後に本番の招待リンクで画像表示とお気に入り操作が動作する",
+        "匿名クライアントからの images / likes の list が permission-denied になる",
+        "cd web && npm test と cd admin && npx vitest run がベースライン（22 / 103 パス）を維持している"
+      ],
+      "verify_commands": [
+        "firebase deploy --only firestore:rules",
+        "cd web && npm test",
+        "cd admin && npx vitest run"
+      ],
+      "risk_level": "high",
+      "status": "完了（2026-08-17）。images / likes / users の read を get と list に分離し、likeCount の更新に hasValidSession() と変化量 ±1 の制約を追加。匿名クライアントから列挙できないこと、increment(1) の正規経路が通り increment(5) と 9999 への書き換えが拒否されることを本番で実測して確認。"
+    },
+    {
+      "task_id": "task_002",
+      "title": "招待トークンをドキュメントIDにし、招待の list を管理者のみにする",
+      "goal": "トークンを知らない第三者が招待を列挙・閲覧できない状態にし、有効期限と無効化を Firestore ルールで強制する",
+      "scope": [
+        "invitations のドキュメントIDをトークン値に変更",
+        "web の招待取得をコレクションクエリから単一ドキュメント取得に変更",
+        "admin の招待作成を ID 指定の setDoc に変更し、トークン生成アルファベットから _ を除外",
+        "invitations のルールを get(認証済み + isActive + 未期限) / list(管理者のみ) に分離",
+        "既存招待ドキュメントの移行スクリプト作成",
+        "権限拒否を「無効または期限切れ」の単一メッセージに正規化"
+      ],
+      "non_scope": [
+        "sessions が参照する旧 invitationId の書き換え（存在チェックのみに使うため許容する）",
+        "無停止移行のための新旧ID併存期間の設計（稼働リンクが多数ある場合のみ別途検討）",
+        "token フィールドの削除（互換のため残す）"
+      ],
+      "files_to_read": [
+        "firestore.rules",
+        "web/src/services/invitationService.ts",
+        "web/src/hooks/useInvitation.ts",
+        "web/src/components/ExpiredLink.tsx",
+        "admin/src/services/invitationService.ts",
+        "scripts/migrate-thumbnails.mjs"
+      ],
+      "files_to_create": [
+        "scripts/migrate-invitation-ids.mjs"
+      ],
+      "files_to_modify": [
+        "firestore.rules",
+        "web/src/services/invitationService.ts",
+        "web/src/hooks/useInvitation.ts",
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts"
+      ],
+      "dependencies": [
+        "task_001"
+      ],
+      "implementation_steps": [
+        "scripts/migrate-thumbnails.mjs の方式（web/node_modules の Firebase クライアントSDK + 管理者のメール/パスワード認証 + 環境変数からの設定読み込み）を踏襲して scripts/migrate-invitation-ids.mjs を作る",
+        "移行スクリプトは全招待を取得し、token を ID とする新ドキュメントを setDoc で作成する。既定はコピーのみで、--delete-old を渡した場合のみ旧ドキュメントを削除する。処理件数・スキップ件数・失敗件数を標準出力に出す",
+        "admin の createInvitation を nanoid の customAlphabet（A-Za-z0-9 と - のみ、_ を除外）でトークン生成し、setDoc(doc(db,'invitations',token)) に変更する。戻り値の id が token と一致することを保つ",
+        "web の getInvitationByToken を getDoc(doc(db,'invitations',token)) に変更する。FirebaseError の code が permission-denied または存在しない場合は null を返す",
+        "useInvitation の分岐を整理し、invitation が null のときと validateInvitation が false のときを同一の文言「このリンクは無効か、有効期限が切れています。」にまとめる",
+        "firestore.rules の invitations を `allow get: if isAdmin() || (isAuthenticated() && resource.data.isActive == true && resource.data.expiresAt > request.time);` と `allow list: if isAdmin();` に分離する。accessCount / lastAccessedAt のみを変更する update 許可は維持する",
+        "admin の invitationService.test.ts の addDoc 期待値を setDoc に更新する",
+        "移行スクリプトを実行し、件数を確認する",
+        "firebase deploy --only firestore:rules でデプロイする",
+        "移行前から存在する招待リンクを実際に開き、閲覧できることを確認する",
+        "isActive を false にした招待リンクを開き、汎用エラー画面になることを確認する"
+      ],
+      "done_definition": [
+        "新規作成した招待のドキュメントIDが token と一致する",
+        "web が単一ドキュメント取得で招待を引けている",
+        "匿名クライアントからの invitations の list が permission-denied になる",
+        "無効化済み・期限切れの招待は単一ドキュメント取得でも拒否される",
+        "無効な招待を開いたときに例外が画面に出ず、汎用エラー画面が表示される",
+        "移行スクリプトを実行後、既存の稼働リンクが引き続き開ける",
+        "cd admin && npx vitest run が全パス",
+        "cd web && npm run build と cd admin && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd web && npm run build",
+        "cd admin && npm run build",
+        "firebase deploy --only firestore:rules"
+      ],
+      "risk_level": "high",
+      "status": "完了（2026-08-17）。招待のドキュメント ID をトークンに移行（scripts/migrate-invitation-ids.mjs、4件成功・1件は projectId を持たない期限切れのため対象外）。web は単一取得に変更、admin は setDoc に変更。invitations の list が匿名から拒否されること、本番ギャラリーが表示されることを実測。"
+    },
+    {
+      "task_id": "task_003",
+      "title": "ギャラリーページに noindex を設定する",
+      "goal": "token 付き URL が検索インデックスに載らないようにする",
+      "scope": [
+        "/gallery/[token] と /liked に robots メタデータを追加"
+      ],
+      "non_scope": [
+        "robots.txt の追加",
+        "トップページ（/）の noindex 化"
+      ],
+      "files_to_read": [
+        "web/src/app/(gallery)/gallery/[token]/page.tsx",
+        "web/src/app/(gallery)/liked/page.tsx",
+        "web/src/app/(gallery)/layout.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/app/(gallery)/gallery/[token]/page.tsx",
+        "web/src/app/(gallery)/liked/page.tsx"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "対象ページが Client Component の場合は metadata をエクスポートできないため、(gallery)/layout.tsx に metadata を置くか、Server Component 側の境界を確認して配置先を決める",
+        "robots: { index: false, follow: false } を metadata に追加する",
+        "cd web && npm run build を実行し、生成された HTML に noindex が含まれることを確認する"
+      ],
+      "done_definition": [
+        "ギャラリーページのレスポンスに noindex が含まれる",
+        "cd web && npm run build が成功",
+        "cd web && npm run lint のエラー数が 16 を超えない"
+      ],
+      "verify_commands": [
+        "cd web && npm run build",
+        "cd web && npm run lint"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_004",
+      "title": "いいねを匿名UID単位から招待単位に変更する",
+      "goal": "同じ招待リンクなら端末やブラウザを変えても選定結果が保持される状態にする",
+      "scope": [
+        "like ドキュメントIDを ${invitationId}_${imageId} に変更",
+        "like ドキュメントに invitationId フィールドを追加",
+        "getLikedImageIds を invitationId 引数に変更",
+        "LikeButton から invitationId を渡す",
+        "likes の invitationId 複合インデックスを追加",
+        "likes のルールを新しいID体系に合わせて更新"
+      ],
+      "non_scope": [
+        "既存 like データの移行（task_014 で任意対応）",
+        "images.likeCount の意味変更（全招待合計のまま）",
+        "admin 側の表示（task_006 で行う）"
+      ],
+      "files_to_read": [
+        "web/src/services/likeService.ts",
+        "web/src/components/LikeButton.tsx",
+        "web/src/contexts/GalleryContext.tsx",
+        "web/src/hooks/useInvitation.ts",
+        "web/src/hooks/useLikedImages.ts",
+        "firestore.rules",
+        "firestore.indexes.json"
+      ],
+      "files_to_create": [
+        "web/src/services/likeService.test.ts"
+      ],
+      "files_to_modify": [
+        "web/src/services/likeService.ts",
+        "web/src/components/LikeButton.tsx",
+        "web/src/hooks/useInvitation.ts",
+        "firestore.rules",
+        "firestore.indexes.json"
+      ],
+      "dependencies": [
+        "task_001",
+        "task_002"
+      ],
+      "implementation_steps": [
+        "likeService の getLikeId を (invitationId, imageId) に変更し、likeImage / unlikeImage / toggleLike / hasLiked のシグネチャを合わせる",
+        "like ドキュメントに invitationId を保存する。userId は最後に操作した匿名UIDとして残す",
+        "getLikedImageIds(invitationId) に変更し、where('invitationId','==',invitationId) で取得する",
+        "LikeButton で useGallery() の invitation から invitationId を取得して toggleLike に渡す。invitation が null のときは操作を無効化する",
+        "useInvitation の getLikedImageIds 呼び出しを invitation.id ベースに変更する。invitation 取得後に呼ぶ順序へ並べ替える必要があるか確認する（現在は Promise.all で並列実行しているため直列化が必要）",
+        "firestore.indexes.json に likes の invitationId ASC + createdAt DESC を追加する",
+        "firestore.rules の likes を新ID体系に合わせ、create 時に request.resource.data.invitationId が自分のセッションの invitationId と一致することを要求する",
+        "likeService の新規テストを追加する（ID生成規則と取得クエリの引数）",
+        "firebase deploy --only firestore:rules,firestore:indexes でデプロイする",
+        "同一招待リンクを2つの別ブラウザで開き、片方で付けたお気に入りがもう片方に反映されることを確認する"
+      ],
+      "done_definition": [
+        "likes/{invitationId}_{imageId} 形式のドキュメントが作られる",
+        "like ドキュメントに invitationId が含まれる",
+        "別ブラウザで同じ招待リンクを開くと既存のお気に入りが反映される",
+        "お気に入り解除で likeCount が 1 減る",
+        "cd web && npm test が全パス（新規テストを含む）",
+        "cd web && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build",
+        "firebase deploy --only firestore:rules,firestore:indexes"
+      ],
+      "risk_level": "medium",
+      "status": "完了（2026-08-17）。お気に入りの ID を {invitationId}_{imageId} に変更し invitationId フィールドを追加。getLikedImageIds を invitationId 引数に変更。ルールはセッションが持つ招待の分だけ読み書きを許可。既存の匿名UID単位のお気に入りは引き継がれない（移行は未実施）。"
+    },
+    {
+      "task_id": "task_005",
+      "title": "別の招待リンクを開いたときにセッションの invitationId を更新する",
+      "goal": "同一端末で複数の招待を開いた場合にセッションと accessCount が正しく追随する",
+      "scope": [
+        "既存セッションの invitationId が現在の招待と異なる場合に更新",
+        "その場合に accessCount を増やす"
+      ],
+      "non_scope": [
+        "セッションの有効期限・失効処理の追加",
+        "複数招待の同時保持（1UIDにつき1セッションの現行設計を維持）"
+      ],
+      "files_to_read": [
+        "web/src/hooks/useInvitation.ts",
+        "web/src/services/invitationService.ts",
+        "firestore.rules"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/hooks/useInvitation.ts",
+        "web/src/services/invitationService.ts",
+        "firestore.rules"
+      ],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "invitationService に updateSessionInvitation(uid, invitationId) を追加する",
+        "useInvitation の既存セッション分岐で、session.invitationId が現在の invitation.id と異なる場合に更新し、updateInvitationAccess も呼ぶ",
+        "firestore.rules の sessions update 許可キーに invitationId を追加する（現在は lastAccessedAt のみ）",
+        "firebase deploy --only firestore:rules でデプロイする",
+        "同一ブラウザで招待Aを開いた後に招待Bを開き、B の accessCount が増え、sessions の invitationId が B になることを確認する"
+      ],
+      "done_definition": [
+        "同一ブラウザで2つ目の招待を開くと sessions.invitationId が更新される",
+        "2つ目の招待の accessCount が増える",
+        "task_004 で導入した like の招待一致チェックが2つ目の招待でも通る",
+        "cd web && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd web && npm run build",
+        "firebase deploy --only firestore:rules"
+      ],
+      "risk_level": "medium",
+      "status": "完了（2026-08-17）。task_004 に伴い useInvitation でセッションの invitationId が招待と食い違う場合に updateSessionInvitation で貼り替えるようにした。"
+    },
+    {
+      "task_id": "task_006",
+      "title": "admin の招待詳細に選定結果を表示する",
+      "goal": "撮影者がクライアントの選定写真を管理画面で確認し、後工程に渡せるようにする",
+      "scope": [
+        "選定枚数の表示",
+        "選定画像のサムネイルグリッド表示",
+        "選定画像のファイル名一覧のクリップボードコピー",
+        "読み込み中・0件・失敗の各状態表示"
+      ],
+      "non_scope": [
+        "CSV ファイルのダウンロード",
+        "選定画像だけの ZIP 生成",
+        "プロジェクト一覧画面での選定枚数表示"
+      ],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "admin/src/services/imageService.ts",
+        "admin/src/services/index.ts",
+        "web/src/services/likeService.ts"
+      ],
+      "files_to_create": [
+        "admin/src/services/likeService.ts"
+      ],
+      "files_to_modify": [
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "admin/src/services/index.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/__tests__/page.test.tsx"
+      ],
+      "dependencies": [
+        "task_004"
+      ],
+      "implementation_steps": [
+        "admin/src/services/likeService.ts に getLikesByInvitation(invitationId) を作り、where('invitationId','==',invitationId) で likes を取得して imageId 配列を返す",
+        "招待詳細ページで invitation 読み込み後に選定 imageId を取得し、既存の imageService で該当画像のメタデータを引く",
+        "Descriptions の下に「選定結果」Card を追加し、Statistic で枚数、Row/Col（xs=12 sm=8 md=6）でサムネイルを並べる",
+        "storagePath 由来のファイル名一覧をクリップボードにコピーするボタンを追加する。navigator.clipboard が使えない環境のフォールバックは実装しない（admin は管理者のPCブラウザ前提）",
+        "0件時は Empty、取得失敗時は message.error と再試行ボタンを出す",
+        "既存の招待詳細テストに、選定結果セクションの表示と0件時の表示を追加する",
+        "cd admin && npx vitest run と cd admin && npm run build を実行する"
+      ],
+      "done_definition": [
+        "招待詳細画面に選定枚数とサムネイルが表示される",
+        "選定が0件のとき空状態が表示される",
+        "ファイル名一覧をコピーできる",
+        "cd admin && npx vitest run が全パス",
+        "cd admin && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_007",
+      "title": "web の並び順を admin の自然順に統一する",
+      "goal": "ギャラリーの表示順をアップロード順（ファイル名の自然順）と一致させ、二重ソートを解消する",
+      "scope": [
+        "自然順比較ユーティリティの新設",
+        "useInvitation のソートを自然順に置換",
+        "getImagesByIds 内の createdAt ソートの削除"
+      ],
+      "non_scope": [
+        "admin 側の naturalSortFiles の変更",
+        "ソート順の切り替えUI（撮影日順など）の追加"
+      ],
+      "files_to_read": [
+        "web/src/hooks/useInvitation.ts",
+        "web/src/services/imageService.ts",
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx"
+      ],
+      "files_to_create": [
+        "web/src/utils/naturalSort.ts",
+        "web/src/utils/naturalSort.test.ts"
+      ],
+      "files_to_modify": [
+        "web/src/hooks/useInvitation.ts",
+        "web/src/services/imageService.ts"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "admin 側の naturalSortFiles の比較規則を読み、同じ規則の compareNatural(a, b) を web/src/utils/naturalSort.ts に実装する（localeCompare に numeric: true と sensitivity 指定）",
+        "useInvitation の images.sort を compareNatural ベースに置換する",
+        "getImagesByIds 内の createdAt 降順ソートを削除し、並び順の責務を呼び出し側に一本化する。getImagesByIdsOrdered の利用箇所に影響が無いことを確認する",
+        "IMG_2 < IMG_10 を含む naturalSort のテストを追加する",
+        "cd web && npm test と cd web && npm run build を実行する"
+      ],
+      "done_definition": [
+        "IMG_2 が IMG_10 より前に並ぶ",
+        "getImagesByIds が並び替えを行わない",
+        "ギャラリー表示順が admin のアップロード順と一致する",
+        "cd web && npm test が全パス（新規テストを含む）",
+        "cd web && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_008",
+      "title": "/api/image に CDN キャッシュヘッダを追加する",
+      "goal": "訪問者ごとに sharp のリサイズが走る状態を止め、Vercel の関数実行と帯域を削減する",
+      "scope": [
+        "Cache-Control に s-maxage / stale-while-revalidate / immutable を追加"
+      ],
+      "non_scope": [
+        "レートリミットの追加",
+        "許可ホストリストや上限サイズの変更",
+        "出力フォーマット選択ロジックの変更"
+      ],
+      "files_to_read": [
+        "web/src/app/api/image/route.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/app/api/image/route.ts"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "Cache-Control を `public, max-age=${CACHE_MAX_AGE}, s-maxage=31536000, stale-while-revalidate=86400, immutable` に変更する",
+        "Vary: Accept を維持していることを確認する",
+        "cd web && npm run build を実行する",
+        "デプロイ後、同一URLへの2回目のリクエストで Vercel のキャッシュヒットを示すレスポンスヘッダが返ることを確認する"
+      ],
+      "done_definition": [
+        "レスポンスヘッダに s-maxage が含まれる",
+        "Vary: Accept が維持されている",
+        "cd web && npm run build が成功",
+        "デプロイ後に2回目のリクエストがキャッシュから返る"
+      ],
+      "verify_commands": [
+        "cd web && npm run build"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_009",
+      "title": "Google Fonts を next/font に移行する",
+      "goal": "レンダリングをブロックする外部フォント読み込みを除去する",
+      "scope": [
+        "layout.tsx の Google Fonts <link> を next/font/google に置換",
+        "既存の CSS で参照しているフォント名との対応付け"
+      ],
+      "non_scope": [
+        "フォントの種類やウェイトの変更",
+        "Storage への preconnect の削除"
+      ],
+      "files_to_read": [
+        "web/src/app/layout.tsx",
+        "web/src/app/globals.css"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/app/layout.tsx"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "globals.css を読み、Instrument Serif / Outfit / Noto Sans JP をどのセレクタで参照しているかを確認する",
+        "next/font/google で3書体を読み込み、CSS 変数として body に適用する。既存の font-family 指定が変数を参照する形になるよう globals.css 側の変更が必要かを判断する",
+        "fonts.googleapis.com / fonts.gstatic.com への preconnect と stylesheet の link を削除する。firebasestorage への preconnect は残す",
+        "cd web && npm run build を実行し、cd web && npm run lint で no-page-custom-font 警告が消えたことを確認する",
+        "デプロイ後にギャラリーの見た目が変わっていないことを目視確認する"
+      ],
+      "done_definition": [
+        "HTML に fonts.googleapis.com への stylesheet link が含まれない",
+        "lint の no-page-custom-font 警告が消えている",
+        "フォントの見た目が従来と同一",
+        "cd web && npm run build が成功",
+        "cd web && npm run lint のエラー数が 16 を超えない"
+      ],
+      "verify_commands": [
+        "cd web && npm run build",
+        "cd web && npm run lint"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_010",
+      "title": "ZIP を無圧縮格納にし生成フェーズの進捗を出す",
+      "goal": "既圧縮のJPEGを再圧縮する無駄をなくし、ZIP生成中に画面が固まって見える状態を解消する",
+      "scope": [
+        "generateAsync に compression: 'STORE' を指定",
+        "全取得完了後の生成フェーズを進捗コールバックで通知",
+        "DownloadProgressModal に生成中表示を追加"
+      ],
+      "non_scope": [
+        "ストリーミングZIP（client-zip / StreamSaver）への置換",
+        "サーバー側ZIP生成",
+        "枚数上限の導入"
+      ],
+      "files_to_read": [
+        "web/src/services/downloadService.ts",
+        "web/src/hooks/useBulkDownload.ts",
+        "web/src/components/DownloadProgressModal.tsx",
+        "web/src/components/BulkDownloadButton.tsx",
+        "web/src/services/downloadService.test.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/services/downloadService.ts",
+        "web/src/hooks/useBulkDownload.ts",
+        "web/src/components/DownloadProgressModal.tsx",
+        "web/src/services/downloadService.test.ts"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "downloadImagesAsZip の generateAsync に { type: 'blob', compression: 'STORE' } を指定する",
+        "DownloadProgress に phase: 'fetching' | 'zipping' を追加し、全取得完了後に zipping を通知する",
+        "useBulkDownload が phase を保持し、DownloadProgressModal が zipping のとき「ZIPを作成中…」を表示する",
+        "既存の downloadService.test.ts に STORE 指定と phase 遷移の検証を追加する",
+        "cd web && npm test と cd web && npm run build を実行する",
+        "実機（iOS Safari / Android Chrome）で複数枚のZIPダウンロードを試し、生成中表示が出ることを確認する"
+      ],
+      "done_definition": [
+        "生成された ZIP 内のエントリが無圧縮格納である",
+        "全取得後に「ZIPを作成中」が表示される",
+        "キャンセルが従来どおり機能する",
+        "cd web && npm test が全パス",
+        "cd web && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_011",
+      "title": "admin の lint / test スクリプトを修復する",
+      "goal": "admin で lint とテストが npm スクリプトから実行できる状態にする",
+      "scope": [
+        "lint を next lint から eslint 直呼びに変更",
+        "test / test:watch スクリプトの追加"
+      ],
+      "non_scope": [
+        "admin の lint エラーの修正（本タスクは実行可能にするところまで）",
+        "ESLint 設定内容の変更"
+      ],
+      "files_to_read": [
+        "admin/package.json",
+        "web/package.json",
+        "admin/eslint.config.mjs"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/package.json"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "web/package.json の lint / test スクリプトの書き方を確認する",
+        "admin/package.json の lint を eslint に変更し、test に vitest run、test:watch に vitest を追加する",
+        "cd admin && npm run lint を実行し、エラー内容と件数を記録する（この時点での修正は行わない）",
+        "cd admin && npm test を実行し、103 テストが通ることを確認する"
+      ],
+      "done_definition": [
+        "cd admin && npm run lint が実行され、結果（件数）が記録されている",
+        "cd admin && npm test が 103 テストパスで完了する",
+        "cd admin && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd admin && npm run lint",
+        "cd admin && npm test",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_012",
+      "title": "CLAUDE.md を実装に合わせて更新する",
+      "goal": "ドキュメントと実装の乖離を解消し、次のセッションが誤った前提で作業しないようにする",
+      "scope": [
+        "/web（クライアントギャラリー）の節を追加",
+        "Firestore スキーマに projectId / invitations / sessions を反映",
+        "admin のルート記述を実際のパスに修正",
+        "セキュリティルールの記述を task_001 / task_002 後の内容に更新",
+        "admin の lint / test コマンドの記述を task_011 後の内容に更新"
+      ],
+      "non_scope": [
+        "back/ と front/ に関する記述の削除（task_015 の判断後に行う）",
+        "README の新規作成"
+      ],
+      "files_to_read": [
+        "CLAUDE.md",
+        "firestore.rules",
+        "web/package.json",
+        "admin/package.json",
+        "admin/src/app/admin"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "CLAUDE.md"
+      ],
+      "dependencies": [
+        "task_002",
+        "task_004",
+        "task_011"
+      ],
+      "implementation_steps": [
+        "実装済みの構成（web の役割、ポート3002、Vercel デプロイ）を CLAUDE.md の Project Overview に追記する",
+        "Firestore Schema 節を実際のフィールド（images.projectId / thumbnails / thumbnailPaths、invitations、sessions、likes.invitationId）に合わせて書き直す",
+        "Admin Panel の Routes を /admin/dashboard, /admin/projects, /admin/projects/[projectId], /admin/users に修正する",
+        "Security Rules 節を新しい get / list 分離と期限強制の内容に書き換える",
+        "Development Commands に web のコマンドと admin の test コマンドを追記する"
+      ],
+      "done_definition": [
+        "CLAUDE.md に /web の節がある",
+        "Firestore スキーマ記述が実装と一致している",
+        "admin のルート記述が実際のディレクトリ構成と一致している",
+        "セキュリティルールの記述が firestore.rules の内容と一致している"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_013",
+      "title": "[任意] ギャラリー取得をサーバー側 Route Handler に移す",
+      "goal": "招待検証・期限判定・画像メタデータ取得をサーバー側で完結させ、クライアントから Firestore への直接アクセスを不要にする",
+      "scope": [
+        "Firebase Admin SDK を使う Route Handler の新設",
+        "web の招待・画像取得をその API 経由に変更",
+        "Firestore ルールの読み取りを管理者と自セッションのみに閉じる"
+      ],
+      "non_scope": [
+        "like 書き込みのサーバー化",
+        "ZIP のサーバー生成"
+      ],
+      "files_to_read": [
+        "web/src/hooks/useInvitation.ts",
+        "web/src/services/invitationService.ts",
+        "web/src/services/imageService.ts",
+        "firestore.rules"
+      ],
+      "files_to_create": [
+        "web/src/app/api/gallery/[token]/route.ts"
+      ],
+      "files_to_modify": [
+        "web/src/hooks/useInvitation.ts",
+        "web/src/services/invitationService.ts",
+        "web/src/services/imageService.ts",
+        "firestore.rules",
+        "web/package.json"
+      ],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "firebase-admin を web の依存に追加し、サービスアカウント鍵を Vercel の環境変数として設定する手順を決める",
+        "GET /api/gallery/[token] を作り、招待の存在・isActive・expiresAt を検証したうえで画像メタデータ配列を1レスポンスで返す",
+        "useInvitation をこの API 呼び出しに置き換える",
+        "firestore.rules の invitations / images の read を管理者のみに閉じる",
+        "本番の招待リンクで表示・お気に入り・ダウンロードを通しで確認する"
+      ],
+      "done_definition": [
+        "ギャラリー初期表示が1回のAPI呼び出しで完了する",
+        "クライアントから Firestore の invitations / images を直接読めない",
+        "既存の招待リンクが従来どおり動作する",
+        "cd web && npm test と cd web && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run build"
+      ],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_014",
+      "title": "[任意] 既存 like データを招待単位に移行する",
+      "goal": "旧 UID 単位の like を招待単位のIDへ移し替える。移行不能な分は破棄する",
+      "scope": [
+        "sessions を使って userId から invitationId を逆引きし、新ID体系の like を作成",
+        "逆引きできない like の件数を報告"
+      ],
+      "non_scope": [
+        "likeCount の再計算",
+        "旧 like ドキュメントの自動削除（フラグ指定時のみ）"
+      ],
+      "files_to_read": [
+        "scripts/migrate-thumbnails.mjs",
+        "web/src/services/likeService.ts"
+      ],
+      "files_to_create": [
+        "scripts/migrate-likes-to-invitation.mjs"
+      ],
+      "files_to_modify": [],
+      "dependencies": [
+        "task_004"
+      ],
+      "implementation_steps": [
+        "全 like を読み、userId から sessions/{userId}.invitationId を引く",
+        "引けた場合は ${invitationId}_${imageId} の新ドキュメントを作成する",
+        "引けなかった件数を標準出力に報告する",
+        "--delete-old 指定時のみ旧ドキュメントを削除する"
+      ],
+      "done_definition": [
+        "移行件数・スキップ件数・失敗件数が出力される",
+        "移行後に web で当該招待のお気に入りが表示される"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_015",
+      "title": "[任意] back/ の削除と front/ の継続判断",
+      "goal": "使われていないコードベースを整理し、リポジトリの認知負荷を下げる",
+      "scope": [
+        "back/（NestJS）の削除",
+        "front/（Expo）を継続するか凍結するかの判断と記録"
+      ],
+      "non_scope": [
+        "front/ のコード修正"
+      ],
+      "files_to_read": [
+        "back/package.json",
+        "front/package.json",
+        "CLAUDE.md"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "CLAUDE.md"
+      ],
+      "dependencies": [
+        "task_012"
+      ],
+      "implementation_steps": [
+        "削除は不可逆なため、実行前にユーザーへ確認を取る",
+        "back/ を削除し、CLAUDE.md の該当記述を除去する",
+        "front/ の扱い（継続 / 凍結）をユーザーに確認し、決定を CLAUDE.md に記録する"
+      ],
+      "done_definition": [
+        "ユーザーの明示的な承認が得られている",
+        "back/ が削除され CLAUDE.md に残骸の記述が無い",
+        "front/ の扱いが CLAUDE.md に明記されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_016",
+      "title": "[任意] Firestore ルールのユニットテストを導入する",
+      "goal": "ルール変更を手動確認ではなく自動テストで検証できるようにする",
+      "scope": [
+        "@firebase/rules-unit-testing とエミュレータ設定の追加",
+        "task_001 / task_002 / task_004 の受け入れ条件に対応するテストの作成"
+      ],
+      "non_scope": [
+        "Storage ルールのテスト",
+        "CI への組み込み"
+      ],
+      "files_to_read": [
+        "firebase.json",
+        "firestore.rules"
+      ],
+      "files_to_create": [
+        "tests/firestore-rules.test.ts"
+      ],
+      "files_to_modify": [
+        "firebase.json",
+        "package.json"
+      ],
+      "dependencies": [
+        "task_001",
+        "task_002",
+        "task_004"
+      ],
+      "implementation_steps": [
+        "firebase.json に emulators 設定を追加する",
+        "ルートに @firebase/rules-unit-testing とテストランナーを導入する",
+        "匿名ユーザーによる invitations / images の list 拒否、期限切れ招待の get 拒否、likeCount の不正更新拒否をテストする"
+      ],
+      "done_definition": [
+        "エミュレータ上でルールテストが実行できる",
+        "受け入れ条件に対応するテストがすべてパスする"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_017",
+      "title": "[任意] 画像メタデータ取得の一括化（計測が前提）",
+      "goal": "初期表示時間に対する画像メタデータ取得の寄与を計測し、必要な場合のみ取得方式を変更する",
+      "scope": [
+        "200枚規模のギャラリーで初期表示の内訳を計測",
+        "計測結果が改善に値する場合のみ方式変更の判断"
+      ],
+      "non_scope": [
+        "計測前の実装変更",
+        "allow list を匿名ユーザーへ開放する変更（task_001 の方針と衝突するため採らない）"
+      ],
+      "files_to_read": [
+        "web/src/services/imageService.ts",
+        "web/src/hooks/useInvitation.ts",
+        "web/src/contexts/GalleryContext.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "200枚以上の招待で初期表示までの時間と、その内メタデータ取得に要した時間を計測する",
+        "メタデータ取得が初期表示時間の有意な割合を占める場合のみ、task_013（サーバー側集約）で解決するか判断する",
+        "計測結果を implementation-plan.md に追記する"
+      ],
+      "done_definition": [
+        "計測結果が数値として記録されている",
+        "方式変更の要否が判断され、実施する場合は task_013 に統合されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    }
+  ]
+}
