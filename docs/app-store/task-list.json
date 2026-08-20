@@ -1,0 +1,670 @@
+{
+  "feature": "App Store 提出（審査通過のための実装）",
+  "version": 2,
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "title": "閲覧期限を viewingDays で制御できるようにする（web）",
+      "goal": "招待ごとに閲覧可能日数を設定できるようにし、審査期間中にデモ招待が失効しない状態を作る。あわせて3か所に重複している7日のハードコードを1か所へ集約する。",
+      "scope": [
+        "web/src/utils/viewingWindow.ts を新設し、DEFAULT_VIEWING_DAYS と viewingDeadline() と isWithinViewingWindow() を export する",
+        "validateInvitation（invitationService）、isUsable（manifestService）、Header の表示をこのモジュールに統一する",
+        "Invitation 型に viewingDays を追加する",
+        "viewingDays が強制境界ではないことをコメントに残す",
+        "テストを書く"
+      ],
+      "non_scope": [
+        "Firestore ルールの変更（ルールは viewingDays を評価しない。これは自己延長できないことと同時に、サーバー側で強制されないことも意味する）",
+        "既存の招待ドキュメントへの viewingDays の一括付与",
+        "expiresAt の扱いの変更"
+      ],
+      "files_to_read": [
+        "web/src/services/invitationService.ts",
+        "web/src/services/manifestService.ts",
+        "web/src/services/manifestService.test.ts",
+        "web/src/components/Header.tsx",
+        "web/src/types/index.ts",
+        "docs/app-store/implementation-plan.md"
+      ],
+      "files_to_create": ["web/src/utils/viewingWindow.ts", "web/src/utils/viewingWindow.test.ts"],
+      "files_to_modify": [
+        "web/src/services/invitationService.ts",
+        "web/src/services/manifestService.ts",
+        "web/src/services/manifestService.test.ts",
+        "web/src/components/Header.tsx",
+        "web/src/types/index.ts"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "DEFAULT_VIEWING_DAYS = 7 を定数にし、既定が7日である理由（既存の全招待がこの前提で運用されている）をコメントに残す",
+        "viewingDeadline(createdAt: Date, viewingDays?: unknown): Date を書く。viewingDays が 1 以上の整数でない場合（0・負数・非数値・undefined・null）はすべて DEFAULT_VIEWING_DAYS に倒す。不正値で期限が消える（無期限になる）ことを避けるためであり、この判断をコメントに残す",
+        "isWithinViewingWindow(createdAt, viewingDays, now) を書き、判定側はこれを使う",
+        "**モジュール冒頭に「これは表示と便宜のための期限であり、写真へのアクセスを止める技術的担保ではない」と明記する。** Storage の画像は認証なしで誰でも取得でき、images の get も認証済みなら通る（2026-08-21 に実測）。強制境界は expiresAt / isActive / manifest API のみである",
+        "invitationService.ts の validateInvitation から 7 * 24 * 60 * 60 * 1000 の直書きを消す。文言は既存の INVALID_INVITATION_MESSAGE のまま変えない",
+        "manifestService.ts の VIEWING_WINDOW_MS を削除し、isUsable が invitation.viewingDays を見るようにする。toInvitation で viewingDays を読み取る",
+        "Header.tsx の期限表示を viewingDeadline() 由来に変える。isExpiringSoon の2日判定はそのまま残す",
+        "web/src/types/index.ts の Invitation に viewingDays?: number を追加する",
+        "テスト: 未設定なら7日、viewingDays: 180 なら7日を過ぎても有効、境界（期限ちょうどの前後1ミリ秒）、不正値（0・-1・1.5・'abc'・null・undefined）がすべて7日に倒れること",
+        "manifestService.test.ts に viewingDays を持つ招待が ok: true を返す検証を追加する"
+      ],
+      "done_definition": [
+        "grep -rn '7 \\* 24 \\* 60 \\* 60 \\* 1000' web/src が viewingWindow.ts 以外に一致しない",
+        "viewingDays 未設定の招待が、作成から7日で閲覧不可になる",
+        "viewingDays: 180 の招待が、作成から7日を過ぎても有効と判定される",
+        "不正な viewingDays が7日として扱われることをテストで確認している",
+        "viewingWindow.ts に「強制境界ではない」旨のコメントがある",
+        "cd web && npm test が全パス",
+        "cd web && npm run build が成功"
+      ],
+      "verify_commands": ["cd web && npm test", "cd web && npm run lint", "cd web && npm run build"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_002",
+      "title": "管理画面の招待作成と詳細に閲覧日数を追加する",
+      "goal": "デモ用の長期招待を管理画面から作れるようにし、既存の招待の閲覧期限を確認できるようにする。",
+      "scope": [
+        "createInvitation が viewingDays を受け取り保存する",
+        "招待作成フォームに閲覧日数の入力を追加する（既定 7、30日超は確認文言）",
+        "招待詳細に閲覧期限を表示する",
+        "テストを更新する"
+      ],
+      "non_scope": ["作成済み招待の viewingDays の編集機能", "expiresAt の仕様変更"],
+      "files_to_read": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "web/src/utils/viewingWindow.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "**admin は web の viewingWindow.ts を import できない（別パッケージ）。** 閲覧期限の計算がここで4か所目の複製になることを認識し、既定値 7 とその根拠をコメントで web 側と相互参照する。ドリフトを防ぐため、admin 側のテストに『既定は7日』を固定する検証を入れる",
+        "Invitation インターフェースに viewingDays?: number を追加する",
+        "createInvitation の params に viewingDays?: number を足し、1 以上の整数のときだけドキュメントに含める。不正値はフィールドごと書かない（未設定＝7日として扱われる）",
+        "docToInvitation で viewingDays を読む",
+        "作成フォームに InputNumber（min=1, max=365, 既定 7）を追加する。ラベルは「閲覧できる日数（作成日から）」、補足に「有効期限とは別に、この日数を過ぎると閲覧できなくなります」と書く",
+        "30 を超える値が入力されたら「通常の納品は7日です。長期間の閲覧を許可しますか」という確認文言を出す。デモ用の値を実クライアント招待に誤設定することを防ぐ",
+        "招待詳細の Descriptions に「閲覧期限」を追加し、createdAt + viewingDays（未設定なら7）の日付を表示する",
+        "テスト: viewingDays を渡すと setDoc の引数に含まれること、渡さないと含まれないこと、不正値だと含まれないこと、既定が7であること"
+      ],
+      "done_definition": [
+        "管理画面で閲覧日数を指定して招待を作成できる",
+        "作成された招待ドキュメントに viewingDays が入る",
+        "閲覧日数を指定しない場合、viewingDays フィールドが書かれない",
+        "30日超の入力で確認文言が出る",
+        "招待詳細に閲覧期限が表示される",
+        "cd admin && npx vitest run が全パス",
+        "cd admin && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npx eslint src",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_003",
+      "title": "無効な招待からの回復を実装する",
+      "goal": "無効なトークンが保存されて回復不能な行き止まりになる状態を防ぐ。task_004 の貼り付け入口が成立するための前提であり、閲覧期限が切れた実クライアントも救う。",
+      "scope": [
+        "web が無効な招待を表示したことをネイティブへ通知する",
+        "ネイティブが通知を受けたら保存済みトークンを破棄し、入口へ戻す",
+        "テストを書く"
+      ],
+      "non_scope": [
+        "ExpiredLink の画面デザインの変更",
+        "web 単体（ブラウザ）での挙動の変更"
+      ],
+      "files_to_read": [
+        "mobile/App.tsx",
+        "mobile/src/bridge/protocol.ts",
+        "mobile/src/bridge/handleMessage.ts",
+        "mobile/src/screens/GalleryWebView.tsx",
+        "web/src/lib/nativeBridge.ts",
+        "web/src/lib/nativeBridge.test.ts",
+        "web/src/components/ExpiredLink.tsx",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "mobile/src/bridge/protocol.ts",
+        "mobile/src/bridge/handleMessage.ts",
+        "mobile/src/screens/GalleryWebView.tsx",
+        "mobile/App.tsx",
+        "web/src/lib/nativeBridge.ts",
+        "web/src/lib/nativeBridge.test.ts",
+        "web/src/components/ExpiredLink.tsx"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "**前提の確認（2026-08-21 に実測済み）**: applyLink は resolveDeepLink の形式解決だけでトークンを保存する / 無効な招待でも web は HTTP 200 と ExpiredLink を返す / ExpiredLink にリンクもボタンも無い（0件） / GalleryWebView が hasError を立てるのは onError と onHttpError >= 500 のときだけ。したがってネイティブは無効を検知できない",
+        "protocol.ts の OutgoingMessage（web → native）に { type: 'invitationInvalid' } を追加する。nonce とバージョンの扱いは既存メッセージと同じにする",
+        "handleMessage.ts に分岐を足し、コールバックで上位へ伝える",
+        "web/src/lib/nativeBridge.ts に notifyInvitationInvalid() を追加する。ブラウザでは何もせず false を返す（既存の postToNative と同じ方針）",
+        "ExpiredLink.tsx の表示時に useEffect で notifyInvitationInvalid() を呼ぶ。**ブラウザでは何も起きない**ことをテストで確認する",
+        "GalleryWebView に onInvitationInvalid プロップを足し、handleMessage のコールバックから呼ぶ",
+        "App.tsx で受け取り、SecureStore.deleteItemAsync(TOKEN_KEY) を実行してから sourceUrl を null にする。貼り付け画面に「このリンクは無効か、有効期限が切れています」を表示する",
+        "**古いアプリが新しい web を読んでも壊れないことを確認する。** handleMessage が未知の type を無視することをテストで固定する（web は即時デプロイされ、アプリの更新は遅れるため）"
+      ],
+      "done_definition": [
+        "無効なトークンを開いた状態でアプリを再起動すると、貼り付け画面が表示される（エラーページに直行しない）",
+        "ブラウザで無効な招待を開いても例外が出ない",
+        "handleMessage が未知の type を無視することをテストで確認している",
+        "cd mobile && npm run typecheck がエラーなし",
+        "cd mobile && npm test が全パス",
+        "cd web && npm test が全パス"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test",
+        "cd web && npm test",
+        "cd web && npm run build"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_004",
+      "title": "アプリに招待の貼り付け入口を追加する",
+      "goal": "リンクも保存済みトークンも無い状態でアプリを起動しても行き止まりにならないようにする。Guideline 2.1 対策の本体であり、審査メモに書く再現手順の土台になる。",
+      "scope": [
+        "resolveInitialUrl.ts に normalizeInvitationInput() を追加する",
+        "OpenByLinkScreen.tsx を新設する（日英併記）",
+        "App.tsx の起動分岐を差し替える",
+        "NoInvitationScreen.tsx を削除する",
+        "テストを書く"
+      ],
+      "non_scope": [
+        "ID＋合言葉サインイン（task_016 に分離）",
+        "旧ドメイン（web-photo-gallery-app.vercel.app）のリンクの受け入れ",
+        "カメラでの QR 読み取り",
+        "メール本文ごと貼られた場合の URL 抽出（既知の制限として文書化する）"
+      ],
+      "files_to_read": [
+        "mobile/App.tsx",
+        "mobile/src/navigation/resolveInitialUrl.ts",
+        "mobile/src/navigation/resolveInitialUrl.test.ts",
+        "mobile/src/screens/NoInvitationScreen.tsx",
+        "mobile/src/config.ts",
+        "docs/native-app/device-test-log.md"
+      ],
+      "files_to_create": ["mobile/src/screens/OpenByLinkScreen.tsx"],
+      "files_to_modify": [
+        "mobile/src/navigation/resolveInitialUrl.ts",
+        "mobile/src/navigation/resolveInitialUrl.test.ts",
+        "mobile/App.tsx"
+      ],
+      "dependencies": ["task_003"],
+      "implementation_steps": [
+        "normalizeInvitationInput(raw: string, webOrigin: string): string | null を書く。前後の空白と改行を除去し、http(s):// または photogallery:// で始まればそのまま返し、それ以外で ^[A-Za-z0-9_-]{8,40}$ に一致すればトークンとみなして `${webOrigin}/gallery/${token}` を組み立て、どれにも当てはまらなければ null を返す",
+        "**長さの範囲（8〜40）を定数にして根拠をコメントに残す。** 下限8はデモ用の短い招待コード（REVIEW-DEMO-2026 は16文字）を通すため、上限40は既存の nanoid 21文字に余裕を持たせるため",
+        "**URL クラスに依存しないこと。** React Native の URL は正規表現による簡易実装で https?:// にしかマッチしない（2026-08-16 に実機で判明。device-test-log.md 第4章）。文字列処理で完結させる",
+        "OpenByLinkScreen を実装する（implementation-plan §8 の仕様どおり。**日英併記**。KeyboardAvoidingView を使う）",
+        "貼り付け → normalizeInvitationInput → resolveDeepLink の順で解決し、失敗したらエラー文言を出す。成功したら App.tsx の applyLink と同じ経路を通す",
+        "App.tsx で NoInvitationScreen を OpenByLinkScreen に差し替え、task_003 の無効通知を受けたときにこの画面へ戻す",
+        "NoInvitationScreen.tsx を削除する",
+        "テスト: https リンク / カスタムスキーム / /liked?token= / トークンのみ / 前後に空白・改行 / 別オリジン（null）/ 空文字（null）/ javascript: スキーム（null）/ **境界値（7文字→null、8文字→通る、40文字→通る、41文字→null）**"
+      ],
+      "done_definition": [
+        "リンクも保存済みトークンも無い状態でアプリを起動すると貼り付け画面が出る",
+        "デモ用の招待コードとリンクの両方で開く",
+        "トークンのみ、前後に空白や改行がある場合も開く",
+        "別オリジンの URL と javascript: では開かず、エラー文言が出る",
+        "長さの境界値（7/8/40/41文字）がテストで固定されている",
+        "画面の文言が日英併記になっている",
+        "リンクをタップして開く経路が従来どおり動作する",
+        "NoInvitationScreen.tsx が存在しない",
+        "cd mobile && npm run typecheck がエラーなし",
+        "cd mobile && npm test が全パス"
+      ],
+      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_005",
+      "title": "iOS 実機で保存機能をひととおり検証する",
+      "goal": "審査メモで宣伝する機能が実機で動くことを、宣伝する前に確かめる。初版はこれを『回帰』として扱っていたが、実際には未検証だった。",
+      "scope": [
+        "iOS 実機で単体保存・一括保存・キャンセル・バックグラウンド中断・権限ダイアログ・ファイル名を確認する",
+        "結果を docs/native-app/device-test-log.md に追記する"
+      ],
+      "non_scope": ["Android の再検証", "空き容量不足時の挙動（審査に無関係）"],
+      "files_to_read": ["docs/native-app/device-test-log.md", "mobile/src/save/saveBatch.ts"],
+      "files_to_create": [],
+      "files_to_modify": ["docs/native-app/device-test-log.md"],
+      "dependencies": ["task_004"],
+      "implementation_steps": [
+        "preview プロファイルでビルドし、USB で実機にインストールする（docs/native-app/eas-build-setup.md の手順）",
+        "**権限ダイアログの文言を確認する。** 「写真の追加のみ」を求めるものであること。読み取りを求めていたら設計と食い違うため実装を直す",
+        "単体保存を実行し、「写真」アプリで写真を開いて上にスワイプし、**ファイル名が元の撮影ファイル名（DSC05695.jpg 等）**であることを確認する。LINE 等の他アプリ経由では名前が付け替わるため判定材料にしない",
+        "一括保存（20枚以上）を実行し、全件保存されることと進捗表示が画面上部で切れないことを確認する",
+        "**一括保存の途中でキャンセルを押し、保存が止まること・アプリが落ちないこと・保存済みの枚数が正しく報告されることを確認する。** 全プラットフォームで未実施の項目",
+        "一括保存中にホームボタンでバックグラウンドへ移し、復帰後の挙動を確認する",
+        "権限を拒否した状態で保存を試し、案内が出ることと「設定を開く」が機能することを確認する",
+        "結果を device-test-log.md の第4章に追記し、未検証表から該当項目を消す。**動かなかった項目は動かなかったと書く**"
+      ],
+      "done_definition": [
+        "権限ダイアログの文言が確認され、記録されている",
+        "保存されたファイル名が確認され、記録されている",
+        "一括保存のキャンセルが動作することを確認した、または不具合として記録した",
+        "バックグラウンド中断の挙動が記録されている",
+        "device-test-log.md 第4章の未検証表から、確認した項目が消えている",
+        "審査メモ（task_013）で宣伝する機能がすべて検証済みである"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_006",
+      "title": "iOS の提出設定を整える",
+      "goal": "審査の対象面を狭め、提出時の手作業を減らし、ストア提出ビルドが暗黙の既定値に依存しない状態にする。",
+      "scope": [
+        "supportsTablet を false にする",
+        "ITSAppUsesNonExemptEncryption: false を infoPlist に追加する",
+        "アプリの表示名を変更する",
+        "eas.json の production プロファイルに EXPO_PUBLIC_WEB_ORIGIN を明示する"
+      ],
+      "non_scope": [
+        "submit.production への App Store Connect ID の設定（アプリレコード作成後。task_012）",
+        "バンドル識別子の変更"
+      ],
+      "files_to_read": ["mobile/app.config.ts", "mobile/eas.json", "mobile/src/config.ts", "mobile/package.json"],
+      "files_to_create": [],
+      "files_to_modify": ["mobile/app.config.ts", "mobile/eas.json"],
+      "dependencies": [],
+      "implementation_steps": [
+        "ios.supportsTablet を false にし、理由（iPad で一度も検証しておらず、宣言すると iPad 実機審査と 13インチのスクリーンショットが必須になる）をコメントに残す",
+        "ios.infoPlist に ITSAppUsesNonExemptEncryption: false を追加する。**根拠は「HTTPS のみ」ではない。** HTTPS/ATS と expo-secure-store が使う Keychain は、いずれも OS 提供の標準暗号で適用除外に該当する。この両方をコメントに書く（初版は Keychain に触れておらず不完全だった）",
+        "name を 'NonTurn' にする（ホーム画面のアイコン下は文字数が限られる）。App Store 上の表示名は App Store Connect 側で 'NonTurn Gallery' とする旨をコメントに残す",
+        "eas.json の production プロファイルに env: { EXPO_PUBLIC_WEB_ORIGIN: 'https://gallery.non-turn.com' } を追加する",
+        "npx expo config --type public で supportsTablet・ITSAppUsesNonExemptEncryption・name・extra.webOrigin が意図どおり解決されることを確認する"
+      ],
+      "done_definition": [
+        "npx expo config --type public の出力で supportsTablet が false",
+        "同じ出力に ITSAppUsesNonExemptEncryption: false が含まれる",
+        "同じ出力の name が 'NonTurn'",
+        "同じ出力の extra.webOrigin が https://gallery.non-turn.com",
+        "eas.json の production に EXPO_PUBLIC_WEB_ORIGIN がある",
+        "cd mobile && npm run typecheck がエラーなし"
+      ],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test",
+        "cd mobile && npx expo config --type public"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_007",
+      "title": "プライバシーポリシーのページを追加する",
+      "goal": "App Store 提出の必須項目であるプライバシーポリシー URL を用意する。",
+      "scope": ["web/src/app/privacy/page.tsx を新設する", "実装に即した内容だけを書く"],
+      "non_scope": ["利用規約のページ", "会社サイト（non-turn.com）側への掲載", "多言語対応"],
+      "files_to_read": [
+        "web/src/app/layout.tsx",
+        "web/src/app/globals.css",
+        "web/src/lib/firebaseServer.ts",
+        "mobile/app.config.ts",
+        "storage.rules"
+      ],
+      "files_to_create": ["web/src/app/privacy/page.tsx"],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "implementation-plan §8 の記載項目に沿って本文を書く。**実装していない収集を書かない**",
+        "端末の写真を読み取らないこと（NSPhotoLibraryAddUsageDescription のみで読み取り権限を持たない）を明記する",
+        "匿名認証の識別子・アクセス回数・お気に入りを収集する旨を書く",
+        "解析・広告・トラッキングを行わないことを明記する（App Privacy の申告と一致させる）",
+        "**写真の URL を知っている者は閲覧期限後もアクセスできることを正直に書く。** storage.rules が allow read: if true であり、2026-08-21 に認証なしで HTTP 200 を確認済み。事実と異なる安全性を書かない",
+        "配色はギャラリーと同じトークン（--color-bg / --color-ink / --color-muted / --color-border）を使う",
+        "最終更新日を本文に入れる"
+      ],
+      "done_definition": [
+        "cd web && npm run build が成功",
+        "本文に「写真の読み取りを行わない」旨が含まれる",
+        "本文に「URL を知る者は期限後もアクセスできる」旨が含まれる",
+        "本文の記載が App Privacy の申告内容と矛盾しない"
+      ],
+      "verify_commands": ["cd web && npm run build", "cd web && npm run lint"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_008",
+      "title": "web を本番にデプロイする",
+      "goal": "アプリが読み込む本番（gallery.non-turn.com）に、viewingDays・無効通知・プライバシーポリシーを反映する。これが無いと task_009 以降の検証が成立しない。",
+      "scope": ["web の本番デプロイ", "反映の確認"],
+      "non_scope": ["admin のデプロイ（task_002 の完了時に別途行う）"],
+      "files_to_read": ["docs/native-app/eas-build-setup.md"],
+      "files_to_create": [],
+      "files_to_modify": [],
+      "dependencies": ["task_001", "task_003", "task_007"],
+      "implementation_steps": [
+        "リポジトリのルートで vercel deploy --prod --yes を実行する（プロジェクトの Root Directory が web のため、ルートから実行する）",
+        "gallery.non-turn.com でギャラリーが表示されることを確認する",
+        "gallery.non-turn.com/privacy が 200 を返すことを確認する",
+        "既存の有効な招待が従来どおり開くことを確認する（回帰）",
+        "admin も未デプロイなら合わせてデプロイする（VERCEL_PROJECT_ID を明示する必要がある。eas-build-setup.md に手順あり）"
+      ],
+      "done_definition": [
+        "https://gallery.non-turn.com/gallery/{既存トークン} が表示される",
+        "https://gallery.non-turn.com/privacy が 200",
+        "本番の web に viewingDays 対応が入っている（長期招待が7日超で開けることで確認）"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_009",
+      "title": "デモ用のプロジェクトと招待を作る",
+      "goal": "レビュアーが手で入力できて、審査期間中に失効しないサンプルギャラリーを用意する。",
+      "scope": [
+        "NonTurn のサンプル撮影を管理画面からアップロードする",
+        "人間が打てる招待コードで、Firebase コンソールから招待を手動作成する",
+        "実機で到達を確認する"
+      ],
+      "non_scope": [
+        "実クライアントの納品写真の使用（契約・プライバシー上できない）",
+        "管理画面からの人間可読トークンの発行機能（createInvitation は nanoid 固定。デモ1件のためにUIを作らない）"
+      ],
+      "files_to_read": ["admin/src/services/invitationService.ts", "docs/app-store/implementation-plan.md"],
+      "files_to_create": [],
+      "files_to_modify": [],
+      "dependencies": ["task_002", "task_004", "task_008"],
+      "implementation_steps": [
+        "管理画面で「App Store 審査用デモ」プロジェクトを作り、NonTurn のサンプル写真を 20〜46 枚アップロードする（枚数が少なすぎると一括保存の価値が伝わらない）",
+        "**招待は Firebase コンソールから手動で作る。** createInvitation は nanoid でトークンを生成するため、管理画面からは人間が打てる ID を作れない",
+        "ドキュメント ID を REVIEW-DEMO-2026 のような**大小混在も記号も無い、口頭で伝えられる文字列**にする。normalizeInvitationInput の ^[A-Za-z0-9_-]{8,40}$ に一致すること",
+        "フィールド: token（ID と同じ値）、projectId、clientName='App Store Review'、clientEmail=''、createdBy=管理者のuid、imageIds=アップロードした画像ID配列、expiresAt=180日後、isActive=true、viewingDays=180、accessCount=0、createdAt=serverTimestamp、updatedAt=serverTimestamp",
+        "**3650日ではなく180日にする。** 失効しない bearer credential を長期間放置すると、コスト攻撃と likeCount 改ざんの標的になる（レビュー3件が一致して指摘）。審査完了後は isActive: false にし、再審査時に再有効化する（task_017）",
+        "**審査期間中、デモプロジェクトの画像と招待をデータ移行・削除の対象外とする。** scripts/ 配下に一括処理スクリプトが存在するため",
+        "実機のアプリで招待コードを手入力して開けること、写真を保存できることを確認する"
+      ],
+      "done_definition": [
+        "デモ用の招待が存在し、20枚以上の写真を含む",
+        "招待のドキュメント ID が人間の手で入力できる文字列である",
+        "viewingDays が 180、expiresAt が 180 日後、isActive が true",
+        "実機のアプリで招待コードを**手入力**してギャラリーが開く",
+        "実機のアプリで写真を保存できる"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_010",
+      "title": "提出前の実地検証スクリプトを作る",
+      "goal": "デモ招待が本当に到達可能であることを、提出直前に機械的に確認できるようにする。人間の確認漏れで 2.1 の却下を招かないため。",
+      "scope": [
+        "scripts/verify-demo-invitation.mjs を新設する",
+        "招待の状態と各経路の到達性を検査する"
+      ],
+      "non_scope": ["実機での保存の自動化（できない。task_005 で人が行う）"],
+      "files_to_read": [
+        "scripts/migrate-invitation-ids.mjs",
+        "web/src/services/manifestService.ts",
+        "web/src/utils/viewingWindow.ts"
+      ],
+      "files_to_create": ["scripts/verify-demo-invitation.mjs"],
+      "files_to_modify": [],
+      "dependencies": ["task_008", "task_009"],
+      "implementation_steps": [
+        "既存の scripts/migrate-invitation-ids.mjs と同じ方式（web/node_modules の Firebase クライアント SDK、web/.env.local から設定を読む）にする",
+        "引数でデモの招待コードを受け取る",
+        "検査項目: (1) 招待ドキュメントが匿名クライアントから get できる（isActive と expiresAt をルールが通す） (2) viewingDays が設定されている (3) 閲覧期限が今日より先である (4) imageIds が 20 件以上 (5) 各画像ドキュメントが存在し url を持つ",
+        "HTTP 検査: (6) https://gallery.non-turn.com/gallery/<code> が 200 (7) POST /api/native/manifest が 200 を返し items の件数が imageIds と一致する (8) /privacy が 200 (9) /.well-known/apple-app-site-association が 200 かつ Content-Type が application/json",
+        "1つでも落ちたら非ゼロで終了し、何が落ちたかを日本語で出力する",
+        "**このスクリプトは提出直前（task_014）に必ず実行する**"
+      ],
+      "done_definition": [
+        "node scripts/verify-demo-invitation.mjs <招待コード> が全項目合格で終了コード 0 を返す",
+        "存在しない招待コードを渡すと非ゼロで終了し、理由が出力される",
+        "検査項目が9件すべて実装されている"
+      ],
+      "verify_commands": ["node scripts/verify-demo-invitation.mjs REVIEW-DEMO-2026"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_011",
+      "title": "スクリーンショットと審査用の記録動画を用意する",
+      "goal": "ストア掲載用の画像と、レビュアーが手順を追える動画を揃える。",
+      "scope": [
+        "撮影カットと手順を docs/app-store/screenshots.md に書く",
+        "実機（iPhone 16 Pro Max / 1320x2868）で撮影する",
+        "審査メモに添付する操作の記録動画を撮る"
+      ],
+      "non_scope": [
+        "iPad のスクリーンショット（task_006 で supportsTablet を false にするため不要）",
+        "App Preview（ストア掲載用の動画）"
+      ],
+      "files_to_read": ["docs/app-store/implementation-plan.md"],
+      "files_to_create": ["docs/app-store/screenshots.md"],
+      "files_to_modify": [],
+      "dependencies": ["task_005", "task_009"],
+      "implementation_steps": [
+        "**ストア掲載用と審査添付用を分ける。** ストア掲載画像に OS の権限ダイアログを含めるのは Guideline 2.3.3（実際の使用体験を見せる）と摩擦がある",
+        "ストア掲載用（5カット）: (1) ギャラリー一覧 (2) 写真の拡大表示 (3) 一括保存の進捗 (4) 保存完了のトースト (5) 招待を開く画面",
+        "審査添付用: 権限ダイアログのカット。「写真の追加のみ」を求めていることが 4.2 と 5.1.1 の両方の証拠になる",
+        "**記録動画**: アプリを起動 → 招待コードを入力 → ギャラリーが開く → 写真を保存、までを画面収録する。レビュアーが手順を追えるようにするため。App Review Information の添付欄に入れる",
+        "デモ招待を開いた状態で撮影する（実クライアントの写真が写り込まないこと）",
+        "成果物を /Volumes/DB/illustration_design/photo-gallery-app-store/ に置く。**この外部ボリュームが未マウントなら先に知らせる**",
+        "各カットの解像度が 1320x2868 であることを確認する"
+      ],
+      "done_definition": [
+        "ストア掲載用の5カットが 1320x2868 で揃っている",
+        "審査添付用の権限ダイアログのカットがある",
+        "起動から保存までの記録動画がある",
+        "実クライアントの写真が写っていない",
+        "docs/app-store/screenshots.md に一覧と撮影手順が記録されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_012",
+      "title": "App Store Connect のアプリレコードとメタデータを登録する",
+      "goal": "提出に必要なストア掲載情報とプライバシー申告をすべて揃える。",
+      "scope": [
+        "説明文等の原稿を作る",
+        "アプリレコードの作成（表示名の空き確認を含む）",
+        "メタデータの全項目を登録する",
+        "eas.json の submit.production を設定する"
+      ],
+      "non_scope": ["価格設定（無料）以外の販売設定", "Android / Play Console"],
+      "files_to_read": ["mobile/eas.json", "docs/app-store/implementation-plan.md"],
+      "files_to_create": ["docs/app-store/store-listing.md"],
+      "files_to_modify": ["mobile/eas.json"],
+      "dependencies": ["task_006", "task_008", "task_011"],
+      "implementation_steps": [
+        "説明文の原稿を docs/app-store/store-listing.md に書く。**ネイティブ固有の価値（フォトライブラリへの直接保存・一括保存）を冒頭に置く**。4.2 の判断材料になる",
+        "App Store Connect でアプリレコードを作る。表示名 'NonTurn Gallery' の空きを確認し、使用済みなら代替を決めて implementation-plan の Assumption 6 を更新する",
+        "**登録する項目を漏らさない**: 説明文 / キーワード / カテゴリ（写真/ビデオ） / 年齢区分（4+。年齢制限アンケートに回答する） / プライマリ言語（日本語） / **サポート URL**（問い合わせ先に到達できること） / プライバシーポリシー URL（https://gallery.non-turn.com/privacy） / **著作権表記** / **コンテンツ配信権の申告** / 審査連絡先（氏名・電話・メール）",
+        "App Privacy を申告する: トラッキングなし。収集は「識別子（匿名認証のID）」「使用状況データ（アクセス回数）」で、いずれも**ユーザーに紐付けない**。写真ライブラリは書き込みのみでデータ収集に当たらないため申告しない。**プライバシーポリシー本文と矛盾しないこと**",
+        "スクリーンショット（task_011 のストア掲載用5カット）をアップロードする",
+        "アプリレコードの ID（ascAppId）を控え、eas.json の submit.production に ascAppId / appleId / appleTeamId（2WWB6ZA7A9）を設定する",
+        "**サポート URL とプライバシーポリシー URL に外部から実際にアクセスして 200 を確認する**"
+      ],
+      "done_definition": [
+        "App Store Connect にアプリレコードが存在する",
+        "説明文・キーワード・カテゴリ・年齢区分・著作権・コンテンツ配信権・審査連絡先が登録されている",
+        "サポート URL とプライバシーポリシー URL が登録され、外部から 200 で到達できる",
+        "App Privacy の申告が完了し、プライバシーポリシー本文と矛盾しない",
+        "スクリーンショットが登録されている",
+        "eas.json の submit.production に ascAppId がある"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_013",
+      "title": "審査メモを作成する",
+      "goal": "レビュアーがデモに到達できるようにし、Guideline 4.2 への反論を先回りする。",
+      "scope": [
+        "docs/app-store/review-notes.md に本文を書く",
+        "App Store Connect の App Review Information に貼る"
+      ],
+      "non_scope": ["デモ用アカウントの作成（アカウントの概念が無い）"],
+      "files_to_read": [
+        "docs/native-app/app-store-submission.md",
+        "docs/native-app/device-test-log.md"
+      ],
+      "files_to_create": ["docs/app-store/review-notes.md"],
+      "files_to_modify": [],
+      "dependencies": ["task_005", "task_009", "task_011"],
+      "implementation_steps": [
+        "**英語で書く**（レビュアーが日本語話者とは限らない）。日本語版も併記する",
+        "**到達手順を2通り書く**: (a) アプリを起動し、入力欄に招待コード `<DEMO_CODE>` を入力して Open を押す（推奨） (b) このリンクをタップするとアプリが開く。**(a) を先に書く。** リンクのタップはユニバーサルリンクの登録状況に左右され、Safari で開く場合がある",
+        "**実トークンをこのファイルに書かない。** プレースホルダ（<DEMO_CODE>）のみを置き、実際の値は App Store Connect にだけ入力する。viewingDays 180 の招待は事実上の bearer credential であり、git 履歴に恒久保存すべきでない",
+        "ネイティブ固有機能を Safari との対比で列挙する: フォトライブラリへの直接保存（Safari は共有シート経由で1枚ずつ）、数十枚の一括保存と進捗・キャンセル、追加のみの権限（読み取り権限を持たない）、ユニバーサルリンク起動",
+        "**task_005 で検証していない機能を書かない。** キャンセルを宣伝するなら、検証済みであること",
+        "アーキテクチャを1段落で説明する: web は納品ビューア、URL の検証とフォトライブラリへの書き込みはすべてネイティブ側で行い、アプリは web から画像 URL を受け取らない（サーバーが招待との所属を検証して返す）",
+        "招待制のため一般公開コンテンツが存在しないこと、デモを用意した理由を書く",
+        "**Guideline 1.2（UGC）への先回りを1行入れる**: 写真をアップロードできるのは管理者のみで、利用者が投稿する機能は無い",
+        "task_011 の記録動画を添付する"
+      ],
+      "done_definition": [
+        "docs/app-store/review-notes.md が存在し、英語で書かれている",
+        "実トークンが書かれていない（プレースホルダのみ）",
+        "到達手順が2通り書かれ、招待コードの入力が先に来ている",
+        "ネイティブ固有機能が Safari との対比で書かれている",
+        "宣伝している機能がすべて task_005 で検証済みである",
+        "UGC への言及がある"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_014",
+      "title": "production ビルドを作って提出する",
+      "goal": "審査に提出する。",
+      "scope": ["production プロファイルでビルドする", "IPA を検査する", "eas submit で送る", "審査に提出する"],
+      "non_scope": ["却下された場合の対応（task_017）"],
+      "files_to_read": ["mobile/eas.json", "docs/app-store/review-notes.md"],
+      "files_to_create": [],
+      "files_to_modify": [],
+      "dependencies": ["task_010", "task_012", "task_013"],
+      "implementation_steps": [
+        "**node scripts/verify-demo-invitation.mjs <招待コード> を実行し、全項目合格を確認する**",
+        "npx eas-cli build --platform ios --profile production を実行する",
+        "IPA を展開して検査する: plutil -extract UIDeviceFamily json -o - Payload/*.app/Info.plist に 2（iPad）が含まれないこと / ITSAppUsesNonExemptEncryption が false / NSPhotoLibraryAddUsageDescription があり NSPhotoLibraryUsageDescription が無いこと / PrivacyInfo.xcprivacy が含まれること",
+        "読み込み先を確認する: strings -a Payload/*.app/main.jsbundle | grep -oE '[a-z0-9.-]+\\.(vercel\\.app|non-turn\\.com)' | sort -u。**Hermes バイトコードで文字列が拾えない場合は npx expo config --type public の extra.webOrigin と eas.json の env で代替確認する**",
+        "npx eas-cli submit --platform ios を実行する",
+        "App Store Connect で審査メモを貼り、記録動画を添付し、審査に提出する"
+      ],
+      "done_definition": [
+        "verify-demo-invitation.mjs が終了コード 0",
+        "production ビルドが成功する",
+        "IPA が iPad 対応を宣言していない",
+        "IPA に読み取り権限の文言が含まれない",
+        "IPA の読み込み先が gallery.non-turn.com である（または代替手段で確認済み）",
+        "App Store Connect にビルドが表示される",
+        "審査に提出済みの状態になる"
+      ],
+      "verify_commands": [
+        "node scripts/verify-demo-invitation.mjs REVIEW-DEMO-2026",
+        "cd mobile && npx eas-cli build --platform ios --profile production",
+        "cd mobile && npx eas-cli submit --platform ios"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_015",
+      "title": "[任意・高優先] 保存の進捗・完了表示をネイティブ化する",
+      "goal": "Guideline 4.2（Webサイトの再パッケージ）への実装面の緩和。レビュアーが最も注目する『アプリらしさ』の瞬間を、現在の web 描画からネイティブ UI に移す。",
+      "scope": [
+        "一括保存の進捗と完了をネイティブのモーダルで表示する",
+        "既存の web 側の表示はブラウザ用に残す"
+      ],
+      "non_scope": ["ギャラリー本体のネイティブ化（UI は web を使うという方針を崩さない）"],
+      "files_to_read": [
+        "mobile/src/screens/GalleryWebView.tsx",
+        "mobile/src/bridge/handleMessage.ts",
+        "web/src/components/DownloadProgressModal.tsx",
+        "web/src/components/NativeSaveNotice.tsx"
+      ],
+      "files_to_create": ["mobile/src/screens/SaveProgressOverlay.tsx"],
+      "files_to_modify": ["mobile/src/screens/GalleryWebView.tsx", "mobile/src/bridge/handleMessage.ts"],
+      "dependencies": ["task_005"],
+      "implementation_steps": [
+        "レビュー3件が一致して『4.2 の緩和が審査メモの文章だけ』と指摘した。**文章は binary が何であるかを変えない**",
+        "保存の進捗（saveProgress）と結果（saveResult）はすでにネイティブ側で発生している。現在はそれを web へ送り返して web が描画している",
+        "ネイティブ側で進捗オーバーレイを描画する。キャンセルボタンもネイティブにする",
+        "web への通知は互換のため残す（ブラウザでの ZIP ダウンロードは web の表示を使い続ける）",
+        "**この変更は審査のためだけではない。** WebView が背面に回っても進捗が見える、という実用上の利点がある"
+      ],
+      "done_definition": [
+        "一括保存中の進捗がネイティブ UI で表示される",
+        "キャンセルがネイティブ UI から実行できる",
+        "ブラウザでの ZIP ダウンロードの表示が従来どおり動作する",
+        "cd mobile && npm test が全パス",
+        "cd web && npm test が全パス"
+      ],
+      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test", "cd web && npm test"],
+      "risk_level": "medium",
+      "optional": true
+    },
+    {
+      "task_id": "task_016",
+      "title": "[任意] ID＋合言葉サインインを実装する",
+      "goal": "リンクを扱えないクライアントのために、ID と合言葉でギャラリーを開けるようにする。2.1 で却下された場合の escalate 先でもある。",
+      "scope": ["docs/app-signin/ の計画（task_001〜task_015、**全15タスク**）を実施する"],
+      "non_scope": ["本計画の初回提出に組み込むこと"],
+      "files_to_read": [
+        "docs/app-signin/implementation-plan.md",
+        "docs/app-signin/task-list.json",
+        "docs/app-signin/acceptance-checks.json"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [],
+      "dependencies": ["task_004"],
+      "implementation_steps": [
+        "docs/app-signin/implementation-plan.md の『未解決の前提条件』を確認する。**invitations の list 制限は 2026-08-17 に完了しており、(a) の条件は満たされている**",
+        "同計画の task_001 から順に実施する。task_015（ブラウザ側のサインイン画面）は同計画でも任意",
+        "サインイン画面は OpenByLinkScreen を置き換える形にする（両方を並立させない）",
+        "**App Store Connect の「サインイン情報」欄にデモ ID と合言葉を登録できるようになる。** これが 2.1 に対する最も標準的な形であり、Gemini が指摘した『レビュアーの期待に沿う』利点である"
+      ],
+      "done_definition": [
+        "docs/app-signin/acceptance-checks.json の全項目に合否が付いている",
+        "App Store Connect のサインイン情報欄に登録できる形式のデモ資格情報がある",
+        "リンクの貼り付けと ID＋合言葉のどちらでも開ける、または後者に一本化されている"
+      ],
+      "verify_commands": ["cd web && npm test", "cd admin && npx vitest run", "cd mobile && npm test"],
+      "risk_level": "medium",
+      "optional": true
+    },
+    {
+      "task_id": "task_017",
+      "title": "[任意] 却下された場合のフォールバック",
+      "goal": "却下理由に応じて次の手を決め、納品手段を確保する。",
+      "scope": ["却下理由の分類", "2.1 なら修正して再提出", "4.2 なら配布形態の切り替え", "デモ招待の後始末"],
+      "non_scope": ["公開ストアへの再挑戦の是非（ユーザーの判断）"],
+      "files_to_read": ["docs/native-app/app-store-submission.md", "docs/native-app/decisions.md"],
+      "files_to_create": [],
+      "files_to_modify": ["docs/native-app/decisions.md"],
+      "dependencies": ["task_014"],
+      "implementation_steps": [
+        "却下理由を分類する",
+        "**2.1（到達できない・デモが動かない）なら本計画の実装漏れ。** 修正して再提出する。理由が『デモに到達できない』であれば task_016（ID＋合言葉）へ escalate する",
+        "**4.2 なら実装では解決しない。** task_015（保存 UI のネイティブ化）が未実施ならまず実施し、それでも駄目なら配布形態を変える",
+        "Unlisted App Distribution を Apple に申請する（検索に出ず、URL を知る人だけがインストールできる）。**ただし審査基準は通常審査と同一であり、4.2 の免除ではない**（初版はこれを楽観的に書いていた）",
+        "Unlisted も通らない場合は TestFlight 外部配布に切り替える。**90日でビルドが失効し、3か月ごとの上げ直しが恒久運用になる**ことをユーザーに伝えたうえで判断する",
+        "**審査が完了したら（合否を問わず）デモ招待を isActive: false にする。** 再審査時に再有効化する",
+        "決定を decisions.md に追記する"
+      ],
+      "done_definition": [
+        "却下理由が分類され、記録されている",
+        "次の配布形態が決定され、decisions.md に記録されている",
+        "審査完了後にデモ招待が無効化されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium",
+      "optional": true
+    }
+  ]
+}

@@ -161,7 +161,8 @@
         "cd web && npm run build",
         "cd web && npm run lint"
       ],
-      "risk_level": "low"
+      "risk_level": "low",
+      "status": "完了（2026-08-17）。root layout の metadata に robots: index=false, follow=false, nocache を追加し、サイト全体を検索対象から外した。本番の /、/gallery/{token}、/liked すべてに meta が入ることを確認。robots.txt でのクロール禁止は、noindex 自体が読まれなくなるため意図的に採用していない。"
     },
     {
       "task_id": "task_004",
@@ -789,6 +790,75 @@
         "方式変更の要否が判断され、実施する場合は task_013 に統合されている"
       ],
       "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_018",
+      "title": "likeCount の水増しを防ぐ（like ドキュメントとの整合を要求する）",
+      "goal": "likeCountDeltaValid() が ±1 の変化量しか見ていないため、同一者が +1 を繰り返して likeCount を任意に膨らませられる状態を塞ぐ。",
+      "scope": [
+        "images の update ルールで、likeCount の増減に対応する like ドキュメントの有無を要求する"
+      ],
+      "non_scope": [
+        "既存の likeCount の再集計"
+      ],
+      "files_to_read": [
+        "firestore.rules",
+        "web/src/services/likeService.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "firestore.rules"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "2026-08-21 の敵対的レビュー（Fable 5）で指摘。likeCountDeltaValid() は変化量のみを検証し、like ドキュメントとの整合を要求しない",
+        "+1 のときは likes/{invitationId}_{imageId} が存在しないこと、-1 のときは存在することを exists() で要求する",
+        "**ルールの exists() は追加の読み取りコストになる。** 一括操作時の影響を確認する",
+        "匿名クライアントから +1 を連続実行して拒否されることを実測する"
+      ],
+      "done_definition": [
+        "同一の招待・画像に対する +1 の連続実行が拒否される",
+        "正規のお気に入り操作が従来どおり動作する"
+      ],
+      "verify_commands": [
+        "firebase deploy --only firestore:rules",
+        "cd web && npm test"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_019",
+      "title": "invitations の accessCount 更新を厳格化する",
+      "goal": "任意の認証済みユーザーが任意の招待の accessCount / lastAccessedAt を任意の値に書き換えられる状態を塞ぐ。",
+      "scope": [
+        "update ルールに増分の検証とセッションの一致を要求する"
+      ],
+      "non_scope": [
+        "アクセス記録のサーバー移管"
+      ],
+      "files_to_read": [
+        "firestore.rules",
+        "web/src/services/invitationService.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "firestore.rules"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "2026-08-21 の敵対的レビュー（Codex）で指摘。現行は affectedKeys().hasOnly(['accessCount','lastAccessedAt']) のみで、値の妥当性を見ていない",
+        "accessCount == resource.data.accessCount + 1 を要求する",
+        "hasValidSession() と、セッションの invitationId が対象と一致することを要求する",
+        "**トークンを知らないと対象を指定できないため実害は限定的。** 優先度は低い"
+      ],
+      "done_definition": [
+        "accessCount の任意値への書き換えが拒否される",
+        "正規のアクセス記録が従来どおり動作する"
+      ],
+      "verify_commands": [
+        "firebase deploy --only firestore:rules"
+      ],
       "risk_level": "low"
     }
   ]

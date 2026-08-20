@@ -1,0 +1,381 @@
+{
+  "feature": "App Store 提出（審査通過のための実装）",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "アプリの起動分岐",
+      "rule": "リンクも保存済みトークンも無い状態で起動しても行き止まりにならない",
+      "expected_result": "招待を開く画面が表示され、入力欄と「開く / Open」ボタンがある",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機でアプリを削除してから再インストールし、ホーム画面のアイコンから起動する"
+    },
+    {
+      "id": "check_002",
+      "target": "アプリの起動分岐",
+      "rule": "無効なトークンを入力した後でも、再起動すれば入口に戻れる",
+      "expected_result": "エラーページに直行せず、招待を開く画面が表示され、「このリンクは無効か、有効期限が切れています」が出る",
+      "manual_or_automated": "manual",
+      "verification_method": "デモの招待コードを1文字変えて入力し、エラーページが出たらアプリを終了して再起動する。**初版が見落としていた最重要の欠陥。無効トークンが保存されると回復不能になる**"
+    },
+    {
+      "id": "check_003",
+      "target": "ブリッジ（web → native）",
+      "rule": "無効な招待の表示がネイティブへ通知される",
+      "expected_result": "ExpiredLink の表示時に invitationInvalid が送られ、ネイティブが保存済みトークンを破棄する",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/lib/nativeBridge.test.ts で notifyInvitationInvalid が postMessage を呼ぶこと、ブラウザでは何もせず false を返すことを検証する"
+    },
+    {
+      "id": "check_004",
+      "target": "ブリッジの後方互換",
+      "rule": "古いアプリが新しい web を読んでも壊れない",
+      "expected_result": "handleMessage が未知の type を無視し、例外を投げない",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile のブリッジのテストで未知の type を渡す。web は即時デプロイされアプリの更新は遅れるため、この非対称は常に存在する"
+    },
+    {
+      "id": "check_005",
+      "target": "アプリの招待を開く画面",
+      "rule": "デモ用の招待コードを手入力するとギャラリーが開く",
+      "expected_result": "写真一覧が表示され、ヘッダーが「すべて保存」になる",
+      "manual_or_automated": "manual",
+      "verification_method": "レビュアーと同じ操作をする。**コピーではなく手で打つ。** 手打ちできない文字列ならデモコードを作り直す"
+    },
+    {
+      "id": "check_006",
+      "target": "アプリの招待を開く画面",
+      "rule": "リンク形式でも開く",
+      "expected_result": "https のリンク、カスタムスキーム、/liked?token= のいずれでも開く",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/navigation/resolveInitialUrl.test.ts で normalizeInvitationInput の戻り値を検証する"
+    },
+    {
+      "id": "check_007",
+      "target": "アプリの招待を開く画面",
+      "rule": "前後の空白や改行があっても開く",
+      "expected_result": "trim されて解決される",
+      "manual_or_automated": "automated",
+      "verification_method": "resolveInitialUrl.test.ts で検証する"
+    },
+    {
+      "id": "check_008",
+      "target": "アプリの招待を開く画面",
+      "rule": "トークンとみなす長さの境界が仕様どおり",
+      "expected_result": "7文字は null、8文字は通る、40文字は通る、41文字は null",
+      "manual_or_automated": "automated",
+      "verification_method": "resolveInitialUrl.test.ts で境界値を検証する。初版は「21文字前後」と未定義だった"
+    },
+    {
+      "id": "check_009",
+      "target": "アプリの招待を開く画面",
+      "rule": "別オリジンと危険なスキームは開かない",
+      "expected_result": "https://evil.tld/...、旧ドメイン、javascript: のいずれも null になり、エラー文言が出る",
+      "manual_or_automated": "automated",
+      "verification_method": "resolveInitialUrl.test.ts で検証する"
+    },
+    {
+      "id": "check_010",
+      "target": "アプリの招待を開く画面",
+      "rule": "英語話者が読める",
+      "expected_result": "見出し・説明・ボタン・エラー文言がすべて日英併記",
+      "manual_or_automated": "manual",
+      "verification_method": "実機で画面を見る。レビュアーが日本語話者とは限らない"
+    },
+    {
+      "id": "check_011",
+      "target": "アプリの起動分岐",
+      "rule": "招待リンクをタップして開く経路が従来どおり動作する",
+      "expected_result": "メモアプリのリンクをタップするとアプリが開く",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機のメモに https://gallery.non-turn.com/gallery/<デモコード> を貼り、リンクとしてタップする。**初回インストール直後は Safari で開くことがある**（2026-08-17 に実際に発生し、再インストールで解消）"
+    },
+    {
+      "id": "check_012",
+      "target": "アプリの起動分岐",
+      "rule": "一度開いた有効な招待は次回のアイコン起動で再表示される",
+      "expected_result": "アプリを終了して再起動すると、入口を経ずにギャラリーが出る",
+      "manual_or_automated": "manual",
+      "verification_method": "デモを開いた後にアプリを終了し、ホーム画面から再起動する"
+    },
+    {
+      "id": "check_013",
+      "target": "iOS 実機の保存機能",
+      "rule": "権限ダイアログが「写真の追加のみ」を求める",
+      "expected_result": "読み取り権限を求める文言が出ない",
+      "manual_or_automated": "manual",
+      "verification_method": "**初回検証**（回帰ではない）。実機で初めて保存したときのダイアログを読む。device-test-log 第4章では未確認のまま残っていた"
+    },
+    {
+      "id": "check_014",
+      "target": "iOS 実機の保存機能",
+      "rule": "保存された写真のファイル名が元の撮影ファイル名になる",
+      "expected_result": "DSC05695.jpg のような名前。Firestore のドキュメントIDではない",
+      "manual_or_automated": "manual",
+      "verification_method": "**初回検証。**「写真」アプリで写真を開き上にスワイプして情報を見る。LINE 等の他アプリ経由では名前が付け替わるため判定材料にしない"
+    },
+    {
+      "id": "check_015",
+      "target": "iOS 実機の保存機能",
+      "rule": "一括保存が全件成功する",
+      "expected_result": "20枚以上が「写真」アプリに保存され、進捗表示が画面上部で切れない",
+      "manual_or_automated": "manual",
+      "verification_method": "デモ招待で「すべて保存」を実行する"
+    },
+    {
+      "id": "check_016",
+      "target": "iOS 実機の保存機能",
+      "rule": "一括保存のキャンセルが動作する",
+      "expected_result": "保存が止まり、アプリが落ちず、保存済みの枚数が正しく報告される",
+      "manual_or_automated": "manual",
+      "verification_method": "**全プラットフォームで未実施の項目。** 審査メモでキャンセルを宣伝するなら、宣伝する前にここを通すこと"
+    },
+    {
+      "id": "check_017",
+      "target": "iOS 実機の保存機能",
+      "rule": "バックグラウンド移行時の挙動が把握されている",
+      "expected_result": "中断するか継続するかが記録され、審査メモの記述と一致する",
+      "manual_or_automated": "manual",
+      "verification_method": "一括保存中にホームへ移し、復帰後の状態を見る"
+    },
+    {
+      "id": "check_018",
+      "target": "iOS 実機の保存機能",
+      "rule": "権限を拒否した場合の案内が出る",
+      "expected_result": "「設定アプリで写真の追加を許可してください」と表示され、「設定を開く」が機能する",
+      "manual_or_automated": "manual",
+      "verification_method": "設定で権限を拒否してから保存を試す"
+    },
+    {
+      "id": "check_019",
+      "target": "閲覧期限（viewingDays）",
+      "rule": "viewingDays が長い招待は作成から7日を過ぎても閲覧できる",
+      "expected_result": "ギャラリーが表示され、エラー文言が出ない",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/utils/viewingWindow.test.ts で now を8日後に進めて検証する。デモ招待で実機でも確認する"
+    },
+    {
+      "id": "check_020",
+      "target": "閲覧期限（viewingDays）",
+      "rule": "viewingDays を持たない既存の招待は従来どおり7日で閲覧不可になる",
+      "expected_result": "8日目に「このリンクは無効か、有効期限が切れています。」が表示される",
+      "manual_or_automated": "automated",
+      "verification_method": "viewingWindow.test.ts と invitationService のテストで検証する"
+    },
+    {
+      "id": "check_021",
+      "target": "閲覧期限（viewingDays）",
+      "rule": "不正な viewingDays は既定の7日として扱われる",
+      "expected_result": "0・負数・小数・非数値・null・undefined のいずれでも7日で判定される（無期限にならない）",
+      "manual_or_automated": "automated",
+      "verification_method": "viewingWindow.test.ts で各値を渡して検証する"
+    },
+    {
+      "id": "check_022",
+      "target": "閲覧期限（viewingDays）",
+      "rule": "クライアントが自分の閲覧期限を延ばせない",
+      "expected_result": "viewingDays / expiresAt / createdAt の書き換えがすべて permission-denied",
+      "manual_or_automated": "manual",
+      "verification_method": "匿名クライアントから updateDoc を試す。**2026-08-21 に実測して確認済み。** viewingDays 追加後に再確認する（回帰）"
+    },
+    {
+      "id": "check_023",
+      "target": "閲覧期限の位置づけ",
+      "rule": "viewingDays が強制境界ではないことが文書化されている",
+      "expected_result": "viewingWindow.ts のコメントとプライバシーポリシー本文に、URL を知る者は期限後もアクセスできる旨がある",
+      "manual_or_automated": "manual",
+      "verification_method": "storage.rules が allow read: if true であり、認証なしで写真を取得できることを 2026-08-21 に実測済み。事実と異なる安全性を書いていないことを確認する"
+    },
+    {
+      "id": "check_024",
+      "target": "POST /api/native/manifest",
+      "rule": "viewingDays が長い招待では、7日を過ぎても保存が認可される",
+      "expected_result": "200 が返り、items に URL が含まれる",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/services/manifestService.test.ts で検証する"
+    },
+    {
+      "id": "check_025",
+      "target": "POST /api/native/manifest",
+      "rule": "既存の拒否条件が変わっていない",
+      "expected_result": "無効化・expiresAt 超過・招待に属さない画像で 403、存在しないトークンで 404、不正入力で 400、全応答に Cache-Control: no-store",
+      "manual_or_automated": "automated",
+      "verification_method": "manifestService.test.ts の既存テストが全て通ることを確認する（回帰）"
+    },
+    {
+      "id": "check_026",
+      "target": "お気に入り",
+      "rule": "デモ招待でお気に入りの追加・解除ができ、件数に反映される",
+      "expected_result": "ハートが赤くなって維持され、likeCount が ±1 される",
+      "manual_or_automated": "manual",
+      "verification_method": "実機でハートを押す。押した直後に元に戻る場合は書き込みが失敗している"
+    },
+    {
+      "id": "check_027",
+      "target": "お気に入り",
+      "rule": "別の招待に切り替えてもお気に入りが機能する",
+      "expected_result": "招待 A を開いた後に招待 B を貼り付けて開き、B の写真をお気に入りに入れられる",
+      "manual_or_automated": "manual",
+      "verification_method": "**セッションの invitationId が古いままだと likes のルールに弾かれて静かに壊れる。** useInvitation の updateSessionInvitation が働くことの確認"
+    },
+    {
+      "id": "check_028",
+      "target": "/liked ページ",
+      "rule": "/liked?token= の経路が従来どおり動作する",
+      "expected_result": "タップでも貼り付けでもお気に入り一覧が開く",
+      "manual_or_automated": "manual",
+      "verification_method": "resolveInitialUrl.ts の冒頭コメントが警告している経路。task_004 でこのファイルを触るため回帰確認が要る"
+    },
+    {
+      "id": "check_029",
+      "target": "管理画面の招待作成",
+      "rule": "閲覧日数を指定して招待を作成できる",
+      "expected_result": "作成された招待ドキュメントに viewingDays が入る",
+      "manual_or_automated": "automated",
+      "verification_method": "admin/src/services/__tests__/invitationService.test.ts で setDoc の引数を検証する"
+    },
+    {
+      "id": "check_030",
+      "target": "管理画面の招待作成",
+      "rule": "閲覧日数を指定しない場合はフィールドを書かない",
+      "expected_result": "setDoc の引数に viewingDays が含まれない（未設定＝7日）",
+      "manual_or_automated": "automated",
+      "verification_method": "invitationService.test.ts で検証する"
+    },
+    {
+      "id": "check_031",
+      "target": "管理画面の招待作成",
+      "rule": "長期間の閲覧を誤って設定しないよう警告が出る",
+      "expected_result": "30日を超える値で確認文言が出る",
+      "manual_or_automated": "manual",
+      "verification_method": "作成フォームで 180 を入力する"
+    },
+    {
+      "id": "check_032",
+      "target": "管理画面の招待詳細",
+      "rule": "閲覧期限が表示される",
+      "expected_result": "createdAt + viewingDays（未設定なら7日）の日付が出る",
+      "manual_or_automated": "manual",
+      "verification_method": "デモ招待と通常の招待の詳細画面を開く"
+    },
+    {
+      "id": "check_033",
+      "target": "プライバシーポリシー",
+      "rule": "公開 URL から到達できる",
+      "expected_result": "https://gallery.non-turn.com/privacy が 200",
+      "manual_or_automated": "manual",
+      "verification_method": "curl -s -o /dev/null -w '%{http_code}' https://gallery.non-turn.com/privacy"
+    },
+    {
+      "id": "check_034",
+      "target": "プライバシーポリシー",
+      "rule": "記載内容が実装と App Privacy の申告に一致する",
+      "expected_result": "写真の読み取りを行わない旨と、URL を知る者は期限後もアクセスできる旨が書かれ、書かれていない収集項目が存在しない",
+      "manual_or_automated": "manual",
+      "verification_method": "本文と app.config.ts の infoPlist、storage.rules、App Privacy の申告内容を突き合わせる"
+    },
+    {
+      "id": "check_035",
+      "target": "デモ用の招待",
+      "rule": "レビュアーが手で入力できる招待コードである",
+      "expected_result": "大小混在や紛らわしい記号が無く、口頭で伝えられる文字列",
+      "manual_or_automated": "manual",
+      "verification_method": "実際に手で打って開く（check_005）"
+    },
+    {
+      "id": "check_036",
+      "target": "デモ用の招待",
+      "rule": "審査期間中に失効しない",
+      "expected_result": "isActive=true、expiresAt が 180 日後、viewingDays=180",
+      "manual_or_automated": "automated",
+      "verification_method": "node scripts/verify-demo-invitation.mjs <招待コード> が全項目合格で終了コード 0"
+    },
+    {
+      "id": "check_037",
+      "target": "デモ用の招待",
+      "rule": "実クライアントの写真が含まれない",
+      "expected_result": "NonTurn のサンプル撮影のみ",
+      "manual_or_automated": "manual",
+      "verification_method": "デモ用プロジェクトの画像一覧を管理画面で確認する"
+    },
+    {
+      "id": "check_038",
+      "target": "審査メモ",
+      "rule": "実トークンがリポジトリにコミットされていない",
+      "expected_result": "docs/app-store/review-notes.md にはプレースホルダのみ",
+      "manual_or_automated": "manual",
+      "verification_method": "git grep で招待コードの実値がリポジトリに無いことを確認する。viewingDays 180 の招待は事実上の bearer credential である"
+    },
+    {
+      "id": "check_039",
+      "target": "審査メモ",
+      "rule": "宣伝している機能がすべて検証済みである",
+      "expected_result": "審査メモに書かれた機能（一括保存・進捗・キャンセル・権限）が check_013〜018 で確認済み",
+      "manual_or_automated": "manual",
+      "verification_method": "審査メモの記述と device-test-log 第4章を突き合わせる。**未検証の機能を宣伝しない**"
+    },
+    {
+      "id": "check_040",
+      "target": "iOS のビルド設定",
+      "rule": "iPad 対応を宣言していない",
+      "expected_result": "IPA の Info.plist の UIDeviceFamily に 2 が含まれない",
+      "manual_or_automated": "manual",
+      "verification_method": "plutil -extract UIDeviceFamily json -o - Payload/*.app/Info.plist"
+    },
+    {
+      "id": "check_041",
+      "target": "iOS のビルド設定",
+      "rule": "輸出コンプライアンスの宣言が入っている",
+      "expected_result": "Info.plist の ITSAppUsesNonExemptEncryption が false",
+      "manual_or_automated": "manual",
+      "verification_method": "plutil -extract ITSAppUsesNonExemptEncryption raw -o - Payload/*.app/Info.plist。根拠は HTTPS と Keychain の両方が OS 提供の標準暗号で適用除外であること"
+    },
+    {
+      "id": "check_042",
+      "target": "iOS のビルド設定",
+      "rule": "写真の読み取り権限を要求していない",
+      "expected_result": "NSPhotoLibraryAddUsageDescription があり、NSPhotoLibraryUsageDescription が無い",
+      "manual_or_automated": "manual",
+      "verification_method": "IPA を展開して両キーの有無を確認する（2026-08-16 に同じ方法で確認済み。回帰）"
+    },
+    {
+      "id": "check_043",
+      "target": "production ビルドの読み込み先",
+      "rule": "本番の独自ドメインを読み込む",
+      "expected_result": "gallery.non-turn.com のみ。旧ドメインが含まれない",
+      "manual_or_automated": "manual",
+      "verification_method": "strings -a Payload/*.app/main.jsbundle | grep -oE '[a-z0-9.-]+\\.(vercel\\.app|non-turn\\.com)' | sort -u。**Hermes バイトコードで拾えない場合は npx expo config --type public の extra.webOrigin と eas.json の env で代替確認する**"
+    },
+    {
+      "id": "check_044",
+      "target": "ユニバーサルリンクの設定ファイル",
+      "rule": "Apple から到達でき、正しい形式で配信される",
+      "expected_result": "/.well-known/apple-app-site-association が 200 かつ Content-Type が application/json",
+      "manual_or_automated": "automated",
+      "verification_method": "verify-demo-invitation.mjs に含める。**拡張子が無いため既定では application/octet-stream になり、Apple が受け付けない**（2026-08-17 に対処済み。回帰）"
+    },
+    {
+      "id": "check_045",
+      "target": "App Store Connect のメタデータ",
+      "rule": "提出に必要な項目がすべて登録されている",
+      "expected_result": "説明文・キーワード・カテゴリ・年齢区分・サポートURL・プライバシーポリシーURL・著作権・コンテンツ配信権・審査連絡先・App Privacy",
+      "manual_or_automated": "manual",
+      "verification_method": "App Store Connect の各項目を確認する。サポート URL とプライバシーポリシー URL は外部から実際にアクセスして 200 を確認する"
+    },
+    {
+      "id": "check_046",
+      "target": "回帰",
+      "rule": "既存の招待がブラウザで従来どおり開く",
+      "expected_result": "有効な招待は表示され、期限切れの招待は同じエラー文言になる",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のギャラリー URL を2種類（有効・期限切れ）開く"
+    },
+    {
+      "id": "check_047",
+      "target": "ビルドと静的検査",
+      "rule": "全ワークスペースの検証コマンドが通る",
+      "expected_result": "テストが全パスし、ビルドが成功する。web の lint はベースライン（7 errors / 5 warnings）、admin の eslint は（0 errors / 1 warning）を超えない",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm run lint && npm test && npm run build / cd admin && npx eslint src && npx vitest run && npm run build / cd mobile && npm run typecheck && npm test。**cd admin && npm run lint は使わない。終了コード 0 を返すが何も検査していない**"
+    }
+  ]
+}
