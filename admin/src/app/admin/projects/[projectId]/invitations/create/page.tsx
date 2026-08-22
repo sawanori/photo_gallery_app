@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Button, Card, Input, DatePicker, Form, Empty, Spin, App } from 'antd';
+import { Button, Card, Input, InputNumber, DatePicker, Form, Empty, Spin, App } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
@@ -11,6 +11,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { getImagesByProject, Image } from '@/services/imageService';
 import { createInvitation, getGalleryUrl, Invitation } from '@/services/invitationService';
 import { useAuth } from '@/contexts/AuthContext';
+import { DEFAULT_VIEWING_DAYS } from '@/utils/viewingWindow';
 import dayjs from 'dayjs';
 
 export default function CreateInvitationPage() {
@@ -56,7 +57,12 @@ export default function CreateInvitationPage() {
     );
   };
 
-  const handleSubmit = async (values: { clientName: string; clientEmail?: string; expiresAt?: dayjs.Dayjs }) => {
+  const handleSubmit = async (values: {
+    clientName: string;
+    clientEmail?: string;
+    expiresAt?: dayjs.Dayjs;
+    viewingDays?: number;
+  }) => {
     if (!user) return;
 
     if (selectedImageIds.length === 0) {
@@ -77,6 +83,7 @@ export default function CreateInvitationPage() {
         createdBy: user.uid,
         imageIds: selectedImageIds,
         expiresAt,
+        viewingDays: values.viewingDays,
       });
 
       const url = getGalleryUrl(invitation.token);
@@ -210,6 +217,9 @@ export default function CreateInvitationPage() {
             onFinish={handleSubmit}
             requiredMark="optional"
             initialValues={{
+              // 既定は web 側の DEFAULT_VIEWING_DAYS に合わせる。
+              // ここを変えるなら web/src/utils/viewingWindow.ts も見ること。
+              viewingDays: DEFAULT_VIEWING_DAYS,
               expiresAt: dayjs().add(30, 'day'),
             }}
           >
@@ -228,13 +238,35 @@ export default function CreateInvitationPage() {
               <Input type="email" placeholder="例: tanaka@example.com" />
             </Form.Item>
 
+            {/*
+              閲覧日数は expiresAt とは別物で、**クライアントが実際に見られなくなるのは
+              こちら**（web の validateInvitation が「作成から N 日」で判定する）。
+              以前は管理画面から設定できず、常に既定の7日が適用されていたため、
+              「有効期限 10月31日」と表示しながら7日で見られなくなっていた。
+            */}
             <Form.Item
-              label="有効期限"
+              label="閲覧できる日数"
+              name="viewingDays"
+              tooltip="クライアントがギャラリーを開ける日数です。作成日から数えます。"
+              rules={[{ required: true, message: '閲覧できる日数を入力してください' }]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                min={1}
+                max={365}
+                precision={0}
+                addonAfter="日"
+              />
+            </Form.Item>
+
+            <Form.Item
+              label="失効日（システム上）"
               name="expiresAt"
+              tooltip="この日を過ぎると Firestore 側でも拒否されます。通常は閲覧できる日数より後ろに置きます。"
             >
               <DatePicker
                 style={{ width: '100%' }}
-                placeholder="有効期限を選択"
+                placeholder="失効日を選択"
                 format="YYYY/MM/DD"
               />
             </Form.Item>

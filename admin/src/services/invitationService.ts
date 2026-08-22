@@ -14,6 +14,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { normalizeViewingDays } from '../utils/viewingWindow';
 import { customAlphabet } from 'nanoid';
 
 /**
@@ -36,6 +37,12 @@ export interface Invitation {
   createdBy: string;
   imageIds: string[];
   expiresAt: Date;
+  /**
+   * 閲覧できる日数（作成日から）。未設定なら 7 日として扱われる。
+   * **クライアントが実際に見られなくなるのはこちらで、expiresAt ではない**
+   * （web/src/services/invitationService.ts の validateInvitation が判定する）。
+   */
+  viewingDays?: number;
   isActive: boolean;
   accessCount: number;
   lastAccessedAt?: Date;
@@ -59,6 +66,7 @@ const docToInvitation = (docSnap: { id: string; data: () => any }): Invitation |
     createdBy: data.createdBy,
     imageIds: data.imageIds || [],
     expiresAt: data.expiresAt?.toDate(),
+    viewingDays: data.viewingDays,
     isActive: data.isActive ?? true,
     accessCount: data.accessCount || 0,
     lastAccessedAt: data.lastAccessedAt?.toDate(),
@@ -121,6 +129,8 @@ export const createInvitation = async (params: {
   createdBy: string;
   imageIds: string[];
   expiresAt: Date;
+  /** 省略時は web 側の既定（7 日）が適用される。 */
+  viewingDays?: number;
 }): Promise<Invitation> => {
   if (params.imageIds.length === 0) {
     throw new Error('imageIds must not be empty');
@@ -144,6 +154,7 @@ export const createInvitation = async (params: {
     createdBy: params.createdBy,
     imageIds: params.imageIds,
     expiresAt: Timestamp.fromDate(params.expiresAt),
+    viewingDays: normalizeViewingDays(params.viewingDays),
     isActive: true,
     accessCount: 0,
     createdAt: serverTimestamp(),
@@ -156,7 +167,7 @@ export const createInvitation = async (params: {
 
 export const updateInvitation = async (
   id: string,
-  updates: Partial<Pick<Invitation, 'clientName' | 'clientEmail' | 'imageIds' | 'isActive' | 'expiresAt'>>
+  updates: Partial<Pick<Invitation, 'clientName' | 'clientEmail' | 'imageIds' | 'isActive' | 'expiresAt' | 'viewingDays'>>
 ): Promise<void> => {
   const docRef = doc(db, INVITATIONS_COLLECTION, id);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -167,6 +178,7 @@ export const updateInvitation = async (
   if (updates.imageIds !== undefined) updateData.imageIds = updates.imageIds;
   if (updates.isActive !== undefined) updateData.isActive = updates.isActive;
   if (updates.expiresAt !== undefined) updateData.expiresAt = Timestamp.fromDate(updates.expiresAt);
+  if (updates.viewingDays !== undefined) updateData.viewingDays = normalizeViewingDays(updates.viewingDays);
 
   await updateDoc(docRef, updateData);
 };
