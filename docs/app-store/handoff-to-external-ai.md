@@ -278,6 +278,45 @@ cd mobile && npx eas-cli build --platform ios --profile production
 **依頼者に伝えること:** ビルドが始まったら EAS のダッシュボード URL が出力される。
 失敗したらそのページのログ末尾を貼ってもらうこと。§5 に既知の失敗を載せてある。
 
+#### 初回だけは対話が必要（2026-08-23 に実施）
+
+**`--non-interactive` を付けると認証情報の段階で落ちる。**
+
+```
+Distribution Certificate is not validated for non-interactive builds.
+Credentials are not set up. Run this command again in interactive mode.
+```
+
+**依頼者の実際のターミナルで実行してもらうこと。** チャット欄からコマンドを流す仕組み
+（Claude Code の `!` 接頭辞など）は stdin が読めず、`Input is required, but stdin is not readable`
+で落ちる。
+
+聞かれる順序と答え:
+
+| 質問 | 答え | 補足 |
+| --- | --- | --- |
+| `Do you want to log in to your Apple account?` | **yes** | 断ると証明書の値を手で埋めることになる |
+| Apple ID | `info@non-turn.com` | パスワードは Keychain から読まれることがある |
+| 2要素認証のコード | 依頼者の端末に届く | **委託先AIは代われない** |
+| `Reuse this distribution certificate?` | **yes** | Ad Hoc 用に作った証明書をそのまま使える。新規作成すると証明書の上限を消費する |
+| `Generate a new Apple Provisioning Profile?` | **yes** | Ad Hoc のプロファイルは App Store 提出に使えないため、新しく作る必要がある |
+
+**配布証明書は Ad Hoc と App Store で共用できるが、プロビジョニングプロファイルは共用できない。**
+ここが混同しやすい。証明書は再利用、プロファイルは新規作成が正解である。
+
+**2回目以降は何も聞かれない。** 作られた資格情報は Expo 側に保管される。
+
+#### ビルド枠に上限がある
+
+**EAS の無料プランは iOS ビルドが月15件。** 2026-08-23 時点で13件を消費している
+（うち12件は開発中の `preview` ビルド）。**残りは2件。**
+
+認証情報の段階で落ちた失敗はビルドとして記録されず、枠も消費しない。
+枠が尽きたら Starter プラン（iOS 1件 $2 の従量課金）へ切り替えるか、翌月まで待つ。
+
+**この上限は Phase 4 と Phase 5 を省かない理由でもある。** 提出後に不備が見つかると、
+修正のたびにビルドを1件消費する。
+
 ---
 
 ### Phase 4 — ビルドの中身を検査する
@@ -289,19 +328,24 @@ cd mobile && npx eas-cli build --platform ios --profile production
 # 作業用ディレクトリで（IPA のパスは依頼者が EAS からダウンロードしたもの）
 unzip -o <ダウンロードした.ipa> -d ipa-check
 cd ipa-check
+P=Payload/*.app/Info.plist
 
 # 1. iPad 対応を宣言していないこと（出力に 2 が含まれないこと。1 だけならOK）
-plutil -extract UIDeviceFamily json -o - Payload/*.app/Info.plist
+plutil -extract UIDeviceFamily json -o - $P
 
 # 2. 輸出コンプライアンスが false であること
-plutil -extract ITSAppUsesNonExemptEncryption json -o - Payload/*.app/Info.plist
+plutil -extract ITSAppUsesNonExemptEncryption raw -o - $P
 
 # 3. 写真の「追加」権限の説明があること
-plutil -extract NSPhotoLibraryAddUsageDescription json -o - Payload/*.app/Info.plist
+plutil -extract NSPhotoLibraryAddUsageDescription raw -o - $P
 
 # 4. 写真の「読み取り」権限が無いこと（エラーになるのが正解）
-plutil -extract NSPhotoLibraryUsageDescription json -o - Payload/*.app/Info.plist
+plutil -extract NSPhotoLibraryUsageDescription raw -o - $P
 ```
+
+**2〜4 は `json` ではなく `raw` を使うこと。** `json` は真偽値や文字列の単独値を出力できず、
+`Invalid object in plist for JSON format` になる。**これは検査の失敗ではないが、
+失敗と読み違えやすい。** 配列を返す 1 だけが `json` で正しく出る。
 
 **期待される結果:**
 
@@ -324,13 +368,68 @@ cd /Users/noritakasawada/AI_P/practice/photo_gallery_app/mobile && npx expo conf
 ```
 
 `gallery.non-turn.com` 以外のホストが出た場合は提出を止める。本番アプリが白画面になる。
+ついでに `localhost` や `10.0.2.2` が混入していないかも見ておく。
+
+```
+strings -a Payload/*.app/main.jsbundle | grep -oE 'https?://(localhost|10\.0\.2\.2)[:0-9]*' | sort -u
+```
+
+#### 提出用ビルドとして成立しているかの確認
+
+上の4項目は Info.plist の中身しか見ない。**その IPA が App Store 提出用として署名されているか**は
+別に確かめる。ここが Ad Hoc のままだと App Store Connect が受け付けない。
+
+```
+security cms -D -i Payload/*.app/embedded.mobileprovision > /tmp/prof.plist
+plutil -extract Name raw -o - /tmp/prof.plist                      # 名前に AppStore が入るか
+plutil -extract Entitlements.get-task-allow raw -o - /tmp/prof.plist # false であること
+plutil -extract ProvisionedDevices json -o - /tmp/prof.plist        # ★エラーになるのが正解
+```
+
+**`ProvisionedDevices` の不在が App Store 配布であることの証拠になる。**
+Ad Hoc なら登録済み端末の UDID 一覧がここに入る。値が出たら提出用ではない。
+
+Universal Links がアプリ本体に焼かれているかも見る。ここが空だと招待リンクをタップしても
+アプリが開かず、審査メモの説明と食い違う。
+
+```
+codesign -d --entitlements :- Payload/*.app | plutil -convert xml1 -o - -
+# com.apple.developer.associated-domains に applinks:gallery.non-turn.com があること
+# application-identifier が 2WWB6ZA7A9.com.nonturn.photogallery であること
+#   → 本番の AASA が返す appIDs と一致している必要がある
+```
+
+#### 2026-08-23 のビルドでの実測結果
+
+`1.0.0 (4)` / 9.3MB / iOS 16.4 以上 / コミット `4af3bb2` で、**全項目が期待どおりだった。**
+プロファイルは `[expo] com.nonturn.photogallery AppStore`、`get-task-allow` は `false`、
+`ProvisionedDevices` は不在。JS バンドルから出たホストは `gallery.non-turn.com` の1つだけ。
+`PrivacyInfo.xcprivacy` も含まれ、署名は `valid on disk`。
+Info.plist に残る写真関連キーは「追加」用と `PHPhotoLibraryPreventAutomaticLimitedAccessAlert` の
+2つだけで、読み取りを求めるキーは1つも無い。
 
 ---
 
 ### Phase 5 — 実機で保存機能を確認する
 
-**Phase 3 のビルドを実機に入れて、審査メモで宣伝している機能が実際に動くことを確かめる。**
+**審査メモで宣伝している機能が実機で動くことを確かめる。**
 アプリ名とオリジンが今回変わっているため、以前の検証結果は使えない。
+
+#### Phase 3 のビルドは実機に直接入らない
+
+**App Store 用に署名された IPA は端末へサイドロードできない。**
+Phase 4 で `ProvisionedDevices` が不在であることを確認したが、それはこの IPA が
+特定の端末を対象にしていないという意味でもある。実機に入れる方法は2つある。
+
+| 方法 | ビルド枠 | 補足 |
+| --- | --- | --- |
+| `--profile preview` でビルドし直す | **1件消費** | Ad Hoc 署名。登録済みの端末に直接入る。すぐ試せる |
+| `eas submit` 後に TestFlight から入れる | 消費しない | 提出用ビルドをそのまま検証できる。Apple の処理待ちが数十分ある |
+
+**TestFlight を使えば提出用のバイナリそのものを検証できる。**
+preview は別ビルドなので、厳密には提出するものと同一ではない。
+ただし TestFlight は `eas submit` が前提になるため、**提出してから検証する順序になる**。
+審査に出す前に止められる点は変わらない（TestFlight への配信と審査提出は別操作）。
 
 `iPhone 16 Pro Max（iOS 26.6）` で表示までは合格しているが、**次の項目が未検証のまま残っている。**
 
