@@ -1,0 +1,214 @@
+{
+  "feature": "招待コード＋パスワードでギャラリーを開く",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "主要な導線（ブラウザ）",
+      "rule": "コードとパスワードでギャラリーが開く",
+      "expected_result": "web のトップでコードとパスワードを入れると /gallery/<token> に遷移し、写真が並ぶ",
+      "manual_or_automated": "manual",
+      "verification_method": "使い捨ての招待を作り、実際に入力する"
+    },
+    {
+      "id": "check_002",
+      "target": "主要な導線（アプリ）",
+      "rule": "アプリでもコードとパスワードでギャラリーが開く",
+      "expected_result": "貼り付け画面でコードとパスワードを入れるとギャラリーが表示される",
+      "manual_or_automated": "manual",
+      "verification_method": "実機（USB 接続）で確認する"
+    },
+    {
+      "id": "check_003",
+      "target": "回帰: 既存の招待リンク",
+      "rule": "配布済みのトークン付きリンクが従来どおり動く",
+      "expected_result": "パスワードを求められず、そのままギャラリーが開く",
+      "manual_or_automated": "manual",
+      "verification_method": "既存の招待リンクをブラウザとアプリの両方で開く。**ここが壊れると今いるクライアントが写真を見られなくなる**"
+    },
+    {
+      "id": "check_004",
+      "target": "回帰: ディープリンク",
+      "rule": "メモアプリからリンクをタップするとアプリが開く",
+      "expected_result": "Safari ではなくアプリでギャラリーが開く",
+      "manual_or_automated": "manual",
+      "verification_method": "実機でメモに貼ったリンクをタップする"
+    },
+    {
+      "id": "check_005",
+      "target": "パスワードハッシュの秘匿",
+      "rule": "invitationSecrets をクライアントから読めない",
+      "expected_result": "匿名認証したクライアントからの get / list がどちらも permission-denied",
+      "manual_or_automated": "manual",
+      "verification_method": "スクリプトで匿名サインインして実際に叩く。**Firestore はフィールド単位の読み取り制御ができないため、invitations に相乗りさせてはいけない**"
+    },
+    {
+      "id": "check_006",
+      "target": "サービスアカウント鍵の扱い",
+      "rule": "鍵がブラウザに配信されない",
+      "expected_result": "環境変数名に NEXT_PUBLIC_ が付いておらず、ビルド成果物に鍵の文字列が現れない",
+      "manual_or_automated": "automated",
+      "verification_method": "web/.next のビルド成果物を grep する。git にコミットされていないことも確認する"
+    },
+    {
+      "id": "check_007",
+      "target": "誤りの区別をさせない",
+      "rule": "コード違いとパスワード違いの応答が同一",
+      "expected_result": "ステータスも本文も同じ 401",
+      "manual_or_automated": "automated",
+      "verification_method": "Route Handler のテストで両方の応答を比較する。**区別できるとコードの列挙ができる**"
+    },
+    {
+      "id": "check_008",
+      "target": "応答時間からの推測",
+      "rule": "実在・非実在・ロック中で応答時間に有意差がない",
+      "expected_result": "3群それぞれ30回以上、ウォーム/コールドを分けた p50 と p90 の差が、ばらつきに埋もれる程度",
+      "manual_or_automated": "manual",
+      "verification_method": "task_008 で実測して verification.md に記録する。**scrypt を揃えるだけでは Firestore の I/O 回数の差が残るため、全経路で最低応答時間を満たすまで待つ**。残留リスクはゼロにならないことを計画書に明記してある"
+    },
+    {
+      "id": "check_009",
+      "target": "総当たり対策",
+      "rule": "5回失敗でロックされる",
+      "expected_result": "6回目が 423 になり、retryAfterSeconds が返る",
+      "manual_or_automated": "manual",
+      "verification_method": "使い捨ての招待に誤ったパスワードを5回送る"
+    },
+    {
+      "id": "check_020",
+      "target": "コードの実在を漏らさない",
+      "rule": "存在しないコードでも同じ回数でロックされる",
+      "expected_result": "存在しないコードに5回失敗を送ると、実在コードと同じ 423 と同じ本文が返る",
+      "manual_or_automated": "manual",
+      "verification_method": "実在コードと架空コードで並べて試す。**実在コードだけがロックされると、423 が返るかどうかでコードの実在が判定でき、列挙の足がかりになる**"
+    },
+    {
+      "id": "check_021",
+      "target": "失敗回数の競合",
+      "rule": "並行リクエストでも失敗回数が正しく数えられる",
+      "expected_result": "同時に6リクエスト送ると failedAttempts が 6 になる",
+      "manual_or_automated": "manual",
+      "verification_method": "スクリプトで同時送信し Firestore を確認する。**トランザクションで囲まないと同じ値を読んで上書きし、5回失敗が1回扱いになる**"
+    },
+    {
+      "id": "check_022",
+      "target": "発信元単位のレート制限",
+      "rule": "高コスト処理の前で止まる",
+      "expected_result": "制限を超えると 429 が返り、その経路では scrypt も Firestore アクセスも実行されない",
+      "manual_or_automated": "manual",
+      "verification_method": "連続送信して 429 を出す。**scrypt を毎回実行する設計は、制限が無いと CPU を消費させる的になる**"
+    },
+    {
+      "id": "check_023",
+      "target": "コードの一意性",
+      "rule": "同じコードが2つできない",
+      "expected_result": "invitationCodes/{code} の create が衝突したら別のコードを引き直す",
+      "manual_or_automated": "automated",
+      "verification_method": "既存確認してから set する実装になっていないことをコードレビューで確認する。競合すると、正しいパスワードでも別の招待を見て失敗する"
+    },
+    {
+      "id": "check_024",
+      "target": "管理者 API の認可",
+      "rule": "管理者以外が招待のパスワードを設定・再設定できない",
+      "expected_result": "ID トークン無し、または role が admin でないトークンで 401 / 403",
+      "manual_or_automated": "automated",
+      "verification_method": "Route Handler のテストで検証する。**認可なしで置くと第三者が任意の招待のパスワードを再設定できる**"
+    },
+    {
+      "id": "check_025",
+      "target": "クライアントバンドル",
+      "rule": "node:crypto がクライアントに引き込まれない",
+      "expected_result": "web のビルドが通り、passwordHash.server.ts に `import 'server-only'` がある",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm run build。正規化関数はクライアントでも使うため、ハッシュ側と同居させると壊れる"
+    },
+    {
+      "id": "check_026",
+      "target": "回帰: トークンだけの貼り付け",
+      "rule": "21文字のトークンを貼り付けるとパスワード無しで開く",
+      "expected_result": "アプリの貼り付け画面に21文字トークンだけを入れるとギャラリーが開く",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/navigation/resolveInitialUrl.test.ts の既存テストが通ること。**8文字コードとの3分岐を実装しないとここが壊れる**"
+    },
+    {
+      "id": "check_010",
+      "target": "総当たり対策",
+      "rule": "ロック中は正しいパスワードでも通らない",
+      "expected_result": "423",
+      "manual_or_automated": "manual",
+      "verification_method": "ロック状態で正しいパスワードを送る。**ここが通ると回数制限の意味がない**"
+    },
+    {
+      "id": "check_011",
+      "target": "ロックの解除",
+      "rule": "成功またはパスワード再設定で失敗回数が戻る",
+      "expected_result": "failedAttempts が 0、lockedUntil が消える",
+      "manual_or_automated": "manual",
+      "verification_method": "Firebase コンソールで invitationSecrets を確認する"
+    },
+    {
+      "id": "check_012",
+      "target": "無効・期限切れの招待",
+      "rule": "無効化または期限切れの招待ではトークンを返さない",
+      "expected_result": "正しいコードとパスワードでも 401",
+      "manual_or_automated": "automated",
+      "verification_method": "Route Handler のテストで isActive=false と expiresAt が過去の場合を検証する"
+    },
+    {
+      "id": "check_013",
+      "target": "キャッシュ",
+      "rule": "トークンを返す応答が CDN に載らない",
+      "expected_result": "Cache-Control: no-store が付いている",
+      "manual_or_automated": "automated",
+      "verification_method": "Route Handler のテストでヘッダを検証する。**理由は多層防御。** Route Handler は既定でキャッシュされず POST もキャッシュされないので、『付けないと CDN に載る』は誤り"
+    },
+    {
+      "id": "check_014",
+      "target": "コードの入力揺れ",
+      "rule": "小文字・ハイフン・空白の違いを吸収する",
+      "expected_result": "`abcd-efgh`、`ABCD EFGH`、`ABCDEFGH` がすべて同じコードとして扱われる",
+      "manual_or_automated": "automated",
+      "verification_method": "invitationCode のテストで検証する"
+    },
+    {
+      "id": "check_015",
+      "target": "コードの読み間違い",
+      "rule": "紛らわしい文字が含まれない",
+      "expected_result": "生成されるコードに I / L / O / U が現れず、アルファベットがちょうど30文字",
+      "manual_or_automated": "automated",
+      "verification_method": "アルファベット定数のテスト。紙で渡す前提なので読み違いは実害になる。**30文字であって32文字ではない（30^8 ≒ 6,561億通り）**"
+    },
+    {
+      "id": "check_016",
+      "target": "パスワードの保存",
+      "rule": "平文で保存しない",
+      "expected_result": "invitationSecrets に平文のパスワードフィールドが存在しない",
+      "manual_or_automated": "manual",
+      "verification_method": "Firebase コンソールでドキュメントを目視確認する"
+    },
+    {
+      "id": "check_017",
+      "target": "管理画面",
+      "rule": "作成時にコードとパスワードを渡せる",
+      "expected_result": "作成完了画面に両方が表示され、コピーできる。二度と表示できない旨が書かれている",
+      "manual_or_automated": "manual",
+      "verification_method": "招待を作って画面を見る"
+    },
+    {
+      "id": "check_018",
+      "target": "モバイル表示",
+      "rule": "入力フォームがスマートフォンで崩れない",
+      "expected_result": "キーボードが出てもボタンが隠れない",
+      "manual_or_automated": "manual",
+      "verification_method": "実機とブラウザの開発者ツールで確認する"
+    },
+    {
+      "id": "check_019",
+      "target": "ビルドと静的検査",
+      "rule": "検証コマンドが既存のベースラインを超えない",
+      "expected_result": "web / admin の vitest 全パス、eslint 0 errors、build 成功、mobile の typecheck と jest が通る",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npx vitest run && npm run lint && npm run build / cd admin && npx vitest run && npx eslint src && npm run build / cd mobile && npm run typecheck && npm test。**admin の npm run lint は使わない**（next lint は Next.js 16 で削除済みで、終了コード 0 を返すが何も検査していない）。**web の npm run lint は eslint なので使ってよい**"
+    }
+  ],
+  "version": 2
+}
