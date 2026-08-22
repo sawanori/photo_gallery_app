@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Invitation, Session } from '@/types';
+import { isWithinViewingWindow } from '@/utils/viewingWindow';
 
 const INVITATIONS_COLLECTION = 'invitations';
 const SESSIONS_COLLECTION = 'sessions';
@@ -81,6 +82,7 @@ function toInvitation(id: string, data: any): Invitation {
     lastAccessedAt: data.lastAccessedAt?.toDate(),
     createdAt: data.createdAt?.toDate(),
     updatedAt: data.updatedAt?.toDate(),
+    viewingDays: data.viewingDays,
   };
 }
 
@@ -101,11 +103,11 @@ export const validateInvitation = (invitation: Invitation): { valid: boolean; re
   if (invitation.expiresAt && new Date() > invitation.expiresAt) {
     return { valid: false, reason: INVALID_INVITATION_MESSAGE };
   }
-  if (invitation.createdAt) {
-    const viewingDeadline = new Date(invitation.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
-    if (new Date() > viewingDeadline) {
-      return { valid: false, reason: INVALID_INVITATION_MESSAGE };
-    }
+  if (
+    invitation.createdAt &&
+    !isWithinViewingWindow(invitation.createdAt, invitation.viewingDays)
+  ) {
+    return { valid: false, reason: INVALID_INVITATION_MESSAGE };
   }
   return { valid: true };
 };

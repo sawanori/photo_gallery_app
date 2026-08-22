@@ -248,3 +248,64 @@ describe('filenameFor', () => {
     );
   });
 });
+
+/**
+ * 閲覧期限を招待ごとに変えられること。
+ *
+ * これが無いと、審査期間中にデモ用の招待が失効してレビュアーが写真を保存できなくなる。
+ * ここは**ネイティブ保存の認可経路**なので、緩めすぎても厳しすぎても実害が出る。
+ */
+describe('resolveManifest / 閲覧期限（viewingDays）', () => {
+  // 招待の作成は 2026-08-14。既定の 7 日なら 08-21 で切れる。
+  const EIGHT_DAYS_LATER = new Date('2026-08-22T00:00:00Z');
+
+  const setup = (overrides: Record<string, unknown>) => {
+    getDoc.mockImplementation((ref: { __doc?: string }) => {
+      const path = ref?.__doc ?? '';
+      if (path.startsWith('invitations/')) {
+        return Promise.resolve(invitationDoc(overrides));
+      }
+      return Promise.resolve(imageDoc('img1'));
+    });
+  };
+
+  it('未設定の招待は 8 日目に拒否される', async () => {
+    setup({ expiresAt: { toDate: () => new Date('2027-01-01T00:00:00Z') } });
+
+    expect(await resolveManifest(db, 'tok', ['img1'], EIGHT_DAYS_LATER)).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+  });
+
+  it('長い viewingDays の招待は 8 日目でも保存できる', async () => {
+    setup({
+      viewingDays: 180,
+      expiresAt: { toDate: () => new Date('2027-01-01T00:00:00Z') },
+    });
+
+    const result = await resolveManifest(db, 'tok', ['img1'], EIGHT_DAYS_LATER);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.items).toHaveLength(1);
+  });
+
+  it('不正な viewingDays は既定の 7 日として扱う（無期限にしない）', async () => {
+    setup({ viewingDays: 0, expiresAt: { toDate: () => new Date('2027-01-01T00:00:00Z') } });
+
+    expect(await resolveManifest(db, 'tok', ['img1'], EIGHT_DAYS_LATER)).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+  });
+
+  it('viewingDays が長くても expiresAt を過ぎていれば拒否される', async () => {
+    setup({ viewingDays: 180 });
+
+    // expiresAt は 2026-08-20
+    expect(await resolveManifest(db, 'tok', ['img1'], EIGHT_DAYS_LATER)).toMatchObject({
+      ok: false,
+      status: 403,
+    });
+  });
+});

@@ -11,7 +11,7 @@ import {
   resolveDeepLink,
 } from './src/navigation/resolveInitialUrl';
 import GalleryWebView from './src/screens/GalleryWebView';
-import NoInvitationScreen from './src/screens/NoInvitationScreen';
+import OpenByLinkScreen from './src/screens/OpenByLinkScreen';
 
 const SCHEME = 'photogallery';
 /** 直近に開いた招待トークン。これ以外の個人情報は端末に保存しない。 */
@@ -20,6 +20,8 @@ const TOKEN_KEY = 'last_invitation_token';
 export default function App() {
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [isResolving, setIsResolving] = useState(true);
+  /** 直前の招待が無効だったときに入口へ出す案内。 */
+  const [notice, setNotice] = useState<string | null>(null);
   const mounted = useRef(true);
 
   /** 現在表示している招待のトークン。無効通知の照合に使う。 */
@@ -51,7 +53,10 @@ export default function App() {
     } catch {
       // 保存に失敗しても今回の表示は続行する
     }
-    if (mounted.current) setSourceUrl(resolved.url);
+    if (mounted.current) {
+      setNotice(null);
+      setSourceUrl(resolved.url);
+    }
     return true;
   }, []);
 
@@ -86,6 +91,11 @@ export default function App() {
 
     if (!mounted.current) return;
     setSourceUrl(fallback ? galleryUrlForToken(fallback, WEB_ORIGIN) : null);
+    if (!fallback) {
+      setNotice(
+        'このリンクは無効か、有効期限が切れています\nThis link is invalid or has expired'
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -135,7 +145,7 @@ export default function App() {
           onInvitationInvalid={handleInvitationInvalid}
         />
       ) : (
-        <NoInvitationScreen />
+        <OpenByLinkScreen onOpen={applyLink} notice={notice} />
       )}
     </SafeAreaProvider>
   );

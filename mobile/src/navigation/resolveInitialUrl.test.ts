@@ -1,4 +1,8 @@
-import { galleryUrlForToken, resolveDeepLink } from './resolveInitialUrl';
+import {
+  galleryUrlForToken,
+  normalizeInvitationInput,
+  resolveDeepLink,
+} from './resolveInitialUrl';
 
 const ORIGIN = 'https://gallery.example.com';
 const SCHEME = 'photogallery';
@@ -175,5 +179,76 @@ describe('galleryUrlForToken', () => {
 
   it('トークンをエスケープする', () => {
     expect(galleryUrlForToken('a/b', ORIGIN)).toBe(`${ORIGIN}/gallery/a%2Fb`);
+  });
+});
+
+/**
+ * 貼り付け入力の正規化。
+ *
+ * これが無いと、アプリを起動した利用者は招待リンクをタップする以外に
+ * ギャラリーへ到達する手段が無い。App Store の審査でも、レビュアーが
+ * 中身に到達できないと Guideline 2.1 で却下される。
+ */
+describe('normalizeInvitationInput', () => {
+  const norm = (raw: string) => normalizeInvitationInput(raw, ORIGIN);
+
+  it('https のリンクをそのまま通す', () => {
+    expect(norm(`${ORIGIN}/gallery/tok12345`)).toBe(`${ORIGIN}/gallery/tok12345`);
+  });
+
+  it('カスタムスキームをそのまま通す', () => {
+    expect(norm(`${SCHEME}://gallery/tok12345`)).toBe(`${SCHEME}://gallery/tok12345`);
+  });
+
+  it('/liked?token= の形も通す', () => {
+    expect(norm(`${ORIGIN}/liked?token=tok12345`)).toBe(`${ORIGIN}/liked?token=tok12345`);
+  });
+
+  it('招待コードだけでもギャラリーの URL に組み立てる', () => {
+    expect(norm('REVIEW-DEMO-2026')).toBe(`${ORIGIN}/gallery/REVIEW-DEMO-2026`);
+    expect(norm('7AA53aP_hAqR-x3qXEqY7')).toBe(`${ORIGIN}/gallery/7AA53aP_hAqR-x3qXEqY7`);
+  });
+
+  // メールやメッセージからのコピーで混入する
+  it('前後の空白と改行を取り除く', () => {
+    expect(norm('  REVIEW-DEMO-2026  ')).toBe(`${ORIGIN}/gallery/REVIEW-DEMO-2026`);
+    expect(norm(`\n${ORIGIN}/gallery/tok12345\n`)).toBe(`${ORIGIN}/gallery/tok12345`);
+  });
+
+  it('空文字と空白だけの入力を拒否する', () => {
+    expect(norm('')).toBeNull();
+    expect(norm('   ')).toBeNull();
+  });
+
+  // 広げすぎると、貼り間違えた任意の文字列がトークンとして解決され、
+  // エラーページへ送られてしまう
+  it('コードの長さの境界を守る', () => {
+    expect(norm('a'.repeat(7))).toBeNull();
+    expect(norm('a'.repeat(8))).toBe(`${ORIGIN}/gallery/${'a'.repeat(8)}`);
+    expect(norm('a'.repeat(40))).toBe(`${ORIGIN}/gallery/${'a'.repeat(40)}`);
+    expect(norm('a'.repeat(41))).toBeNull();
+  });
+
+  it('使えない文字を含むコードを拒否する', () => {
+    expect(norm('日本語のコード')).toBeNull();
+    expect(norm('code with space')).toBeNull();
+    expect(norm('tok/../etc')).toBeNull();
+  });
+
+  // オリジンの判定は resolveDeepLink が行う。ここでは素通しし、最終的に拒否されることを確かめる
+  it('別オリジンや危険なスキームは、最終的に解決されない', () => {
+    expect(resolveDeepLink(norm('https://evil.tld/gallery/tok') ?? '', ORIGIN, SCHEME)).toBeNull();
+    expect(resolveDeepLink(norm('javascript:alert(1)') ?? '', ORIGIN, SCHEME)).toBeNull();
+    expect(
+      resolveDeepLink(norm('https://web-photo-gallery-app.vercel.app/gallery/tok') ?? '', ORIGIN, SCHEME)
+    ).toBeNull();
+  });
+
+  it('正規化した結果が resolveDeepLink で解決できる', () => {
+    const url = norm('7AA53aP_hAqR-x3qXEqY7');
+    expect(resolveDeepLink(url ?? '', ORIGIN, SCHEME)).toEqual({
+      url: `${ORIGIN}/gallery/7AA53aP_hAqR-x3qXEqY7`,
+      token: '7AA53aP_hAqR-x3qXEqY7',
+    });
   });
 });

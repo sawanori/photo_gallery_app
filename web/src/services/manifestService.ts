@@ -8,6 +8,7 @@ import {
   where,
   type Firestore,
 } from 'firebase/firestore';
+import { isWithinViewingWindow } from '@/utils/viewingWindow';
 
 /**
  * ネイティブアプリ向けの「保存してよい画像」の解決。
@@ -24,9 +25,6 @@ import {
 
 const INVITATIONS_COLLECTION = 'invitations';
 const IMAGES_COLLECTION = 'images';
-
-/** 閲覧期限（招待作成からの日数）。web/src/services/invitationService.ts と揃える。 */
-const VIEWING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const MAX_MANIFEST_ITEMS = 500;
 
@@ -51,6 +49,8 @@ interface InvitationRecord {
   isActive: boolean;
   expiresAt?: Date;
   createdAt?: Date;
+  /** 作成日からの閲覧可能日数。未設定なら 7 日 */
+  viewingDays?: number;
 }
 
 /**
@@ -96,15 +96,23 @@ function toInvitation(id: string, data: any): InvitationRecord {
     isActive: data.isActive !== false,
     expiresAt: data.expiresAt?.toDate?.(),
     createdAt: data.createdAt?.toDate?.(),
+    viewingDays: data.viewingDays,
   };
 }
 
-function isUsable(invitation: InvitationRecord, now: Date): boolean {
+/**
+ * 招待が使える状態か。
+ *
+ * 閲覧期限の計算は web/src/utils/viewingWindow.ts に集約している。
+ * 以前はここに 7 日が直書きされており、`validateInvitation` と Header の表示にも
+ * 別々の複製があった。1つ直して他を忘れると、表示と実際の期限がずれる。
+ */
+export function isUsable(invitation: InvitationRecord, now: Date): boolean {
   if (!invitation.isActive) return false;
   if (invitation.expiresAt && now > invitation.expiresAt) return false;
   if (
     invitation.createdAt &&
-    now > new Date(invitation.createdAt.getTime() + VIEWING_WINDOW_MS)
+    !isWithinViewingWindow(invitation.createdAt, invitation.viewingDays, now)
   ) {
     return false;
   }

@@ -29,6 +29,8 @@ export interface Invitation {
   lastAccessedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+  /** 作成日からの閲覧可能日数。未設定なら 7 日（utils/viewingWindow.ts） */
+  viewingDays?: number;
 }
 
 export interface Session {

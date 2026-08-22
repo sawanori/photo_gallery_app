@@ -127,3 +127,50 @@ function normalizeOrigin(origin: string): string {
     return origin.replace(/\/+$/, '');
   }
 }
+
+/**
+ * 招待コードの長さの範囲。
+ *
+ * 下限 8 は、審査用に人間が打てる短いコード（`REVIEW-DEMO-2026` は16文字）を通すため。
+ * 上限 40 は、既存の nanoid 21 文字に余裕を持たせるため。
+ * 広げすぎると、貼り間違えた任意の文字列がトークンとして解決され、
+ * エラーページへ送られてしまう。
+ */
+const CODE_MIN_LENGTH = 8;
+const CODE_MAX_LENGTH = 40;
+
+/** 招待コードに使える文字。既存トークン（nanoid）は `_` と `-` を含む。 */
+const CODE_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * 利用者が貼り付けた文字列を、解決できる URL に正規化する。
+ *
+ * 受け付ける形式:
+ * - `https://<origin>/gallery/<token>` / `https://<origin>/liked?token=<token>`
+ * - `photogallery://gallery/<token>`
+ * - 招待コードのみ（`<origin>/gallery/<code>` に組み立てる）
+ *
+ * 前後の空白と改行は取り除く。メールやメッセージからのコピーで混入するため。
+ * **本文ごと貼られた場合（URL の前後に文章が付く）は救わない。** 抽出を始めると
+ * 何を URL とみなすかの線引きが曖昧になり、誤った解決を生む。
+ *
+ * **URL クラスを使わないこと。** React Native の URL は正規表現による簡易実装で
+ * `https?://` にしかマッチしない。2026-08-16 に実機で判明した
+ * （`docs/native-app/device-test-log.md` 第4章）。文字列処理で完結させる。
+ */
+export function normalizeInvitationInput(
+  raw: string,
+  webOrigin: string
+): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+
+  // スキームが付いていればそのまま解決側へ渡す。
+  // 許可するオリジンの判定は resolveDeepLink が行う。
+  if (/^[A-Za-z][A-Za-z0-9+\-.]*:/.test(trimmed)) return trimmed;
+
+  if (trimmed.length < CODE_MIN_LENGTH || trimmed.length > CODE_MAX_LENGTH) return null;
+  if (!CODE_PATTERN.test(trimmed)) return null;
+
+  return galleryUrlForToken(trimmed, webOrigin);
+}
