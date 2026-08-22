@@ -21,7 +21,10 @@
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://gallery.non-turn.com"
+      }
     }
   },
   "submit": {

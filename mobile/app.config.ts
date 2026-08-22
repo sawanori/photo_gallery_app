@@ -23,7 +23,18 @@ const PHOTO_ADD_PERMISSION_TEXT =
   '選んだ写真を端末の写真アプリに保存するために使用します。既存の写真を読み取ることはありません。';
 
 const config: ExpoConfig = {
-  name: 'Photo Gallery',
+  // ホーム画面に出る名前（CFBundleDisplayName）。App Store の掲載名とは別物で、
+  // 掲載名は App Store Connect 側で設定する（そちらは NonTurnPhoto）。
+  //
+  // ホーム画面のラベルは**幅で切られる**。文字数の固定上限ではないが、
+  // 12文字前後を超えると "NonTurnPh…" のように省略される。
+  // ここを短くしているのはそのため。
+  //
+  // ここを変えてもネイティブ判定は壊れない。User-Agent の目印は
+  // mobile/src/bridge/inject.ts の 'PhotoGalleryApp/' というリテラルで、
+  // web/src/lib/nativeBridge.ts がその文字列を見ている。両者は name と無関係。
+  name: 'NT-photo',
+  // slug は EAS のプロジェクト識別子に紐づく。変えないこと。
   slug: 'photo-gallery',
   // EAS 上のプロジェクトを所有するアカウント。
   owner: 'nonturn',
@@ -35,7 +46,11 @@ const config: ExpoConfig = {
   // SDK 57 では新アーキテクチャが既定のため newArchEnabled の指定は不要（型にも存在しない）
 
   ios: {
-    supportsTablet: true,
+    // iPad 対応を宣言すると、App Store Connect が **13インチ iPad のスクリーンショットを
+    // 必須**にし、審査も iPad で行われる（Guideline 2.1: 宣言した端末で正しく動くこと）。
+    // 手元に iPad が無く動作確認ができないため、1.0 では iPhone のみで出す。
+    // iPad を用意して確認できたら true に戻す。変更はこの1行だけ。
+    supportsTablet: false,
     bundleIdentifier: IOS_BUNDLE_ID,
     // ユニバーサルリンク。ドメイン確定前でも形は正しく保つ。
     associatedDomains: [`applinks:${GALLERY_DOMAIN}`],
@@ -43,6 +58,9 @@ const config: ExpoConfig = {
       // 書き込み専用の認可で完結させるため、NSPhotoLibraryUsageDescription（読み取り）は
       // 意図的に設定しない。
       NSPhotoLibraryAddUsageDescription: PHOTO_ADD_PERMISSION_TEXT,
+      // 輸出コンプライアンス。このアプリが使う暗号は HTTPS だけで、Apple の適用除外に当たる。
+      // 宣言しておくと、App Store Connect でビルドを上げるたびに聞かれずに済む。
+      ITSAppUsesNonExemptEncryption: false,
     },
   },
 
