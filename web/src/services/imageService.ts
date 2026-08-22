@@ -44,13 +44,9 @@ export const getImagesByIds = async (imageIds: string[]): Promise<Image[]> => {
     }
   }
 
-  // Sort by createdAt desc
-  images.sort((a, b) => {
-    const aTime = a.createdAt?.getTime() || 0;
-    const bTime = b.createdAt?.getTime() || 0;
-    return bTime - aTime;
-  });
-
+  // 並び順はここで決めない。呼び出し側（useInvitation）がファイル名の自然順に
+  // 並べ替えるため、ここで createdAt 順にしても必ず上書きされる。
+  // 責務を1か所に寄せて、二重に並べ替えないようにしている。
   return images;
 };
 

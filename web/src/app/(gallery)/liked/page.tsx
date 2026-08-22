@@ -6,6 +6,8 @@ import dynamic from 'next/dynamic';
 import { useInvitation } from '@/hooks/useInvitation';
 import { useLikedImages } from '@/hooks/useLikedImages';
 import { useBulkDownload } from '@/hooks/useBulkDownload';
+import { useNativeSave } from '@/hooks/useNativeSave';
+import { useIsNativeShell } from '@/hooks/useIsNativeShell';
 import { useGallery } from '@/contexts/GalleryContext';
 import Header from '@/components/Header';
 import MasonryGrid from '@/components/MasonryGrid';
@@ -20,6 +22,10 @@ const DownloadProgressModal = dynamic(() => import('@/components/DownloadProgres
   ssr: false,
 });
 
+const NativeSaveNotice = dynamic(() => import('@/components/NativeSaveNotice'), {
+  ssr: false,
+});
+
 function LikedPageContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
@@ -27,10 +33,17 @@ function LikedPageContent() {
   const { invitation } = useGallery();
   const { likedImages } = useLikedImages();
   const { isDownloading, progress, startDownload, cancelDownload } = useBulkDownload();
+  const { isNative } = useIsNativeShell();
+  const nativeSave = useNativeSave();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const handleZipDownload = () => {
     if (likedImages.length === 0) return;
+
+    // ネイティブシェル内では ZIP ではなくフォトライブラリへ直接保存する。
+    // 送信できなければ従来の ZIP に落ちる。
+    if (nativeSave.saveMany(likedImages)) return;
+
     const zipName = invitation?.clientName
       ? `${invitation.clientName}_favorites`
       : 'favorites';
@@ -67,7 +80,7 @@ function LikedPageContent() {
           {likedImages.length > 0 && (
             <button
               onClick={handleZipDownload}
-              disabled={isDownloading}
+              disabled={isDownloading || nativeSave.isSaving}
               className="
                 flex items-center gap-2 px-4 py-2 rounded-lg
                 bg-ink text-white hover:bg-ink/85
@@ -79,7 +92,7 @@ function LikedPageContent() {
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
-              ZIP
+              {isNative ? `保存 (${likedImages.length}枚)` : 'ZIP'}
             </button>
           )}
         </div>
@@ -116,6 +129,21 @@ function LikedPageContent() {
 
       {isDownloading && progress && (
         <DownloadProgressModal progress={progress} onCancel={cancelDownload} />
+      )}
+
+      {nativeSave.isSaving && nativeSave.progress && (
+        <DownloadProgressModal
+          mode="save"
+          progress={nativeSave.progress}
+          onCancel={nativeSave.cancel}
+        />
+      )}
+
+      {nativeSave.lastResult && (
+        <NativeSaveNotice
+          result={nativeSave.lastResult}
+          onClose={nativeSave.clearResult}
+        />
       )}
     </div>
   );

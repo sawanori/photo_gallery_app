@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { isIos } from '@/utils/device';
+import { detectNativeShell } from '@/lib/nativeBridge';
 
 const STORAGE_KEY = 'ios_save_guide_dismissed';
 
@@ -10,6 +11,8 @@ export default function IosSaveGuide() {
 
   useEffect(() => {
     const dismissed = localStorage.getItem(STORAGE_KEY);
+    // ネイティブシェル内では保存ボタンから直接保存できるため手順の案内は不要
+    if (detectNativeShell()) return;
     if (isIos() && !dismissed) {
       setShow(true);
     }

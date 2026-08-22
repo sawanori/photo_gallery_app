@@ -1,7 +1,7 @@
 import {
   collection,
   doc,
-  addDoc,
+  setDoc,
   getDoc,
   getDocs,
   updateDoc,
@@ -14,7 +14,19 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { nanoid } from 'nanoid';
+import { normalizeViewingDays } from '../utils/viewingWindow';
+import { customAlphabet } from 'nanoid';
+
+/**
+ * 招待トークンに使う文字。nanoid の既定から `_` を除いてある。
+ *
+ * トークンはそのまま Firestore のドキュメント ID になる。Firestore は
+ * `__` で始まり `__` で終わる ID を予約しており、`_` を含めると
+ * ごく稀にそのような ID が生成されて書き込みが失敗する。
+ */
+const TOKEN_ALPHABET =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-';
+const generateToken = customAlphabet(TOKEN_ALPHABET, 21);
 
 export interface Invitation {
   id: string;
@@ -25,6 +37,12 @@ export interface Invitation {
   createdBy: string;
   imageIds: string[];
   expiresAt: Date;
+  /**
+   * 閲覧できる日数（作成日から）。未設定なら 7 日として扱われる。
+   * **クライアントが実際に見られなくなるのはこちらで、expiresAt ではない**
+   * （web/src/services/invitationService.ts の validateInvitation が判定する）。
+   */
+  viewingDays?: number;
   isActive: boolean;
   accessCount: number;
   lastAccessedAt?: Date;
@@ -48,6 +66,7 @@ const docToInvitation = (docSnap: { id: string; data: () => any }): Invitation |
     createdBy: data.createdBy,
     imageIds: data.imageIds || [],
     expiresAt: data.expiresAt?.toDate(),
+    viewingDays: data.viewingDays,
     isActive: data.isActive ?? true,
     accessCount: data.accessCount || 0,
     lastAccessedAt: data.lastAccessedAt?.toDate(),
@@ -110,14 +129,24 @@ export const createInvitation = async (params: {
   createdBy: string;
   imageIds: string[];
   expiresAt: Date;
+  /** 省略時は web 側の既定（7 日）が適用される。 */
+  viewingDays?: number;
 }): Promise<Invitation> => {
   if (params.imageIds.length === 0) {
     throw new Error('imageIds must not be empty');
   }
 
-  const token = nanoid(21);
+  // トークンをドキュメント ID にする。
+  //
+  // web はこの ID で単一ドキュメント取得（get）して招待を引く。
+  // 以前は `where('token','==',token)` のコレクションクエリで引いていたが、
+  // それだと list を許可する必要があり、匿名認証しただけの第三者が招待を
+  // 全件列挙してトークンを平文で収穫できる状態になる
+  // （2026-08-17 に実際に列挙できることを確認した）。
+  const token = generateToken();
 
-  const docRef = await addDoc(collection(db, INVITATIONS_COLLECTION), {
+  const docRef = doc(db, INVITATIONS_COLLECTION, token);
+  await setDoc(docRef, {
     token,
     projectId: params.projectId,
     clientName: params.clientName,
@@ -125,6 +154,7 @@ export const createInvitation = async (params: {
     createdBy: params.createdBy,
     imageIds: params.imageIds,
     expiresAt: Timestamp.fromDate(params.expiresAt),
+    viewingDays: normalizeViewingDays(params.viewingDays),
     isActive: true,
     accessCount: 0,
     createdAt: serverTimestamp(),
@@ -137,7 +167,7 @@ export const createInvitation = async (params: {
 
 export const updateInvitation = async (
   id: string,
-  updates: Partial<Pick<Invitation, 'clientName' | 'clientEmail' | 'imageIds' | 'isActive' | 'expiresAt'>>
+  updates: Partial<Pick<Invitation, 'clientName' | 'clientEmail' | 'imageIds' | 'isActive' | 'expiresAt' | 'viewingDays'>>
 ): Promise<void> => {
   const docRef = doc(db, INVITATIONS_COLLECTION, id);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -148,6 +178,7 @@ export const updateInvitation = async (
   if (updates.imageIds !== undefined) updateData.imageIds = updates.imageIds;
   if (updates.isActive !== undefined) updateData.isActive = updates.isActive;
   if (updates.expiresAt !== undefined) updateData.expiresAt = Timestamp.fromDate(updates.expiresAt);
+  if (updates.viewingDays !== undefined) updateData.viewingDays = normalizeViewingDays(updates.viewingDays);
 
   await updateDoc(docRef, updateData);
 };

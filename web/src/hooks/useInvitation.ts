@@ -4,25 +4,27 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGallery } from '@/contexts/GalleryContext';
 import {
-  getInvitationByToken,
+  lookupInvitation,
   validateInvitation,
+  INVALID_INVITATION_MESSAGE,
   createSession,
   getSession,
   updateInvitationAccess,
   updateSessionAccess,
+  updateSessionInvitation,
 } from '@/services/invitationService';
 import { getImagesByIds } from '@/services/imageService';
 import { getLikedImageIds } from '@/services/likeService';
+import { compareNatural, sortNameFromStoragePath } from '@/utils/naturalSort';
+import { notifyInvitationInvalid } from '@/lib/nativeBridge';
+
+/** 通信に失敗したときの文言。無効・期限切れとは区別する。 */
+const LOAD_FAILED_MESSAGE = 'ギャラリーの読み込みに失敗しました。';
 
 interface UseInvitationResult {
   isLoading: boolean;
   error: string | null;
   isValid: boolean;
-}
-
-/** Extract filename from storagePath for sorting */
-function extractSortName(storagePath: string): string {
-  return (storagePath.split('/').pop() || '').toLowerCase();
 }
 
 export function useInvitation(token: string): UseInvitationResult {
@@ -49,17 +51,39 @@ export function useInvitation(token: string): UseInvitationResult {
         }
 
         // 2. Fetch invitation by token
-        const invitation = await getInvitationByToken(token);
-        if (!invitation) {
-          setError('招待リンクが見つかりません。');
+        const lookup = await lookupInvitation(token);
+
+        if (lookup.status === 'unavailable') {
+          // サーバーに届かなかった。**ネイティブへ無効を通知してはいけない。**
+          // 通知すると、電波の悪い場所でアプリを開いただけで
+          // 有効なトークンが端末から消える。
+          setError(LOAD_FAILED_MESSAGE);
           setIsValid(false);
           return;
         }
 
+        if (lookup.status === 'denied') {
+          // サーバーが明示的に拒否した。不存在・無効化・期限切れのいずれかで、
+          // クライアントからは区別できない（区別するとトークンの実在が漏れる）。
+          // これは確定した無効なので、ネイティブに保存済みトークンを破棄させる。
+          notifyInvitationInvalid(token);
+          setError(INVALID_INVITATION_MESSAGE);
+          setIsValid(false);
+          return;
+        }
+
+        const invitation = lookup.invitation;
+
         // 3. Validate invitation
         const validation = validateInvitation(invitation);
         if (!validation.valid) {
-          setError(validation.reason || '無効なリンクです。');
+          // 閲覧期限は Firestore ルールが見ておらず、端末の時刻で判定している。
+          // **キャッシュ由来のデータでは通知しない。** 古い内容で
+          // 「期限切れ」と判断して有効なトークンを消さないため。
+          if (!lookup.fromCache) {
+            notifyInvitationInvalid(token);
+          }
+          setError(validation.reason || INVALID_INVITATION_MESSAGE);
           setIsValid(false);
           setInvitation(invitation);
           return;
@@ -67,6 +91,16 @@ export function useInvitation(token: string): UseInvitationResult {
 
         // 4. Create or update session
         const existingSession = await getSession(currentUser.uid);
+        // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
+        // 古い ID を持ったままのセッションは作り直す。お気に入りの読み取りは
+        // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
+        if (existingSession && existingSession.invitationId !== invitation.id) {
+          try {
+            await updateSessionInvitation(currentUser.uid, invitation.id);
+          } catch (e) {
+            console.warn('Failed to refresh session invitation:', e);
+          }
+        }
         if (!existingSession) {
           await createSession(currentUser.uid, invitation.id);
           try {
@@ -88,15 +122,21 @@ export function useInvitation(token: string): UseInvitationResult {
         // 6 & 7. Fetch all image metadata and liked status in parallel
         const [images, likedImageIds] = await Promise.all([
           getImagesByIds(invitation.imageIds),
-          getLikedImageIds(currentUser.uid),
+          // お気に入りは招待に紐づく。匿名 UID ではない。
+          // UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
+          // クライアントがブラウザで選んだお気に入りがアプリで消える。
+          getLikedImageIds(invitation.id),
         ]);
 
-        // Sort by filename (storagePath)
-        images.sort((a, b) => {
-          const nameA = extractSortName(a.storagePath);
-          const nameB = extractSortName(b.storagePath);
-          return nameA.localeCompare(nameB, 'ja');
-        });
+        // ファイル名の自然順に並べる。管理画面のアップロード画面と同じ規則。
+        // localeCompare をそのまま使うと数字が文字として比較され、
+        // DSC_10 が DSC_2 より前に来る。
+        images.sort((a, b) =>
+          compareNatural(
+            sortNameFromStoragePath(a.storagePath),
+            sortNameFromStoragePath(b.storagePath)
+          )
+        );
 
         const likedSet = new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id)));
 
@@ -106,8 +146,10 @@ export function useInvitation(token: string): UseInvitationResult {
         setLikedIds(likedSet);
         setIsValid(true);
       } catch (err) {
+        // ここに来るのは招待の解決より後（画像の取得など）の失敗。
+        // 招待そのものが無効だったわけではないので、**通知はしない。**
         console.error('Failed to initialize gallery:', err);
-        setError('ギャラリーの読み込みに失敗しました。');
+        setError(LOAD_FAILED_MESSAGE);
         setIsValid(false);
       } finally {
         setIsLoading(false);

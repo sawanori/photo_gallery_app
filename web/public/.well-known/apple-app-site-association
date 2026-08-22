@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["2WWB6ZA7A9.com.nonturn.photogallery"],
+        "components": [
+          {
+            "/": "/gallery/*",
+            "comment": "招待ギャラリー"
+          },
+          {
+            "/": "/liked",
+            "?": { "token": "?*" },
+            "comment": "お気に入り一覧"
+          }
+        ]
+      }
+    ]
+  }
+}

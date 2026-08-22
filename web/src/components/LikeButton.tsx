@@ -14,13 +14,15 @@ interface LikeButtonProps {
 
 export default function LikeButton({ imageId, isLiked, likeCount, size = 'md' }: LikeButtonProps) {
   const { user } = useAuth();
-  const { toggleLikedId, updateImageLikeCount } = useGallery();
+  const { invitation, toggleLikedId, updateImageLikeCount } = useGallery();
   const [isAnimating, setIsAnimating] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!user || isProcessing) return;
+    // 招待が読み込めていないとお気に入りの鍵が決まらない。
+    // お気に入りは招待に紐づくため、invitation なしでは操作させない。
+    if (!user || !invitation || isProcessing) return;
 
     setIsProcessing(true);
     setIsAnimating(true);
@@ -30,7 +32,7 @@ export default function LikeButton({ imageId, isLiked, likeCount, size = 'md' }:
     updateImageLikeCount(imageId, isLiked ? -1 : 1);
 
     try {
-      await toggleLike(user.uid, imageId);
+      await toggleLike(invitation.id, imageId, user.uid);
     } catch {
       // Revert on error
       toggleLikedId(imageId);
@@ -46,7 +48,7 @@ export default function LikeButton({ imageId, isLiked, likeCount, size = 'md' }:
   return (
     <button
       onClick={handleClick}
-      disabled={isProcessing}
+      disabled={isProcessing || !invitation}
       className={`
         ${sizeClasses} rounded-full flex items-center justify-center gap-1
         transition-all duration-200 cursor-pointer

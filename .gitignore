@@ -9,3 +9,19 @@ node_modules/
 
 # misc
 .DS_Store
+
+# Vercel CLI のプロジェクトリンク（projectId / orgId が入る）
+.vercel
+
+# ログ・テストの生成物
+*.log
+test-results/
+playwright-report/
+
+# 開発ツールの作業ファイル
+.serena/
+.claude/settings.local.json
+
+# Claude Code のローカル作業ファイル（エージェント定義など）。
+# このプロジェクトのソースではないため追跡しない。
+.claude/

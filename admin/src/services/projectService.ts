@@ -14,8 +14,13 @@ import {
   DocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { getImagesByProject, deleteImage } from './imageService';
-import { getInvitationsByProject, deleteInvitation } from './invitationService';
+import {
+  getImagesByProject,
+  deleteImagesForProject,
+  type DeleteProgress,
+} from './imageService';
+import { getInvitationsByProject } from './invitationService';
+import { createBatchWriter } from '../utils/batchWriter';
 import dayjs from 'dayjs';
 
 export type ProjectStatus = 'active' | 'delivered' | 'archived';
@@ -142,30 +147,44 @@ export const updateProject = async (
   await updateDoc(docRef, updateData);
 };
 
-export const deleteProject = async (projectId: string): Promise<void> => {
-  // Cascade delete: images
-  const images = await getImagesByProject(projectId);
-  for (const image of images) {
-    try {
-      await deleteImage(image.id);
-    } catch (error) {
-      console.warn(`Failed to delete image ${image.id}:`, error);
-    }
-  }
+const INVITATIONS_COLLECTION = 'invitations';
 
-  // Cascade delete: invitations
+/**
+ * プロジェクトを削除する。画像・招待もまとめて消す。
+ *
+ * 順序を **招待 → 画像 → プロジェクト** に固定している。理由はそれぞれ違う。
+ *
+ * - **招待が最初**: アクセスを断つため。画像を先に消して途中で失敗すると、
+ *   生きた招待リンクが空のギャラリーを指したまま残り、クライアントが
+ *   「写真が消えた」画面を見ることになる。
+ * - **プロジェクトが最後**: 途中で失敗しても一覧に残り、再実行できるようにするため。
+ *
+ * 画像の削除は deleteImagesForProject にまとめている。1枚ずつ deleteImage を
+ * 呼ぶと、枚数分の招待取得と imageCount 更新が発生する（招待は既に消えているので
+ * どちらも無駄）。
+ *
+ * @throws 画像の削除に失敗した場合。プロジェクトのドキュメントは残す。
+ */
+export const deleteProject = async (
+  projectId: string,
+  onProgress?: (progress: DeleteProgress) => void
+): Promise<void> => {
+  // 1. 招待を消す。アクセスを断つのが先。
   const invitations = await getInvitationsByProject(projectId);
-  for (const invitation of invitations) {
-    try {
-      await deleteInvitation(invitation.id);
-    } catch (error) {
-      console.warn(`Failed to delete invitation ${invitation.id}:`, error);
+  if (invitations.length > 0) {
+    const writer = createBatchWriter(db);
+    for (const invitation of invitations) {
+      await writer.delete(doc(db, INVITATIONS_COLLECTION, invitation.id));
     }
+    await writer.flush();
   }
 
-  // Delete project document
-  const docRef = doc(db, PROJECTS_COLLECTION, projectId);
-  await deleteDoc(docRef);
+  // 2. 画像と、それに紐づく Storage のファイル・お気に入りを消す。
+  const images = await getImagesByProject(projectId);
+  await deleteImagesForProject(projectId, images, onProgress);
+
+  // 3. プロジェクト本体。ここまで来て初めて消す。
+  await deleteDoc(doc(db, PROJECTS_COLLECTION, projectId));
 };
 
 export const PROJECT_LIFETIME_DAYS = 20;

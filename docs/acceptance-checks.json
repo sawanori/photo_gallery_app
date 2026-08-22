@@ -1,0 +1,229 @@
+{
+  "feature": "招待制ギャラリーのセキュリティ修正と配信品質改善",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "web /gallery/{token}（主要ユーザーフロー）",
+      "rule": "有効な招待リンクを開くと、その招待の imageIds に含まれる画像のみが一覧表示される",
+      "expected_result": "画像が表示され、枚数が招待の imageIds 件数と一致する",
+      "manual_or_automated": "manual",
+      "verification_method": "本番の有効な招待リンクをブラウザで開き、表示枚数を admin の招待詳細の画像数と突き合わせる"
+    },
+    {
+      "id": "check_002",
+      "target": "web /gallery/{token}（表示順）",
+      "rule": "表示順が admin のアップロード順（ファイル名の自然順）と一致し、IMG_2 が IMG_10 より前に来る",
+      "expected_result": "数値を含むファイル名が桁数に依らず昇順に並ぶ",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/utils/naturalSort.test.ts で IMG_2 / IMG_10 / IMG_100 の並びを検証し、cd web && npm test で実行する"
+    },
+    {
+      "id": "check_003",
+      "target": "Firestore ルール: invitations の list",
+      "rule": "匿名認証のみのクライアントは invitations コレクションをクエリできない",
+      "expected_result": "permission-denied エラーになる",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで匿名サインイン後に getDocs(collection(db,'invitations')) を実行し、permission-denied を確認する（task_016 実施後は自動テストに置き換える）"
+    },
+    {
+      "id": "check_004",
+      "target": "Firestore ルール: images の list",
+      "rule": "匿名認証のみのクライアントは images コレクションをクエリできない",
+      "expected_result": "permission-denied エラーになる",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで匿名サインイン後に getDocs(collection(db,'images')) を実行し、permission-denied を確認する"
+    },
+    {
+      "id": "check_005",
+      "target": "Firestore ルール: invitations の単一取得",
+      "rule": "有効な token を知っているクライアントは invitations/{token} を取得できる",
+      "expected_result": "ドキュメントが取得できる",
+      "manual_or_automated": "manual",
+      "verification_method": "有効な招待リンクを開き、ギャラリーが表示されることで間接的に確認する"
+    },
+    {
+      "id": "check_006",
+      "target": "Firestore ルール: 無効化された招待",
+      "rule": "isActive が false の招待は単一ドキュメント取得も拒否される",
+      "expected_result": "permission-denied となり、web は汎用エラー画面を表示する",
+      "manual_or_automated": "manual",
+      "verification_method": "admin の招待詳細でトグルを無効にしてからそのリンクを開き、エラー画面が出ること・コンソールに未処理例外が出ないことを確認する"
+    },
+    {
+      "id": "check_007",
+      "target": "Firestore ルール: 期限切れの招待",
+      "rule": "expiresAt が過去の招待は単一ドキュメント取得も拒否される",
+      "expected_result": "permission-denied となり、web は汎用エラー画面を表示する",
+      "manual_or_automated": "manual",
+      "verification_method": "テスト用招待の expiresAt を過去日に更新してからリンクを開き、エラー画面を確認する"
+    },
+    {
+      "id": "check_008",
+      "target": "web のエラー表示（認可の副作用）",
+      "rule": "招待が取得できない場合、理由を区別せず単一の汎用メッセージを表示する",
+      "expected_result": "「このリンクは無効か、有効期限が切れています。」が表示され、Firebase の例外メッセージが露出しない",
+      "manual_or_automated": "manual",
+      "verification_method": "無効化・期限切れ・存在しない token の3ケースで同一文言になることを確認する"
+    },
+    {
+      "id": "check_009",
+      "target": "Firestore ルール: likes の read",
+      "rule": "匿名クライアントは他人の like を列挙できない",
+      "expected_result": "自分の userId 以外を含むクエリが permission-denied になる",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで匿名サインイン後に likes コレクション全件のクエリを試し、permission-denied を確認する"
+    },
+    {
+      "id": "check_010",
+      "target": "Firestore ルール: likeCount の更新",
+      "rule": "likeCount を ±1 以外の差分で更新できない",
+      "expected_result": "任意値への更新が permission-denied になる",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで updateDoc により likeCount を 9999 に設定しようとして拒否されることを確認する。rules が increment 変換後の値を参照できず判定不能と判明した場合は、hasValidSession() を持たないクライアントからの更新が拒否されることまでを確認し、plan と本チェックを更新する"
+    },
+    {
+      "id": "check_011",
+      "target": "web /gallery/{token} と /liked の metadata",
+      "rule": "ギャラリー系ページは検索エンジンにインデックスされない",
+      "expected_result": "レスポンス HTML に noindex が含まれる",
+      "manual_or_automated": "manual",
+      "verification_method": "cd web && npm run build 後に該当ページの HTML を確認、またはデプロイ後に curl でメタタグを確認する"
+    },
+    {
+      "id": "check_012",
+      "target": "いいね（データベース挙動）",
+      "rule": "お気に入り登録で likes/{invitationId}_{imageId} が作られ、invitationId フィールドを持つ",
+      "expected_result": "ドキュメントIDが招待単位になり、invitationId が保存されている",
+      "manual_or_automated": "manual",
+      "verification_method": "web でお気に入りを付け、Firebase コンソールで likes ドキュメントのIDとフィールドを確認する"
+    },
+    {
+      "id": "check_013",
+      "target": "いいねの端末間共有（主要ユーザーフロー）",
+      "rule": "同じ招待リンクを別ブラウザ（別の匿名UID）で開くと、既存のお気に入りが反映される",
+      "expected_result": "先に付けたお気に入りがハイライト表示され、/liked に表示される",
+      "manual_or_automated": "manual",
+      "verification_method": "通常ウィンドウとシークレットウィンドウで同一リンクを開いて比較する"
+    },
+    {
+      "id": "check_014",
+      "target": "いいね解除",
+      "rule": "お気に入り解除で like ドキュメントが削除され likeCount が 1 減る",
+      "expected_result": "解除後に再読み込みしても解除状態が保たれる",
+      "manual_or_automated": "manual",
+      "verification_method": "web で解除後にリロードし、Firebase コンソールで likeCount を確認する"
+    },
+    {
+      "id": "check_015",
+      "target": "セッションの招待切り替え",
+      "rule": "同一ブラウザで2つ目の招待を開くと sessions.invitationId が更新され、その招待の accessCount が増える",
+      "expected_result": "sessions ドキュメントの invitationId が2つ目の招待IDになり、accessCount が 1 増える",
+      "manual_or_automated": "manual",
+      "verification_method": "招待A→招待Bの順に開き、Firebase コンソールで sessions と invitations の値を確認する"
+    },
+    {
+      "id": "check_016",
+      "target": "admin 招待詳細の選定結果",
+      "rule": "クライアントが選定した画像の枚数とサムネイルが表示される",
+      "expected_result": "選定枚数が likes の件数と一致し、該当画像のサムネイルが並ぶ",
+      "manual_or_automated": "manual",
+      "verification_method": "web で3枚お気に入りにした後、admin の招待詳細を開いて枚数と画像を突き合わせる"
+    },
+    {
+      "id": "check_017",
+      "target": "admin 招待詳細の空状態",
+      "rule": "選定が0件のとき空状態が表示され、エラーにならない",
+      "expected_result": "「まだ選定されていません」相当の空表示になる",
+      "manual_or_automated": "automated",
+      "verification_method": "admin/src/app/admin/projects/[projectId]/invitations/[id]/__tests__/page.test.tsx に0件時のケースを追加し、cd admin && npx vitest run で実行する"
+    },
+    {
+      "id": "check_018",
+      "target": "admin 招待詳細のファイル名コピー",
+      "rule": "選定画像のファイル名一覧をクリップボードにコピーできる",
+      "expected_result": "コピー後にペーストするとファイル名が改行区切りで得られる",
+      "manual_or_automated": "manual",
+      "verification_method": "ボタンを押してテキストエディタに貼り付けて内容を確認する"
+    },
+    {
+      "id": "check_019",
+      "target": "/api/image のレスポンスヘッダ（API 挙動）",
+      "rule": "CDN でキャッシュされるヘッダが付与されている",
+      "expected_result": "Cache-Control に s-maxage が含まれ、Vary: Accept が維持されている",
+      "manual_or_automated": "manual",
+      "verification_method": "デプロイ後に curl -I で /api/image?url=... のヘッダを確認し、2回目のリクエストがキャッシュから返ることを確認する"
+    },
+    {
+      "id": "check_020",
+      "target": "/api/image のエラーハンドリング（API 挙動の回帰）",
+      "rule": "許可外ホスト・非HTTPS・非画像・サイズ超過の各ケースが従来どおり拒否される",
+      "expected_result": "それぞれ 403 / 400 / 400 / 413 が返る",
+      "manual_or_automated": "manual",
+      "verification_method": "curl で許可外ホストの URL、http:// の URL、画像でない URL を渡してステータスコードを確認する"
+    },
+    {
+      "id": "check_021",
+      "target": "フォント読み込み",
+      "rule": "外部 Google Fonts のスタイルシート読み込みが無く、見た目が従来と同一である",
+      "expected_result": "HTML に fonts.googleapis.com への stylesheet link が無く、フォントの表示が変わらない",
+      "manual_or_automated": "manual",
+      "verification_method": "デプロイ後に DevTools の Network でフォント要求元を確認し、変更前のスクリーンショットと見比べる"
+    },
+    {
+      "id": "check_022",
+      "target": "ZIP 一括ダウンロード（主要ユーザーフロー）",
+      "rule": "全画像を取得後に生成フェーズが表示され、無圧縮格納の ZIP が保存される",
+      "expected_result": "「ZIPを作成中」が表示され、生成された ZIP を展開すると全画像が揃っている",
+      "manual_or_automated": "manual",
+      "verification_method": "デスクトップで一括ダウンロードを実行し、unzip -v で圧縮方式が Stored であることを確認する"
+    },
+    {
+      "id": "check_023",
+      "target": "ZIP ダウンロードのキャンセル（回帰）",
+      "rule": "取得中にキャンセルすると処理が中断し、ファイルが保存されない",
+      "expected_result": "モーダルが閉じ、ダウンロードが発生しない",
+      "manual_or_automated": "manual",
+      "verification_method": "取得中にキャンセルボタンを押して挙動を確認する"
+    },
+    {
+      "id": "check_024",
+      "target": "モバイルレイアウトと保存動作（回帰）",
+      "rule": "iOS Safari と Android Chrome でギャラリー表示・お気に入り・単体ダウンロードが従来どおり動作する",
+      "expected_result": "画像が白抜けせず表示され、保存ガイドが従来どおり出る",
+      "manual_or_automated": "manual",
+      "verification_method": "実機またはブラウザのデバイスエミュレーションで /gallery/{token} を開き、単体ダウンロードと保存ガイド表示を確認する"
+    },
+    {
+      "id": "check_025",
+      "target": "既存招待リンクの継続性（回帰・移行の要）",
+      "rule": "招待IDのトークン化移行後も、移行前に配布したリンクがそのまま開ける",
+      "expected_result": "移行前から存在する招待リンクでギャラリーが表示される",
+      "manual_or_automated": "manual",
+      "verification_method": "移行スクリプト実行前に既存リンクを1本記録し、実行後に同じ URL を開いて表示を確認する"
+    },
+    {
+      "id": "check_026",
+      "target": "ユニットテスト（ビルド・型・lint 検証）",
+      "rule": "web と admin のテストが全パスし、ビルドが成功する",
+      "expected_result": "web は 22 テスト以上が全パス、admin は 103 テストが全パス、両プロジェクトの build が成功",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm test、cd admin && npx vitest run、cd web && npm run build、cd admin && npm run build を実行する"
+    },
+    {
+      "id": "check_027",
+      "target": "lint のリグレッション（ビルド・型・lint 検証）",
+      "rule": "web の lint エラー数がベースラインを超えない",
+      "expected_result": "cd web && npm run lint のエラー数が 16 以下である",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm run lint を実行し、末尾のサマリ行の errors 数をベースライン 16 と比較する"
+    },
+    {
+      "id": "check_028",
+      "target": "admin の npm スクリプト（ビルド・型・lint 検証）",
+      "rule": "admin で lint と test が npm スクリプトから実行できる",
+      "expected_result": "cd admin && npm run lint がディレクトリエラーを出さずに実行され、cd admin && npm test が 103 テストパスで完了する",
+      "manual_or_automated": "automated",
+      "verification_method": "cd admin && npm run lint と cd admin && npm test を実行する"
+    }
+  ]
+}

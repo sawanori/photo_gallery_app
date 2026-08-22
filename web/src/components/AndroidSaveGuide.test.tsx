@@ -16,6 +16,8 @@ describe('AndroidSaveGuide', () => {
   });
 
   afterEach(() => {
+    delete window.__NATIVE_GALLERY__;
+    delete window.ReactNativeWebView;
     vi.restoreAllMocks();
   });
 
@@ -52,5 +54,12 @@ describe('AndroidSaveGuide', () => {
 
     expect(screen.queryByText('写真を保存するには')).not.toBeInTheDocument();
     expect(localStorage.getItem('android_save_guide_dismissed')).toBe('1');
+  });
+
+  it('ネイティブシェル内では表示しない', () => {
+    vi.mocked(isAndroid).mockReturnValue(true);
+    window.ReactNativeWebView = { postMessage: vi.fn() };
+    render(<AndroidSaveGuide />);
+    expect(screen.queryByText('写真を保存するには')).not.toBeInTheDocument();
   });
 });

@@ -14,20 +14,38 @@ import { db } from '@/lib/firebase';
 const LIKES_COLLECTION = 'likes';
 const IMAGES_COLLECTION = 'images';
 
-const getLikeId = (userId: string, imageId: string): string => {
-  return `${userId}_${imageId}`;
+/**
+ * お気に入りは「招待」に紐づける。匿名 UID には紐づけない。
+ *
+ * 匿名 UID を鍵にすると、同じ招待リンクでもブラウザとアプリ、あるいは端末が変わるだけで
+ * 別人として扱われ、クライアントがブラウザで選んだお気に入りがアプリでは空になる。
+ * WebView は Safari と別のストレージを持つため、ネイティブアプリでは必ずこれが起きる。
+ *
+ * 招待 ID（＝招待トークン）を鍵にすることで、同じリンクを開いた人どうしで
+ * 選定結果が共有される。納品の流れとしてはこちらが正しい。
+ */
+const getLikeId = (invitationId: string, imageId: string): string => {
+  return `${invitationId}_${imageId}`;
 };
 
-export const hasLiked = async (userId: string, imageId: string): Promise<boolean> => {
-  const likeId = getLikeId(userId, imageId);
-  const docRef = doc(db, LIKES_COLLECTION, likeId);
+export const hasLiked = async (
+  invitationId: string,
+  imageId: string
+): Promise<boolean> => {
+  const docRef = doc(db, LIKES_COLLECTION, getLikeId(invitationId, imageId));
   const docSnap = await getDoc(docRef);
   return docSnap.exists();
 };
 
-export const likeImage = async (userId: string, imageId: string): Promise<void> => {
-  const likeId = getLikeId(userId, imageId);
-  const likeRef = doc(db, LIKES_COLLECTION, likeId);
+/**
+ * @param userId 最後に操作した匿名 UID。監査用に残すだけで、鍵には使わない。
+ */
+export const likeImage = async (
+  invitationId: string,
+  imageId: string,
+  userId: string
+): Promise<void> => {
+  const likeRef = doc(db, LIKES_COLLECTION, getLikeId(invitationId, imageId));
   const imageRef = doc(db, IMAGES_COLLECTION, imageId);
 
   await runTransaction(db, async (transaction) => {
@@ -35,8 +53,9 @@ export const likeImage = async (userId: string, imageId: string): Promise<void> 
     if (likeDoc.exists()) throw new Error('Already liked');
 
     transaction.set(likeRef, {
-      userId,
+      invitationId,
       imageId,
+      userId,
       createdAt: serverTimestamp(),
     });
     transaction.update(imageRef, {
@@ -45,9 +64,11 @@ export const likeImage = async (userId: string, imageId: string): Promise<void> 
   });
 };
 
-export const unlikeImage = async (userId: string, imageId: string): Promise<void> => {
-  const likeId = getLikeId(userId, imageId);
-  const likeRef = doc(db, LIKES_COLLECTION, likeId);
+export const unlikeImage = async (
+  invitationId: string,
+  imageId: string
+): Promise<void> => {
+  const likeRef = doc(db, LIKES_COLLECTION, getLikeId(invitationId, imageId));
   const imageRef = doc(db, IMAGES_COLLECTION, imageId);
 
   await runTransaction(db, async (transaction) => {
@@ -61,22 +82,25 @@ export const unlikeImage = async (userId: string, imageId: string): Promise<void
   });
 };
 
-export const toggleLike = async (userId: string, imageId: string): Promise<boolean> => {
-  const liked = await hasLiked(userId, imageId);
+export const toggleLike = async (
+  invitationId: string,
+  imageId: string,
+  userId: string
+): Promise<boolean> => {
+  const liked = await hasLiked(invitationId, imageId);
   if (liked) {
-    await unlikeImage(userId, imageId);
+    await unlikeImage(invitationId, imageId);
     return false;
-  } else {
-    await likeImage(userId, imageId);
-    return true;
   }
+  await likeImage(invitationId, imageId, userId);
+  return true;
 };
 
-export const getLikedImageIds = async (userId: string): Promise<string[]> => {
+export const getLikedImageIds = async (invitationId: string): Promise<string[]> => {
   const q = query(
     collection(db, LIKES_COLLECTION),
-    where('userId', '==', userId)
+    where('invitationId', '==', invitationId)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((doc) => doc.data().imageId);
+  return snapshot.docs.map((likeDoc) => likeDoc.data().imageId);
 };

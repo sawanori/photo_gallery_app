@@ -26,6 +26,20 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/sessions/$(request.auth.uid));
     }
 
+    /**
+     * このセッションが開いている招待の ID。
+     * お気に入りの読み書きを、その招待の範囲に閉じ込めるために使う。
+     */
+    function sessionInvitationId() {
+      return get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data.invitationId;
+    }
+
+    /** likeCount の変化が ±1 か。任意の値への書き換えを封じる。 */
+    function likeCountDeltaValid() {
+      return request.resource.data.likeCount == resource.data.likeCount + 1 ||
+             request.resource.data.likeCount == resource.data.likeCount - 1;
+    }
+
     function onlyLikeCountChanged() {
       let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
       return affectedKeys.size() == 0 || affectedKeys.hasOnly(['likeCount']);
@@ -33,9 +47,27 @@ service cloud.firestore {
 
     // Users collection
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isOwner(userId) || isAdmin();
+      // read を get / list に分ける。read のままだと list も許可され、
+      // 匿名認証しただけの第三者が管理者のメールアドレスと役割を列挙できる
+      // （2026-08-17 に実際に列挙できることを確認した）。
+      // web は users を一切読まない。admin は自分自身の取得と管理者としての一覧のみ。
+      //
+      // **role を自分で書けてはいけない。** isAdmin() はこのドキュメントの role
+      // だけを見るため、自分の users ドキュメントを role: 'admin' で作れると、
+      // 匿名認証しただけの第三者がそのまま管理者になり、招待を全件列挙して
+      // トークンを平文で収穫できる。2026-08-17 の list 制限が丸ごと無意味になる。
+      // 2026-08-22 のレビューで発覚し、ここで塞いだ。
+      //
+      // 昇格は管理者のみが行う（admin/src/services/userService.ts の updateUserRole）。
+      // クライアントから users を作る経路は現在存在しない（管理者は Firebase
+      // コンソールで作っている）が、将来の signUp のために create 自体は残す。
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId &&
+        request.resource.data.role == 'user';
+      allow update: if isAdmin() ||
+        (isOwner(userId) &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
       allow delete: if isAdmin();
     }
 
@@ -46,27 +78,70 @@ service cloud.firestore {
 
     // Images collection
     match /images/{imageId} {
-      allow read: if isAuthenticated();
+      // 単体取得は許可し、列挙は管理者のみにする。
+      // web は招待に含まれる imageId で1件ずつ取得しており、コレクションクエリは使わない
+      // （web/src/services 配下に images への getDocs は無いことを確認済み）。
+      // admin は projectId などで絞ったクエリを使うが、管理者として実行される。
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
       allow create: if isRegisteredUser() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
-      allow update: if isAuthenticated() &&
-        (resource.data.userId == request.auth.uid || isAdmin() ||
-         (onlyLikeCountChanged() && isAuthenticated()));
+      // likeCount だけは招待の閲覧者にも書かせる必要がある（お気に入り機能）。
+      // ただし以前は「likeCount だけの変更なら誰でも可」で、匿名認証しただけの
+      // 第三者が任意の値に書き換えられた。有効なセッションを持つことと、
+      // 変化量が ±1 であることを要求する。
+      allow update: if isAdmin() ||
+        (isAuthenticated() && resource.data.userId == request.auth.uid) ||
+        (hasValidSession() && onlyLikeCountChanged() && likeCountDeltaValid());
       allow delete: if resource.data.userId == request.auth.uid || isAdmin();
     }
 
     // Likes collection
     match /likes/{likeId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() &&
-        request.resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      // お気に入りは招待に紐づく。匿名 UID には紐づけない。
+      // UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
+      // クライアントがブラウザで選んだお気に入りがアプリで消える。
+      //
+      // 読み書きできるのは、そのセッションが開いている招待の分だけ。
+      // 招待 ID は招待トークンそのものなので、これを知っている＝ギャラリーを
+      // 開ける立場であり、その範囲を超えた情報は得られない。
+      allow get: if isAuthenticated();
+      allow list: if isAdmin() ||
+        (hasValidSession() && resource.data.invitationId == sessionInvitationId());
+      allow create: if hasValidSession() &&
+        request.resource.data.invitationId == sessionInvitationId() &&
+        request.resource.data.imageId is string &&
+        likeId == request.resource.data.invitationId + '_' + request.resource.data.imageId;
+      // 管理者にも削除を許す。画像を削除したとき、その画像に付いたお気に入りも
+      // 一緒に消す必要があるため。2026-08-17 に read を get / list へ分けた際、
+      // delete から isAdmin() が抜け落ちていた。その結果、管理画面からの画像削除で
+      // お気に入りの削除だけが permission-denied で失敗し、try-catch に握り潰されて
+      // 表に出ないまま孤児が溜まっていた。
+      allow delete: if isAdmin() ||
+        (hasValidSession() && resource.data.invitationId == sessionInvitationId());
     }
 
     // Invitations collection
     match /invitations/{invitationId} {
-      allow read: if isAuthenticated();
+      // ドキュメント ID は招待トークンそのもの。
+      //
+      // list を禁止するのが要点。read のままだと list も許可され、匿名認証しただけの
+      // 第三者が招待を全件列挙して token を平文で収穫できる。つまり第三者が
+      // 全クライアントのギャラリーを開けてしまう
+      // （2026-08-17 に実際に列挙できることを確認し、この変更で塞いだ）。
+      //
+      // web は token をドキュメント ID として単一取得（get）するため list は不要。
+      // admin は一覧表示のために list を使うので管理者には許可する。
+      //
+      // get の条件に isActive と expiresAt を入れているのは、無効化・期限切れの招待を
+      // Firestore の側でも拒否するため。web 側の validateInvitation だけに頼らない。
+      // 拒否されたことと存在しないことは web 側で同じ結果に正規化している。
+      allow get: if isAdmin() ||
+        (isAuthenticated() &&
+         resource.data.isActive == true &&
+         resource.data.expiresAt > request.time);
+      allow list: if isAdmin();
       allow create: if isAdmin() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
@@ -80,8 +155,13 @@ service cloud.firestore {
     match /sessions/{sessionId} {
       allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == sessionId);
       allow create: if isAuthenticated() && request.auth.uid == sessionId;
+      // invitationId の更新を許す。招待のドキュメント ID をトークンに移行したため、
+      // 移行前に作られたセッションは古い ID を持っており、そのままだと
+      // お気に入りの読み取りが自分の招待と一致しなくなる。
+      // create で任意の invitationId を書けるので、update を許しても強度は変わらない。
       allow update: if isAuthenticated() && request.auth.uid == sessionId &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastAccessedAt']);
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['lastAccessedAt', 'invitationId']);
       allow delete: if isAdmin();
     }
   }

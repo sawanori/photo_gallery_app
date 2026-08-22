@@ -1,0 +1,213 @@
+{
+  "feature": "アプリのID＋合言葉サインイン",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "アプリのサインイン画面",
+      "rule": "正しい ID と合言葉を入力するとギャラリーが開く",
+      "expected_result": "写真一覧が表示され、ヘッダーが「すべて保存」になる",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機でアプリを起動し、管理画面で発行した ID と合言葉を入力する"
+    },
+    {
+      "id": "check_002",
+      "target": "アプリのサインイン画面",
+      "rule": "合言葉が違うとサインインできない",
+      "expected_result": "「ID または合言葉が違います」と表示され、ギャラリーは開かない",
+      "manual_or_automated": "manual",
+      "verification_method": "正しい ID と誤った合言葉を入力する"
+    },
+    {
+      "id": "check_003",
+      "target": "POST /api/native/signin",
+      "rule": "存在しない ID と、合言葉違いを区別しない",
+      "expected_result": "どちらも 401 unauthorized。応答本文が完全に一致する",
+      "manual_or_automated": "automated",
+      "verification_method": "signinService.test.ts で resolveSignIn の戻り値が toEqual で一致することを検証する。加えて curl で応答を目視比較する"
+    },
+    {
+      "id": "check_004",
+      "target": "POST /api/native/signin",
+      "rule": "ロックアウトは存在しない",
+      "expected_result": "同一 ID・合言葉の組で何度失敗しても、レート制限に達しない限り常に同じ 401 unauthorized が返り、429 locked のような専用の状態にはならない",
+      "manual_or_automated": "automated",
+      "verification_method": "signinService.ts のコードに failedAttempts / lockedUntil に相当するフィールド・分岐が存在しないことをコードレビューで確認する"
+    },
+    {
+      "id": "check_005",
+      "target": "POST /api/native/signin",
+      "rule": "Firestore ベースのレート制限が閾値超過で 429 を返す",
+      "expected_result": "1分間に31回目以降のリクエストが 429 rate_limited になる",
+      "manual_or_automated": "automated",
+      "verification_method": "signInRateLimiter.test.ts で閾値到達時に limited: true が返ることを検証する"
+    },
+    {
+      "id": "check_006",
+      "target": "POST /api/native/signin",
+      "rule": "無効化された招待・期限切れの招待ではサインインできない",
+      "expected_result": "403 forbidden。manifest API と同じ判定（isActive / expiresAt / 作成から7日）になる",
+      "manual_or_automated": "automated",
+      "verification_method": "signinService.test.ts で isActive=false、expiresAt 過去、createdAt が8日前の3通りを検証する"
+    },
+    {
+      "id": "check_007",
+      "target": "POST /api/native/signin",
+      "rule": "全応答に Cache-Control: no-store が付く",
+      "expected_result": "成功・失敗いずれも cache-control: no-store",
+      "manual_or_automated": "manual",
+      "verification_method": "curl -D - で 200 / 400 / 401 / 403 / 429 の各応答ヘッダーを確認する"
+    },
+    {
+      "id": "check_008",
+      "target": "Firestore ルール",
+      "rule": "invitationCredentials はクライアントから list できない",
+      "expected_result": "匿名認証済みのクライアントからの getDocs(collection(db,'invitationCredentials')) が permission-denied になる",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで匿名サインイン後に getDocs(collection(db,'invitationCredentials')) を実行する"
+    },
+    {
+      "id": "check_009",
+      "target": "Firestore ルール",
+      "rule": "invitationCredentials への書き込みは管理者のみ",
+      "expected_result": "管理者以外の setDoc / deleteDoc が permission-denied になる",
+      "manual_or_automated": "manual",
+      "verification_method": "role が admin でないユーザーで setDoc(doc(db,'invitationCredentials','x'), {...}) を試す"
+    },
+    {
+      "id": "check_010",
+      "target": "管理画面の招待作成",
+      "rule": "招待を作成すると ID と合言葉が表示される",
+      "expected_result": "モーダルに ID・合言葉・ギャラリーURL の3つが並び、それぞれコピーできる",
+      "manual_or_automated": "manual",
+      "verification_method": "管理画面で招待を1件作成する"
+    },
+    {
+      "id": "check_011",
+      "target": "管理画面の招待作成",
+      "rule": "発行した ID と合言葉で実際にサインインできる",
+      "expected_result": "表示された値をアプリに入力するとギャラリーが開く",
+      "manual_or_automated": "manual",
+      "verification_method": "check_010 で発行した値をそのままアプリに入力する"
+    },
+    {
+      "id": "check_012",
+      "target": "管理画面の招待詳細",
+      "rule": "『合言葉を再発行』は古い ID を無効化するが、既にサインイン済みの端末は影響を受けない",
+      "expected_result": "再発行後、古い ID・合言葉での新規サインインは 401 になる。一方、再発行前に既にサインインしてトークンを保存済みの端末は、アプリを再起動してもそのままギャラリーが開く",
+      "manual_or_automated": "manual",
+      "verification_method": "1台の端末で先にサインインしておき、その後管理画面で再発行し、(a) 別端末で古い ID・合言葉のサインインが失敗すること、(b) 元の端末はアプリ再起動後もサインイン画面を経ずに開くことの両方を確認する"
+    },
+    {
+      "id": "check_013",
+      "target": "管理画面の招待詳細",
+      "rule": "『アクセスを無効化』はリンクと保存済みトークンの両方を無効化する",
+      "expected_result": "無効化後、旧トークンでの /gallery/{token} も、保存済みトークンでの再起動時の自動表示も、どちらも開けなくなる",
+      "manual_or_automated": "manual",
+      "verification_method": "サインイン済みの端末がある状態で『アクセスを無効化』を実行し、(a) 旧ギャラリーURLをブラウザで開くとエラーになること、(b) 端末のアプリを再起動しても開けないことを確認する"
+    },
+    {
+      "id": "check_014",
+      "target": "管理画面の招待詳細",
+      "rule": "合言葉は再表示されない",
+      "expected_result": "詳細画面に ID は出るが、合言葉は表示されない",
+      "manual_or_automated": "manual",
+      "verification_method": "発行済みの招待の詳細画面を開く"
+    },
+    {
+      "id": "check_015",
+      "target": "アプリの起動分岐",
+      "rule": "招待リンクからの起動が従来どおり動く",
+      "expected_result": "photogallery://gallery/{token} でギャラリーが開き、サインイン画面は出ない",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機で Safari からカスタムスキームを開く"
+    },
+    {
+      "id": "check_016",
+      "target": "アプリの起動分岐",
+      "rule": "保存済みトークンがあり起動リンクが無い場合、サインイン画面を経ずにギャラリーが開く",
+      "expected_result": "アプリを終了して再起動してもサインイン画面を経ずにギャラリーが出る",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/navigation/launchDecision.test.ts で hasSavedToken=true・hasDeepLink=false のとき 'gallery' が返ることを検証する。加えて実機でアプリを終了・再起動して確認する"
+    },
+    {
+      "id": "check_017",
+      "target": "アプリのサインイン画面",
+      "rule": "合言葉はハイフン付きでも無しでも通る",
+      "expected_result": "7fk2-p9wm-3xqa と 7fk2p9wm3xqa のどちらでもサインインできる",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/auth/signIn.test.ts と web/src/services/passphrase.test.ts で normalize の結果が一致することを検証する"
+    },
+    {
+      "id": "check_018",
+      "target": "アプリのサインイン画面",
+      "rule": "紛らわしい文字（0/1/i/l/o）を入力すると送信前に案内される",
+      "expected_result": "「入力できない文字が含まれています」と表示され、通信が発生しない",
+      "manual_or_automated": "automated",
+      "verification_method": "mobile/src/auth/signIn.test.ts で不正文字を含む入力に対し fetch が呼ばれず reason:'invalid_chars' が返ることを検証する"
+    },
+    {
+      "id": "check_019",
+      "target": "アプリのサインイン画面",
+      "rule": "キーボードで入力欄が隠れない",
+      "expected_result": "キーボード表示中も ID・合言葉の入力欄と「開く」ボタンが見える",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機で入力欄をタップする"
+    },
+    {
+      "id": "check_020",
+      "target": "アプリのサインイン画面",
+      "rule": "通信失敗時に利用者へ伝わる",
+      "expected_result": "機内モードで送信すると「通信に失敗しました」と表示され、画面が固まらない",
+      "manual_or_automated": "manual",
+      "verification_method": "iOS 実機を機内モードにして送信する"
+    },
+    {
+      "id": "check_021",
+      "target": "既存の招待",
+      "rule": "認証情報を発行していない招待が従来どおり開く",
+      "expected_result": "リンク方式で開き、保存も従来どおり動く",
+      "manual_or_automated": "manual",
+      "verification_method": "発行前の既存招待をリンクから開いて保存を試す"
+    },
+    {
+      "id": "check_022",
+      "target": "未解決の前提条件",
+      "rule": "匿名クライアントから invitations の list が permission-denied になる",
+      "expected_result": "getDocs(collection(db,'invitations')) が permission-denied になる。ただしこれは別計画（docs/implementation-plan.md task_001/task_002）の完了に依存する。「未解決の前提条件」で (b) を選んだ場合、この項目は未達のまま記録し、リリースの妨げにはしない",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザのコンソールで匿名サインイン後に getDocs(collection(db,'invitations')) を実行する"
+    },
+    {
+      "id": "check_023",
+      "target": "web と admin の相互運用",
+      "rule": "web（Node crypto）と admin（Web Crypto）が同じ入力から同じ credentialKey を計算する",
+      "expected_result": "docs/app-signin/credential-test-vectors.json の全件で両実装の出力が一致する",
+      "manual_or_automated": "automated",
+      "verification_method": "web/src/services/passphrase.test.ts と admin/src/services/__tests__/credentialService.test.ts の両方が同じ credential-test-vectors.json を読み込んで検証する"
+    },
+    {
+      "id": "check_024",
+      "target": "回帰",
+      "rule": "写真の保存機能に影響が無い",
+      "expected_result": "単体保存と一括保存が従来どおり動作する",
+      "manual_or_automated": "manual",
+      "verification_method": "サインイン経由で開いたギャラリーで単体保存と一括保存を実行する"
+    },
+    {
+      "id": "check_025",
+      "target": "回帰",
+      "rule": "manifestService.ts の変更が既存の manifest 挙動を壊していない",
+      "expected_result": "isUsable の export 以外の挙動変更が無い",
+      "manual_or_automated": "automated",
+      "verification_method": "既存の web/src/services/manifestService.test.ts が全件通ることを確認する"
+    },
+    {
+      "id": "check_026",
+      "target": "ビルドと静的検査",
+      "rule": "全ワークスペースの検証コマンドが通る",
+      "expected_result": "既存のエラー件数を増やさない（web の lint はベースライン15件、docs/native-app/device-test-log.md 記載の水準）",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm run lint && npm test && npm run build / cd admin && npm run lint && npx vitest run && npm run build / cd mobile && npm run typecheck && npm test"
+    }
+  ]
+}

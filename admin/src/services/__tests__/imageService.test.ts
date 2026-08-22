@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mockFirestore, mockStorage, mockTransaction } from '../../test/mocks/firebase';
+import { mockFirestore, mockStorage, mockTransaction, mockBatch } from '../../test/mocks/firebase';
 import { createMockDocSnapshot, createMockQuerySnapshot, sampleImage, sampleInvitation } from '../../test/fixtures';
 
 // --- invitationService モック ---
@@ -18,6 +18,7 @@ vi.mock('firebase/firestore', () => ({
   addDoc: (...args: unknown[]) => mockFirestore.addDoc(...args),
   getDoc: (...args: unknown[]) => mockFirestore.getDoc(...args),
   getDocs: (...args: unknown[]) => mockFirestore.getDocs(...args),
+  setDoc: (...args: unknown[]) => mockFirestore.setDoc(...args),
   updateDoc: (...args: unknown[]) => mockFirestore.updateDoc(...args),
   deleteDoc: (...args: unknown[]) => mockFirestore.deleteDoc(...args),
   query: (...args: unknown[]) => mockFirestore.query(...args),
@@ -32,6 +33,7 @@ vi.mock('firebase/firestore', () => ({
   arrayUnion: (...args: unknown[]) => mockFirestore.arrayUnion(...args),
   Timestamp: mockFirestore.Timestamp,
   runTransaction: (...args: unknown[]) => mockFirestore.runTransaction(...args),
+  writeBatch: (...args: unknown[]) => mockFirestore.writeBatch(...args),
   DocumentSnapshot: vi.fn(),
   QueryDocumentSnapshot: vi.fn(),
 }));
@@ -59,102 +61,161 @@ beforeEach(async () => {
 });
 
 describe('imageService（projectId対応）', () => {
-  // --- uploadImage ---
-  describe('uploadImage', () => {
+  // --- uploadImageFile / assertProjectExists / finalizeUploadBatch ---
+  // 以前は uploadImage が1関数で「Storage 保存 + 画像作成 + imageCount 加算 + 招待同期」を
+  // すべて行っていた。同じドキュメントへの書き込みが枚数分集中して遅くなるため、
+  // 1枚ごとの処理（uploadImageFile）とバッチ単位の処理（finalizeUploadBatch）に分離した。
+
+  const THUMBS = [
+    { name: 'small' as const, blob: new Blob(['s']), width: 384 },
+    { name: 'medium' as const, blob: new Blob(['m']), width: 640 },
+  ];
+
+  const setupStorage = () => {
+    mockStorage.ref.mockReturnValue('storageRef');
+    mockStorage.uploadBytes.mockResolvedValue({});
+    mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
+    mockFirestore.collection.mockReturnValue('images-collection');
+    mockFirestore.doc.mockReturnValue({ id: 'new-image-id' });
+    mockFirestore.setDoc.mockResolvedValue(undefined);
+  };
+
+  describe('uploadImageFile', () => {
     it('projectIdフィールドを含むドキュメントを作成する', async () => {
       const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
-      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
+      setupStorage();
 
-      mockFirestore.collection.mockReturnValue('images-collection');
-      mockFirestore.doc.mockReturnValue('project-doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
+      await imageService.uploadImageFile(
+        'project-1', 'admin-uid', mockFile, THUMBS, 'テスト画像', '説明'
       );
 
-      // addDoc is no longer used, transaction.set is used instead
-      // But we need the function to succeed
-      mockFirestore.runTransaction.mockImplementation(async (_db: unknown, callback: (t: typeof mockTransaction) => Promise<unknown>) => {
-        return callback(mockTransaction);
-      });
-
-      // getDoc after transaction to return created image
-      mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
+      expect(mockFirestore.setDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
           projectId: 'project-1',
-          url: 'https://example.com/image.jpg',
-          storagePath: 'images/admin-uid/12345-abc',
           title: 'テスト画像',
           description: '説明',
           userId: 'admin-uid',
           likeCount: 0,
         })
       );
-
-      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト画像', '説明');
-
-      // transaction.set が projectId を含むデータで呼ばれたことを確認
-      expect(mockTransaction.set).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          projectId: 'project-1',
-          title: 'テスト画像',
-          description: '説明',
-          userId: 'admin-uid',
-        })
-      );
     });
 
     it('StorageにファイルをアップロードしダウンロードURLを取得する', async () => {
       const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
+      setupStorage();
       mockStorage.getDownloadURL.mockResolvedValue('https://example.com/uploaded.jpg');
-      mockFirestore.collection.mockReturnValue('images-collection');
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 0 })
-      );
-      mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
-          projectId: 'project-1', url: 'https://example.com/uploaded.jpg',
-          storagePath: 'images/admin-uid/x', title: 'テスト', userId: 'admin-uid', likeCount: 0,
-        })
-      );
 
-      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+      await imageService.uploadImageFile('project-1', 'admin-uid', mockFile, [], 'テスト');
 
-      expect(mockStorage.uploadBytes).toHaveBeenCalledWith('storageRef', mockFile);
+      expect(mockStorage.uploadBytes).toHaveBeenCalledWith('storageRef', mockFile, {
+        contentType: 'image/jpeg',
+      });
       expect(mockStorage.getDownloadURL).toHaveBeenCalledWith('storageRef');
     });
 
-    it('トランザクション内でimageCountをインクリメントする', async () => {
+    it('渡されたサムネイルをアップロードし、自前では生成しない', async () => {
       const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
-      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
-      mockFirestore.collection.mockReturnValue('images-collection');
+      setupStorage();
+
+      await imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト');
+
+      // 元画像1 + サムネイル2
+      expect(mockStorage.uploadBytes).toHaveBeenCalledTimes(3);
+      expect(mockStorage.uploadBytes).toHaveBeenCalledWith(
+        'storageRef', THUMBS[0].blob, { contentType: 'image/webp' }
+      );
+    });
+
+    // 分離の核心。ここで書くと同じドキュメントへの書き込みが枚数分集中する。
+    it('projects と invitations には一切書き込まない', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+
+      await imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト');
+
+      expect(mockFirestore.updateDoc).not.toHaveBeenCalled();
+      expect(mockFirestore.runTransaction).not.toHaveBeenCalled();
+      expect(mockGetActiveInvitationsByProject).not.toHaveBeenCalled();
+    });
+
+    // 往復削減。書いたばかりのドキュメントを読み直さない。
+    it('書き込み直後に getDoc で読み直さない', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+
+      await imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト');
+
+      expect(mockFirestore.getDoc).not.toHaveBeenCalled();
+    });
+
+    it('作成したドキュメントIDを含む Image を返す', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+
+      const result = await imageService.uploadImageFile(
+        'project-1', 'admin-uid', mockFile, [], 'テスト'
+      );
+
+      expect(result.id).toBe('new-image-id');
+      expect(result.projectId).toBe('project-1');
+      expect(result.url).toBe('https://example.com/image.jpg');
+    });
+  });
+
+  describe('assertProjectExists', () => {
+    it('プロジェクトが存在すれば何も起きない', async () => {
       mockFirestore.doc.mockReturnValue('project-doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 3 })
-      );
       mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
-          projectId: 'project-1', url: 'https://example.com/image.jpg',
-          storagePath: 'images/admin-uid/x', title: 'テスト', userId: 'admin-uid', likeCount: 0,
-        })
+        createMockDocSnapshot('project-1', { imageCount: 5 })
       );
 
-      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+      await expect(imageService.assertProjectExists('project-1')).resolves.toBeUndefined();
+    });
 
-      // transaction.update で imageCount を +1 する
-      expect(mockTransaction.update).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          imageCount: expect.anything(), // increment(1)
-        })
+    it('プロジェクトが存在しなければ Project not found を投げる', async () => {
+      mockFirestore.doc.mockReturnValue('project-doc-ref');
+      mockFirestore.getDoc.mockResolvedValue(createMockDocSnapshot('nope', null));
+
+      await expect(imageService.assertProjectExists('nope')).rejects.toThrow(
+        'Project not found'
       );
+    });
+  });
+
+  describe('finalizeUploadBatch', () => {
+    it('imageCount を件数分まとめて1回だけ加算する', async () => {
+      mockFirestore.doc.mockReturnValue('project-doc-ref');
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
+      mockGetActiveInvitationsByProject.mockResolvedValue([]);
+
+      await imageService.finalizeUploadBatch('project-1', ['a', 'b', 'c']);
+
+      expect(mockFirestore.increment).toHaveBeenCalledWith(3);
+      expect(mockFirestore.updateDoc).toHaveBeenCalledTimes(1);
+    });
+
+    it('IDが空なら何もしない', async () => {
+      await imageService.finalizeUploadBatch('project-1', []);
+
+      expect(mockFirestore.updateDoc).not.toHaveBeenCalled();
+      expect(mockGetActiveInvitationsByProject).not.toHaveBeenCalled();
+    });
+
+    it('imageCount の更新に失敗しても招待同期は実行し、例外を投げない', async () => {
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockFirestore.updateDoc
+        .mockRejectedValueOnce(new Error('count failed'))
+        .mockResolvedValue(undefined);
+      mockGetActiveInvitationsByProject.mockResolvedValue([
+        { ...sampleInvitation, id: 'inv-1' },
+      ]);
+
+      await expect(
+        imageService.finalizeUploadBatch('project-1', ['a'])
+      ).resolves.toBeUndefined();
+
+      expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
     });
   });
 
@@ -196,20 +257,30 @@ describe('imageService（projectId対応）', () => {
   });
 
   // --- deleteImage ---
+  // 削除の順序は Storage → お気に入り → 画像ドキュメント。
+  // 以前は Storage 削除とお気に入り検索がトランザクションのコールバック内にあった。
+  // トランザクションは競合すると丸ごと再実行されるため、中に外部への副作用を
+  // 置くと Storage の削除が何度も走る。
+  const setupDelete = (
+    data: Record<string, unknown> = { ...sampleImage, storagePath: 'images/admin-uid/12345-abc' },
+    likeIds: string[] = []
+  ) => {
+    const imageDoc = createMockDocSnapshot('image-1', data);
+    mockFirestore.doc.mockReturnValue('doc-ref');
+    mockFirestore.getDoc.mockResolvedValue(imageDoc);
+    mockFirestore.getDocs.mockResolvedValue(
+      createMockQuerySnapshot(likeIds.map((id) => ({ id, data: { imageId: 'image-1' } })))
+    );
+    mockFirestore.deleteDoc.mockResolvedValue(undefined);
+    mockTransaction.get.mockResolvedValue(imageDoc);
+    mockStorage.ref.mockReturnValue('storageRef');
+    mockStorage.deleteObject.mockResolvedValue(undefined);
+    return imageDoc;
+  };
+
   describe('deleteImage', () => {
     it('transaction.deleteで画像ドキュメントを削除する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
-        ...sampleImage,
-        storagePath: 'images/admin-uid/12345-abc',
-      });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc); // get image
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      ); // get project
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
+      setupDelete();
 
       await imageService.deleteImage('image-1');
 
@@ -217,19 +288,11 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('transaction.updateでプロジェクトのimageCountを-1する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       await imageService.deleteImage('image-1');
 
@@ -242,22 +305,74 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('Storageからファイルを削除する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
-        ...sampleImage,
-        storagePath: 'images/admin-uid/12345-abc',
-      });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
+      setupDelete();
 
       await imageService.deleteImage('image-1');
 
       expect(mockStorage.deleteObject).toHaveBeenCalledWith('storageRef');
+    });
+
+    it('サムネイルも削除する', async () => {
+      setupDelete({
+        ...sampleImage,
+        storagePath: 'images/admin-uid/12345-abc',
+        thumbnailPaths: [
+          'thumbnails/admin-uid/12345-abc_384.webp',
+          'thumbnails/admin-uid/12345-abc_640.webp',
+        ],
+      });
+
+      await imageService.deleteImage('image-1');
+
+      // 原本 + サムネイル2枚
+      expect(mockStorage.deleteObject).toHaveBeenCalledTimes(3);
+    });
+
+    it('Storageの削除を画像ドキュメントの削除より先に行う', async () => {
+      // 逆順にすると storagePath を失い、Storage 削除に失敗したファイルが
+      // 永久に孤児として残る。
+      setupDelete();
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockStorage.deleteObject.mock.invocationCallOrder[0]).toBeLessThan(
+        mockTransaction.delete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('Storage削除とお気に入り検索をトランザクションの外で行う', async () => {
+      setupDelete({ ...sampleImage, storagePath: 'images/admin-uid/12345-abc' }, ['like-1']);
+
+      await imageService.deleteImage('image-1');
+
+      const transactionStart = mockFirestore.runTransaction.mock.invocationCallOrder[0];
+      for (const order of mockStorage.deleteObject.mock.invocationCallOrder) {
+        expect(order).toBeLessThan(transactionStart);
+      }
+      for (const order of mockFirestore.getDocs.mock.invocationCallOrder) {
+        expect(order).toBeLessThan(transactionStart);
+      }
+    });
+
+    it('画像に紐づくお気に入りを削除する', async () => {
+      setupDelete({ ...sampleImage, storagePath: 'images/admin-uid/12345-abc' }, [
+        'inv-1_image-1',
+        'inv-2_image-1',
+      ]);
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockFirestore.deleteDoc).toHaveBeenCalledTimes(2);
+    });
+
+    it('お気に入りの削除に失敗したら例外を投げる', async () => {
+      // 2026-08-17 から 2026-08-22 まで、ルールの権限漏れでこれが
+      // permission-denied になっていたのに try-catch で握り潰されていた。
+      setupDelete({ ...sampleImage, storagePath: 'images/admin-uid/12345-abc' }, ['like-1']);
+      mockFirestore.deleteDoc.mockRejectedValue(new Error('permission-denied'));
+
+      await expect(imageService.deleteImage('image-1')).rejects.toThrow('permission-denied');
+      expect(mockTransaction.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -269,33 +384,23 @@ describe('imageService（projectId対応）', () => {
       mockStorage.uploadBytes.mockRejectedValue(new Error('Upload failed'));
 
       await expect(
-        imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト')
+        imageService.uploadImageFile('project-1', 'admin-uid', mockFile, [], 'テスト')
       ).rejects.toThrow('Upload failed');
     });
 
     it('存在しない画像IDでdeleteImage時にエラーをスローする', async () => {
-      const emptyDoc = createMockDocSnapshot('nonexistent', null);
       mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(emptyDoc);
+      mockFirestore.getDoc.mockResolvedValue(createMockDocSnapshot('nonexistent', null));
 
       await expect(imageService.deleteImage('nonexistent')).rejects.toThrow();
     });
 
     it('Storage削除失敗でもFirestore削除は実行する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
-        ...sampleImage,
-        storagePath: 'images/admin-uid/12345-abc',
-      });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockStorage.ref.mockReturnValue('storageRef');
+      // Storage に残ったファイルは後から掃除できるが、ここで止めると
+      // Firestore 側が消せなくなり削除そのものが進まなくなる。
+      setupDelete();
       mockStorage.deleteObject.mockRejectedValue(new Error('Storage delete failed'));
 
-      // Should not throw even if storage delete fails
       await imageService.deleteImage('image-1');
 
       expect(mockTransaction.delete).toHaveBeenCalled();
@@ -305,16 +410,11 @@ describe('imageService（projectId対応）', () => {
   // --- 招待同期 ---
   describe('招待同期（画像削除時）', () => {
     it('削除した画像IDが関連する招待からarrayRemoveで除去される', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       mockGetInvitationsByProject.mockResolvedValue([
         { ...sampleInvitation, id: 'inv-1' },
@@ -330,16 +430,11 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('招待同期失敗でもdeleteImage自体は成功する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       mockGetInvitationsByProject.mockRejectedValue(new Error('Firestore error'));
 
@@ -349,16 +444,11 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('projectIdがない画像の削除時は同期をスキップする', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: undefined,
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       await imageService.deleteImage('image-1');
 
@@ -366,122 +456,231 @@ describe('imageService（projectId対応）', () => {
     });
   });
 
-  describe('招待同期（画像アップロード時）', () => {
-    it('アップロード後にアクティブな招待にarrayUnionで画像IDが追加される', async () => {
-      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+  // --- deleteImagesForProject ---
+  // プロジェクトごと消す経路。1枚ずつの deleteImage とは別物である。
+  describe('deleteImagesForProject', () => {
+    const makeImages = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...sampleImage,
+        id: `image-${i}`,
+        storagePath: `images/admin-uid/file-${i}`,
+        thumbnailPaths: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }));
+
+    const setupBulk = (likeDocs: Array<{ id: string; data: Record<string, unknown> }> = []) => {
+      mockFirestore.doc.mockImplementation((_db: unknown, coll: string, id: string) => `${coll}/${id}`);
+      mockFirestore.getDocs.mockResolvedValue(createMockQuerySnapshot(likeDocs));
       mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
-      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
-      mockFirestore.collection.mockReturnValue('images-collection');
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
-          projectId: 'project-1',
-          url: 'https://example.com/image.jpg',
-          storagePath: 'images/admin-uid/x',
-          title: 'テスト',
-          userId: 'admin-uid',
-          likeCount: 0,
-        })
-      );
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+    };
 
-      mockGetActiveInvitationsByProject.mockResolvedValue([
-        { ...sampleInvitation, id: 'inv-1' },
+    it('画像ドキュメントをバッチで削除する', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockBatch.delete).toHaveBeenCalledTimes(3);
+      expect(mockBatch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('招待同期を呼ばない', async () => {
+      // 招待は deleteProject が先に消している。1枚ごとに呼ぶと
+      // 700枚で700回の招待取得になり、これが遅さの主因だった。
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockGetInvitationsByProject).not.toHaveBeenCalled();
+    });
+
+    it('imageCountをまとめて減算する', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockFirestore.increment).toHaveBeenCalledWith(-3);
+      expect(mockBatch.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('Storageの削除を画像ドキュメントの削除より先に行う', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockStorage.deleteObject.mock.invocationCallOrder[0]).toBeLessThan(
+        mockBatch.delete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('お気に入りも同じバッチで削除する', async () => {
+      setupBulk([
+        { id: 'inv-1_image-0', data: { imageId: 'image-0' } },
+        { id: 'inv-1_image-1', data: { imageId: 'image-1' } },
       ]);
-      mockFirestore.updateDoc.mockResolvedValue(undefined);
 
-      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      // 画像3件 + お気に入り2件
+      expect(mockBatch.delete).toHaveBeenCalledTimes(5);
+    });
+
+    it('お気に入りの検索は in で30件ずつまとめる', async () => {
+      // 1枚ごとにクエリを投げると700枚で700往復になる。
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(70));
+
+      expect(mockFirestore.getDocs).toHaveBeenCalledTimes(3); // 30 + 30 + 10
+    });
+
+    it('操作数が500を超えるとバッチを分ける', async () => {
+      // 上限はドキュメント数ではなく操作数。1バッチには
+      // 画像の削除 499 件 + imageCount の更新 1 件しか入らない。
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(600));
+
+      expect(mockBatch.commit).toHaveBeenCalledTimes(2);
+      expect(mockBatch.delete).toHaveBeenCalledTimes(600);
+      expect(mockBatch.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('バッチのcommitが失敗したら例外を投げる', async () => {
+      setupBulk();
+      mockBatch.commit.mockRejectedValue(new Error('permission-denied'));
+
+      await expect(
+        imageService.deleteImagesForProject('project-1', makeImages(3))
+      ).rejects.toThrow('permission-denied');
+    });
+
+    it('お気に入りの検索に失敗したら例外を投げる', async () => {
+      // 引けなかった分を黙って飛ばすと、お気に入りだけが孤児として残る。
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockFirestore.getDocs.mockRejectedValue(new Error('permission-denied'));
+
+      await expect(
+        imageService.deleteImagesForProject('project-1', makeImages(3))
+      ).rejects.toThrow();
+      expect(mockStorage.deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('Storageの削除に失敗してもFirestoreの削除は続ける', async () => {
+      setupBulk();
+      mockStorage.deleteObject.mockRejectedValue(new Error('Storage delete failed'));
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockBatch.delete).toHaveBeenCalledTimes(3);
+    });
+
+    it('進捗を通知する', async () => {
+      setupBulk();
+      const onProgress = vi.fn();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3), onProgress);
+
+      expect(onProgress).toHaveBeenLastCalledWith({ completed: 3, total: 3 });
+    });
+
+    it('画像が0枚なら何もしない', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', []);
+
+      expect(mockFirestore.getDocs).not.toHaveBeenCalled();
+      expect(mockBatch.commit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('招待同期（画像アップロード時）', () => {
+    // 同期の実行場所は uploadImage から finalizeUploadBatch へ移した。
+    // 検証する観点は4つとも維持する:
+    //   (1) アクティブ招待に同期される (2) 非アクティブは対象外
+    //   (3) 失敗しても呼び出し元は成功扱い (4) 複数招待すべてに反映される
+    const setupFinalize = (invitations: unknown[]) => {
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
+      mockGetActiveInvitationsByProject.mockResolvedValue(invitations);
+    };
+
+    it('アクティブな招待にarrayUnionで画像IDが追加される', async () => {
+      setupFinalize([{ ...sampleInvitation, id: 'inv-1' }]);
+
+      await imageService.finalizeUploadBatch('project-1', ['new-image-id']);
 
       expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
-      expect(mockFirestore.updateDoc).toHaveBeenCalled();
       expect(mockFirestore.arrayUnion).toHaveBeenCalledWith('new-image-id');
     });
 
-    it('アクティブな招待がない場合はupdateDocが呼ばれない', async () => {
-      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
-      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
-      mockFirestore.collection.mockReturnValue('images-collection');
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
-          projectId: 'project-1',
-          url: 'https://example.com/image.jpg',
-          storagePath: 'images/admin-uid/x',
-          title: 'テスト',
-          userId: 'admin-uid',
-          likeCount: 0,
-        })
-      );
+    // 集約の効果。50枚でも招待1件あたり1回の書き込みで済むこと。
+    it('複数IDをまとめて1回のarrayUnionで追加する', async () => {
+      setupFinalize([{ ...sampleInvitation, id: 'inv-1' }]);
+      const ids = Array.from({ length: 50 }, (_, i) => `img-${i}`);
 
-      mockGetActiveInvitationsByProject.mockResolvedValue([]);
+      await imageService.finalizeUploadBatch('project-1', ids);
 
-      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
-
-      expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
-      expect(mockFirestore.updateDoc).not.toHaveBeenCalled();
+      expect(mockFirestore.arrayUnion).toHaveBeenCalledTimes(1);
+      expect(mockFirestore.arrayUnion).toHaveBeenCalledWith(...ids);
+      // imageCount 1回 + 招待1件1回
+      expect(mockFirestore.updateDoc).toHaveBeenCalledTimes(2);
     });
 
-    it('招待同期失敗でもuploadImage自体は成功する', async () => {
-      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
-      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
-      mockFirestore.collection.mockReturnValue('images-collection');
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
-          projectId: 'project-1',
-          url: 'https://example.com/image.jpg',
-          storagePath: 'images/admin-uid/x',
-          title: 'テスト',
-          userId: 'admin-uid',
-          likeCount: 0,
-        })
-      );
+    it('300件を超えるIDは分割して追加する', async () => {
+      setupFinalize([{ ...sampleInvitation, id: 'inv-1' }]);
+      const ids = Array.from({ length: 700 }, (_, i) => `img-${i}`);
 
+      await imageService.finalizeUploadBatch('project-1', ids);
+
+      // 300 + 300 + 100 の3回
+      expect(mockFirestore.arrayUnion).toHaveBeenCalledTimes(3);
+    });
+
+    it('複数のアクティブ招待すべてに反映される', async () => {
+      setupFinalize([
+        { ...sampleInvitation, id: 'inv-1' },
+        { ...sampleInvitation, id: 'inv-2' },
+      ]);
+
+      await imageService.finalizeUploadBatch('project-1', ['img-a']);
+
+      // imageCount 1回 + 招待2件
+      expect(mockFirestore.updateDoc).toHaveBeenCalledTimes(3);
+    });
+
+    it('アクティブな招待がない場合は招待へのupdateDocが呼ばれない', async () => {
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
+      mockGetActiveInvitationsByProject.mockResolvedValue([]);
+
+      await imageService.finalizeUploadBatch('project-1', ['img-a']);
+
+      expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
+      // imageCount の1回のみ
+      expect(mockFirestore.updateDoc).toHaveBeenCalledTimes(1);
+      expect(mockFirestore.arrayUnion).not.toHaveBeenCalled();
+    });
+
+    it('招待同期失敗でも finalizeUploadBatch は例外を投げない', async () => {
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
       mockGetActiveInvitationsByProject.mockRejectedValue(new Error('Firestore error'));
 
-      const result = await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
-      expect(result).toBeDefined();
-      expect(result.id).toBe('new-image-id');
+      await expect(
+        imageService.finalizeUploadBatch('project-1', ['img-a'])
+      ).resolves.toBeUndefined();
     });
   });
 
   describe('招待同期（アクティブ/非アクティブ区別）', () => {
     it('アップロード時はgetActiveInvitationsByProject、削除時はgetInvitationsByProjectが呼ばれる', async () => {
-      // Upload
-      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.uploadBytes.mockResolvedValue({});
-      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/image.jpg');
-      mockFirestore.collection.mockReturnValue('images-collection');
       mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockFirestore.getDoc.mockResolvedValue(
-        createMockDocSnapshot('new-image-id', {
-          projectId: 'project-1',
-          url: 'https://example.com/image.jpg',
-          storagePath: 'images/admin-uid/x',
-          title: 'テスト',
-          userId: 'admin-uid',
-          likeCount: 0,
-        })
-      );
+      mockFirestore.updateDoc.mockResolvedValue(undefined);
+      mockGetActiveInvitationsByProject.mockResolvedValue([]);
 
-      await imageService.uploadImage('project-1', 'admin-uid', mockFile, 'テスト');
+      await imageService.finalizeUploadBatch('project-1', ['img-a']);
 
       expect(mockGetActiveInvitationsByProject).toHaveBeenCalledWith('project-1');
       expect(mockGetInvitationsByProject).not.toHaveBeenCalled();
@@ -491,15 +690,11 @@ describe('imageService（projectId対応）', () => {
       mockGetActiveInvitationsByProject.mockResolvedValue([]);
 
       // Delete
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       await imageService.deleteImage('image-1');
 
@@ -508,7 +703,6 @@ describe('imageService（projectId対応）', () => {
     });
   });
 
-  // --- docToImage 変換 ---
   describe('docToImage', () => {
     it('Timestamp.toDate()でDate型に変換する', async () => {
       mockFirestore.query.mockReturnValue('query-ref');

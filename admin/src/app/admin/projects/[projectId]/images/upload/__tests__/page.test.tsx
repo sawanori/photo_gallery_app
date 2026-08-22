@@ -6,13 +6,22 @@ import { ConfigProvider, App } from 'antd';
 import jaJP from 'antd/locale/ja_JP';
 
 const mockUploadImage = vi.fn();
+const mockAssertProjectExists = vi.fn();
+const mockFinalizeUploadBatch = vi.fn();
 const mockRouterPush = vi.fn();
 
-vi.mock('../../../../../../services/imageService', () => ({
-  uploadImage: (...args: unknown[]) => mockUploadImage(...args),
+vi.mock('../../../../../../../services/imageService', () => ({
+  uploadImageFile: (...args: unknown[]) => mockUploadImage(...args),
+  assertProjectExists: (...args: unknown[]) => mockAssertProjectExists(...args),
+  finalizeUploadBatch: (...args: unknown[]) => mockFinalizeUploadBatch(...args),
 }));
 
-vi.mock('../../../../../../contexts/AuthContext', () => ({
+// アップロード前処理は Canvas に依存するため、画面のテストではモックする
+vi.mock('../../../../../../../utils/prepareUpload', () => ({
+  prepareUpload: (file: File) => Promise.resolve({ file, thumbnails: [] }),
+}));
+
+vi.mock('../../../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },
@@ -41,6 +50,9 @@ let ProjectImageUploadPage: React.ComponentType;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // 既定では「プロジェクトは存在し、集約は成功する」状態にしておく
+  mockAssertProjectExists.mockResolvedValue(undefined);
+  mockFinalizeUploadBatch.mockResolvedValue(undefined);
   const mod = await import('../page');
   ProjectImageUploadPage = mod.default;
 });
@@ -79,19 +91,12 @@ describe('ProjectImageUploadPage', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectImageUploadPage />);
 
-    // Enter title
-    await waitFor(() => {
-      expect(screen.getByLabelText(/タイトル/)).toBeInTheDocument();
-    });
-    await user.type(screen.getByLabelText(/タイトル/), 'テスト画像');
-
-    // Create a test file and upload
+    // タイトル入力欄は無く、ファイル名から拡張子を除いたものがタイトルになる
     const file = new File(['dummy'], 'test.jpg', { type: 'image/jpeg' });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
 
-    // Click upload button
-    const uploadBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+    const uploadBtn = await screen.findByRole('button', { name: /枚をアップロード/ });
     await user.click(uploadBtn);
 
     await waitFor(() => {
@@ -99,7 +104,8 @@ describe('ProjectImageUploadPage', () => {
         'project-1',
         'admin-uid',
         expect.any(File),
-        'テスト画像'
+        [],
+        'test'
       );
     });
   });
@@ -120,23 +126,62 @@ describe('ProjectImageUploadPage', () => {
     const user = userEvent.setup();
     renderWithProviders(<ProjectImageUploadPage />);
 
-    // Enter title
-    await waitFor(() => {
-      expect(screen.getByLabelText(/タイトル/)).toBeInTheDocument();
-    });
-    await user.type(screen.getByLabelText(/タイトル/), 'テスト画像');
-
-    // Create a test file and upload
     const file = new File(['dummy'], 'test.jpg', { type: 'image/jpeg' });
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     await user.upload(input, file);
 
-    // Click upload button
-    const uploadBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+    const uploadBtn = await screen.findByRole('button', { name: /枚をアップロード/ });
     await user.click(uploadBtn);
 
     await waitFor(() => {
       expect(mockRouterPush).toHaveBeenCalledWith('/admin/projects/project-1');
     });
+  });
+
+  // 集約がバッチで走ること。1枚ごとに走ると同じドキュメントへの書き込みが集中する。
+  it('アップロード完了後に finalizeUploadBatch が画像IDをまとめて受け取る', async () => {
+    mockUploadImage
+      .mockResolvedValueOnce({ id: 'image-1' })
+      .mockResolvedValueOnce({ id: 'image-2' });
+
+    const user = userEvent.setup();
+    renderWithProviders(<ProjectImageUploadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, [
+      new File(['a'], 'a.jpg', { type: 'image/jpeg' }),
+      new File(['b'], 'b.jpg', { type: 'image/jpeg' }),
+    ]);
+
+    const uploadBtn = await screen.findByRole('button', { name: /枚をアップロード/ });
+    await user.click(uploadBtn);
+
+    await waitFor(() => {
+      expect(mockFinalizeUploadBatch).toHaveBeenCalledTimes(1);
+    });
+    expect(mockFinalizeUploadBatch).toHaveBeenCalledWith('project-1', [
+      'image-1',
+      'image-2',
+    ]);
+  });
+
+  // プロジェクトが無いのに Storage にファイルを撒かないこと
+  it('プロジェクトが存在しない場合は1枚もアップロードしない', async () => {
+    mockAssertProjectExists.mockRejectedValue(new Error('Project not found'));
+
+    const user = userEvent.setup();
+    renderWithProviders(<ProjectImageUploadPage />);
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['a'], 'a.jpg', { type: 'image/jpeg' }));
+
+    const uploadBtn = await screen.findByRole('button', { name: /枚をアップロード/ });
+    await user.click(uploadBtn);
+
+    await waitFor(() => {
+      expect(mockAssertProjectExists).toHaveBeenCalledWith('project-1');
+    });
+    expect(mockUploadImage).not.toHaveBeenCalled();
+    expect(mockFinalizeUploadBatch).not.toHaveBeenCalled();
   });
 });

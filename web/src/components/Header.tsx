@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useGallery } from '@/contexts/GalleryContext';
 import BulkDownloadButton from './BulkDownloadButton';
 import LineShareButton from './LineShareButton';
+import { viewingDeadline } from '@/utils/viewingWindow';
 
 interface HeaderProps {
   showLikedLink?: boolean;
@@ -15,8 +16,10 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
   const { invitation, likedIds, totalCount } = useGallery();
   const token = invitation?.token || '';
 
+  // 表示する期限と実際の判定を必ず同じ計算にする。
+  // 以前はここに 7 日が直書きされており、判定側と別々に持っていた。
   const expiryDate = invitation?.createdAt
-    ? new Date(invitation.createdAt.getTime() + 7 * 24 * 60 * 60 * 1000)
+    ? viewingDeadline(invitation.createdAt, invitation.viewingDays)
     : null;
 
   const isExpiringSoon = expiryDate

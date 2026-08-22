@@ -1,0 +1,284 @@
+{
+  "feature": "プロジェクト削除の高速化",
+  "version": 2,
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "title": "変更前の所要時間を実測して記録する",
+      "goal": "改善の効果を数字で示せるようにする。往復回数はコードから数えた値であり、実際の所要時間は未計測である。",
+      "scope": [
+        "捨ててよいプロジェクトを作り、削除にかかる時間を測る",
+        "ネットワークタブで往復回数を数える",
+        "docs/project-delete/measurement.md に記録する"
+      ],
+      "non_scope": ["実データのプロジェクトでの計測（削除は取り消せない）", "コードの変更"],
+      "files_to_read": [
+        "admin/src/services/projectService.ts",
+        "admin/src/services/imageService.ts",
+        "docs/project-delete/implementation-plan.md"
+      ],
+      "files_to_create": ["docs/project-delete/measurement.md"],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "**捨ててよいプロジェクトを新規に作る。** 実データで測らない。削除は取り消せない",
+        "写真を 50 枚アップロードする（700枚で測ると計測自体に十数分かかるため、50枚で測って比例で見積もる）",
+        "招待を2件作る（招待数が往復回数に効く）",
+        "ギャラリーで数枚をお気に入りに入れる",
+        "開発者ツールのネットワークタブを記録状態にする",
+        "削除を実行し、確認ダイアログで「削除」を押してから完了メッセージが出るまでの時間を測る",
+        "firestore.googleapis.com と firebasestorage.googleapis.com への往復回数を数える",
+        "**お気に入りの削除が permission-denied で失敗していることを確認する。** これが task_002 の根拠になる",
+        "計測条件（枚数・招待数・お気に入り数・回線・ブラウザ）と結果を measurement.md に記録する",
+        "**推測値を書かない。** 測れなかった項目は「未計測」と書く"
+      ],
+      "done_definition": [
+        "measurement.md に変更前の所要時間が秒単位で記録されている",
+        "往復回数が記録されている",
+        "計測条件が記録されている",
+        "50枚での実測値から700枚の見積もりが書かれている",
+        "お気に入りの削除が失敗していることが記録されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_002",
+      "title": "管理者がお気に入りを削除できるようにルールを直す",
+      "goal": "2026-08-17 の変更で落ちた管理者の削除権限を戻す。これが無いと writeBatch に含めた瞬間にバッチ全体が巻き戻り、プロジェクト削除が永久に失敗する。",
+      "scope": ["firestore.rules の likes の delete に isAdmin() を追加する", "実際に削除できることを確認する"],
+      "non_scope": [
+        "storage.rules の変更（task_007 に記録）",
+        "likes の他のルール（get / list / create）の変更",
+        "既に溜まっている孤児のお気に入りの掃除（task_007）"
+      ],
+      "files_to_read": ["firestore.rules", "admin/src/services/imageService.ts"],
+      "files_to_create": [],
+      "files_to_modify": ["firestore.rules"],
+      "dependencies": ["task_001"],
+      "implementation_steps": [
+        "現状を確認する: `allow delete: if hasValidSession() && resource.data.invitationId == sessionInvitationId();` に isAdmin() が無い",
+        "`allow delete: if isAdmin() || (hasValidSession() && ...)` に変更する。**既存の閲覧者の経路は残す**",
+        "なぜ管理者が要るのか（画像を削除したときに紐づくお気に入りも消す）をコメントに残す",
+        "**2026-08-17 の変更で落ちたこと**もコメントに残す。同じ抜けを繰り返さないため",
+        "firebase deploy --only firestore:rules を実行する",
+        "管理画面で画像を1枚削除し、その画像のお気に入りが実際に消えることを Firebase コンソールで確認する",
+        "**閲覧者がお気に入りを解除できることを確認する（回帰）**。ギャラリーでハートを外す"
+      ],
+      "done_definition": [
+        "firestore.rules の likes の delete に isAdmin() がある",
+        "ルールがデプロイ済みである",
+        "管理画面で画像を削除すると、その画像のお気に入りが実際に消える（コンソールで確認）",
+        "ギャラリーでお気に入りの解除が従来どおり動く"
+      ],
+      "verify_commands": ["firebase deploy --only firestore:rules"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_003",
+      "title": "deleteImage のトランザクション誤用と削除順序を正す",
+      "goal": "トランザクションの中で Storage 削除とお気に入り検索を行っている状態を解消し、失敗しても孤児が残らない順序にする。",
+      "scope": [
+        "runTransaction の中から deleteObject と getDocs / deleteDoc を出す",
+        "Storage とお気に入りを、画像ドキュメントより先に削除する",
+        "トランザクションには画像ドキュメントの削除と imageCount の更新だけを残す"
+      ],
+      "non_scope": [
+        "deleteImage の引数や戻り値の変更",
+        "imageCount 更新と招待同期の削除（1枚削除の経路では必要）"
+      ],
+      "files_to_read": [
+        "admin/src/services/imageService.ts",
+        "admin/src/services/__tests__/imageService.test.ts",
+        "admin/src/test/mocks/firebase.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/imageService.ts",
+        "admin/src/services/__tests__/imageService.test.ts",
+        "admin/src/test/mocks/firebase.ts"
+      ],
+      "dependencies": ["task_002"],
+      "implementation_steps": [
+        "新しい順序にする: (1) 画像ドキュメントを取得（トランザクション外） (2) Storage の原本とサムネイルを削除（best-effort） (3) お気に入りを検索して削除 (4) トランザクションで画像ドキュメントの削除と imageCount の更新",
+        "**Storage を先に消す理由をコメントに残す。** 後に回すと、失敗したときに storagePath を失い、ファイルが永久に孤児になる。先に消せば再実行で回復できる",
+        "**Storage の削除失敗は握りつぶさず、警告を出したうえで処理を続ける。** 現在と同じ best-effort だが、何が失敗したかログに残す",
+        "**お気に入りの削除は握りつぶさない。** task_002 でルールを直したので、失敗したら本物の異常である。例外にする",
+        "コード中の誤ったコメント `// Delete associated likes (best-effort, outside transaction)` を実装に合わせて直す",
+        "テストのモック（admin/src/test/mocks/firebase.ts）に writeBatch を追加する。現在は存在しない",
+        "テスト: トランザクションのコールバック内に deleteObject / getDocs が現れないこと、Storage の削除がドキュメント削除より前に呼ばれること、お気に入りの削除が失敗したら例外になること"
+      ],
+      "done_definition": [
+        "runTransaction のコールバック内に deleteObject / getDocs / deleteDoc が存在しない",
+        "Storage の削除が画像ドキュメントの削除より前に実行される（テストで順序を検証）",
+        "お気に入りの削除に失敗したら例外になる",
+        "画面から画像を1枚削除すると imageCount が 1 減り、招待の imageIds から除かれる（回帰）",
+        "cd admin && npx vitest run が全パス",
+        "cd admin && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npx eslint src",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_004",
+      "title": "プロジェクト削除用の一括削除経路を作る",
+      "goal": "プロジェクトごと消す場合に不要な処理を省き、並列と一括書き込みで往復回数を減らす。",
+      "scope": [
+        "操作数で数える writeBatch のチャンカーを作る",
+        "imageService に deleteImagesForProject(images, onProgress) を追加する",
+        "projectService の deleteProject をこの経路に切り替える",
+        "テストを書く"
+      ],
+      "non_scope": ["deleteImage（1枚削除）の仕様変更", "Cloud Functions の導入", "削除の取り消し機能"],
+      "files_to_read": [
+        "admin/src/services/imageService.ts",
+        "admin/src/services/projectService.ts",
+        "admin/src/services/__tests__/projectService.test.ts",
+        "admin/src/utils/uploadQueue.ts",
+        "admin/src/app/admin/projects/[projectId]/images/upload/page.tsx"
+      ],
+      "files_to_create": ["admin/src/utils/batchWriter.ts", "admin/src/utils/batchWriter.test.ts"],
+      "files_to_modify": [
+        "admin/src/services/imageService.ts",
+        "admin/src/services/projectService.ts",
+        "admin/src/services/__tests__/imageService.test.ts",
+        "admin/src/services/__tests__/projectService.test.ts"
+      ],
+      "dependencies": ["task_003"],
+      "implementation_steps": [
+        "batchWriter.ts を作る。**操作数**が上限に達する直前で commit し、新しいバッチを始める。**上限は500操作であってドキュメント数ではない**。この根拠をコメントに残す",
+        "deleteImagesForProject(images: Image[], onProgress?) を imageService に追加する。**引数は ID ではなく Image。** Storage を消すには storagePath と thumbnailPaths が要る。getImagesByProject の結果をそのまま渡せる",
+        "**imageCount はバッチごとに increment(-件数) で減らす。** 省くと、部分失敗時に「700枚」と表示されたまま中身が空になる",
+        "**syncInvitationsOnImageDelete は呼ばない。** 招待は先に消えている。現在は画像1枚ごとに招待を取得しており、700枚なら700回走る",
+        "並列は runWithConcurrency を使い、同時実行数は 4 を起点にする（実在の前例は UPLOAD_CONCURRENCY = 4）。task_006 で調整する",
+        "**runWithConcurrency は1件失敗しても止まらない設計である。** 戻り値を集計し、Firestore のドキュメント削除に失敗があれば例外にする。Storage の失敗だけを許容する",
+        "projectService の deleteProject を書き換える。順序は **(1) 招待を writeBatch で削除 → (2) 画像を deleteImagesForProject → (3) プロジェクトのドキュメントを削除**",
+        "**招待を最初に消す理由をコメントに残す。** 画像を先に消して途中で失敗すると、生きた招待リンクが壊れたギャラリーを指したまま残り、クライアントが「写真が消えた」画面を見る",
+        "**プロジェクトのドキュメントは最後に消す理由もコメントに残す。** 途中で失敗したときに画面に残り、再実行できる",
+        "deleteProject に onProgress を足す（省略可能にして既存の呼び出しを壊さない）",
+        "テスト: 招待が画像より先に消えること、imageCount が減ること、招待同期が呼ばれないこと、操作数500超でバッチが分割されること、画像削除が失敗したらプロジェクトが消えないこと"
+      ],
+      "done_definition": [
+        "batchWriter が操作数で分割する（600操作で2回に分かれることをテストで確認）",
+        "deleteProject が招待 → 画像 → プロジェクトの順で消す（テストで順序を検証）",
+        "deleteProject が syncInvitationsOnImageDelete を呼ばない",
+        "imageCount がバッチごとに減算される",
+        "画像の削除に失敗した場合、プロジェクトのドキュメントが消えない",
+        "画面から画像を1枚削除する経路は従来どおり動作する（回帰）",
+        "cd admin && npx vitest run が全パス",
+        "cd admin && npm run build が成功"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npx eslint src",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_005",
+      "title": "削除の進捗を UI に出す",
+      "goal": "数十秒かかる処理の間、利用者に何も見えない状態をなくす。",
+      "scope": [
+        "プロジェクト詳細画面の削除に進捗を出す",
+        "ダッシュボードの一括削除に進捗を出し、プロジェクトを直列にする"
+      ],
+      "non_scope": ["削除のキャンセル機能", "確認ダイアログの文言の変更"],
+      "files_to_read": [
+        "admin/src/app/admin/projects/[projectId]/page.tsx",
+        "admin/src/app/admin/dashboard/page.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/app/admin/projects/[projectId]/page.tsx",
+        "admin/src/app/admin/dashboard/page.tsx"
+      ],
+      "dependencies": ["task_004"],
+      "implementation_steps": [
+        "プロジェクト詳細: message.loading に key を付け、onProgress で「削除しています… 12 / 50」と更新する",
+        "完了時に message.success、失敗時に message.error（**既存の文言を維持する**）",
+        "**loading の表示を必ず閉じる。** 失敗経路でも閉じないと残り続ける",
+        "ダッシュボードの一括削除を **Promise.all から直列に変える**。現在は同時実行数がプロジェクト数倍に膨らむ",
+        "ダッシュボードの進捗はプロジェクト単位で出す（「3 / 5 件」）",
+        "既存のテストが message の呼び出しを検証している場合は更新する"
+      ],
+      "done_definition": [
+        "削除中に進捗が表示される",
+        "完了・失敗のいずれでも loading の表示が消える",
+        "ダッシュボードの一括削除がプロジェクトを直列に処理する",
+        "既存の成功・失敗の文言が変わっていない",
+        "cd admin && npx vitest run が全パス",
+        "cd admin && npm run build が成功"
+      ],
+      "verify_commands": ["cd admin && npx vitest run", "cd admin && npm run build"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_006",
+      "title": "変更後を実測し、同時実行数を調整する",
+      "goal": "改善が実際に効いていることを数字で確かめ、同時実行数を根拠のある値にする。",
+      "scope": ["task_001 と同じ条件で計測する", "同時実行数を変えて比較する", "measurement.md に記録する"],
+      "non_scope": ["実データのプロジェクトでの計測"],
+      "files_to_read": ["docs/project-delete/measurement.md"],
+      "files_to_create": [],
+      "files_to_modify": ["docs/project-delete/measurement.md", "admin/src/services/imageService.ts"],
+      "dependencies": ["task_005"],
+      "implementation_steps": [
+        "**task_001 と同じ条件**（枚数・招待数・お気に入り数・回線・ブラウザ）で使い捨てプロジェクトを作る",
+        "同時実行数 4 / 8 / 16 で計測する。それぞれ別のプロジェクトを作って測る",
+        "エラー（Firestore や Storage のレート制限）が出ないかを確認する。出たら下げる",
+        "採用する値と理由を measurement.md とコードのコメントに記録する",
+        "変更前との比較を書き、**受け入れ基準（1/5 以下）を満たしたかを明記する**",
+        "満たさない場合は、何が律速かを記録する（Storage の削除か、Firestore の書き込みか）"
+      ],
+      "done_definition": [
+        "変更後の所要時間が秒単位で記録されている",
+        "同時実行数 3 通りの比較が記録されている",
+        "採用した値と理由が記録されている",
+        "変更前との比較が記録され、受け入れ基準を満たしたかが明記されている"
+      ],
+      "verify_commands": [],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_007",
+      "title": "[任意] 孤児になったデータを掃除し、Storage の管理者権限を検討する",
+      "goal": "これまでに削除できず残ったお気に入りと Storage のファイルを回収する。",
+      "scope": [
+        "孤児のお気に入りを列挙して削除する",
+        "孤児の Storage ファイルを列挙する",
+        "storage.rules に管理者の削除権限を足すかを判断する"
+      ],
+      "non_scope": ["自動実行（誤削除の危険がある）", "Storage のライフサイクル設定"],
+      "files_to_read": [
+        "scripts/migrate-invitation-ids.mjs",
+        "admin/src/services/imageService.ts",
+        "storage.rules",
+        "firestore.rules"
+      ],
+      "files_to_create": ["scripts/find-orphans.mjs"],
+      "files_to_modify": ["storage.rules"],
+      "dependencies": ["task_006"],
+      "implementation_steps": [
+        "既存の scripts/migrate-invitation-ids.mjs と同じ方式（web/node_modules の Firebase SDK、web/.env.local から設定、管理者でサインイン）にする",
+        "**孤児のお気に入り**: likes を走査し、imageId が images に存在しないものを列挙する。2026-08-17 から task_002 までの間に削除された画像の分が溜まっている",
+        "**孤児の Storage ファイル**: images/ と thumbnails/ を列挙し、Firestore の storagePath / thumbnailPaths に現れないものを挙げる",
+        "**既定では列挙のみ。削除は --delete を渡したときだけ**（migrate-invitation-ids.mjs と同じ方針）",
+        "孤児の合計サイズを表示する。回収できる容量が分かる",
+        "storage.rules の判断: 現在の削除は request.auth.uid == userId（アップロードした本人）に限られる。管理者が1名のうちは実害が無い。**増やす予定があるなら isAdmin() を足す**。足す場合は既存のアップロード経路が壊れないことを確認する"
+      ],
+      "done_definition": [
+        "スクリプトが孤児のお気に入りと Storage ファイルの件数・合計サイズを表示する",
+        "--delete なしでは何も削除しない",
+        "storage.rules を変えるかどうかの判断が記録されている"
+      ],
+      "verify_commands": ["node scripts/find-orphans.mjs"],
+      "risk_level": "medium",
+      "optional": true
+    }
+  ]
+}

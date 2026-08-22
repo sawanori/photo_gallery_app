@@ -1,0 +1,301 @@
+{
+  "feature": "招待コード＋パスワードでギャラリーを開く",
+  "version": 2,
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "title": "秘密を持つ3つのコレクションをクライアントから完全に閉じる",
+      "goal": "パスワードハッシュ・コードとトークンの対応・失敗回数を、トークンを知っている閲覧者にも読ませない。",
+      "scope": [
+        "firestore.rules に invitationCodes / invitationSecrets / unknownCodeAttempts を追加する",
+        "デプロイして拒否されることを確認する"
+      ],
+      "non_scope": ["invitations の既存ルールの変更", "storage.rules の変更"],
+      "files_to_read": ["firestore.rules"],
+      "files_to_create": [],
+      "files_to_modify": ["firestore.rules"],
+      "dependencies": [],
+      "implementation_steps": [
+        "3つとも `allow read, write: if false;` にする。`invitationCodes/{code}` は { token }、`invitationSecrets/{token}` は passwordHash / failedAttempts / lockedUntil、`unknownCodeAttempts/{codeHash}` は存在しないコードへの試行回数",
+        "**なぜ invitations に相乗りさせないのかをコメントに残す。** Firestore はフィールド単位の読み取り制御ができない。同じドキュメントに置くと、トークンを知っている正規の閲覧者が他人のパスワードハッシュを読める",
+        "**invitationCodes を分ける理由もコメントに残す。** (1) create の衝突で一意性を Firestore に保証させる (2) ID 指定の get になるのでヒットの有無で時間が変わりにくい",
+        "Admin SDK はルールを迂回するため false でも書ける旨もコメントに残す",
+        "firebase deploy --only firestore:rules",
+        "スクリプトで匿名サインインし、3つとも get / list が permission-denied になることを確認する"
+      ],
+      "done_definition": [
+        "firestore.rules に3つのコレクションのルールがある",
+        "デプロイ済み",
+        "匿名クライアントからの get と list がすべて permission-denied になることを実際に確認した"
+      ],
+      "verify_commands": ["firebase deploy --only firestore:rules"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_002",
+      "title": "web に Firebase Admin SDK を入れる",
+      "goal": "Route Handler が Firestore ルールを迂回して invitationSecrets を読み書きできるようにする。",
+      "scope": ["firebase-admin の追加", "サービスアカウント鍵の受け渡し", "初期化ヘルパー"],
+      "non_scope": [
+        "既存の web/src/lib/firebaseServer.ts の置き換え（/api/image は今のままでよい）",
+        "admin パネルへの Admin SDK 導入"
+      ],
+      "files_to_read": ["web/src/lib/firebaseServer.ts", "web/src/app/api/image/route.ts", "web/package.json"],
+      "files_to_create": ["web/src/lib/firebaseAdmin.ts"],
+      "files_to_modify": ["web/package.json", "web/.env.local.example"],
+      "dependencies": ["task_001"],
+      "implementation_steps": [
+        "Firebase コンソールでサービスアカウント鍵（JSON）を発行する",
+        "**環境変数名に NEXT_PUBLIC_ を付けない。** 付けるとブラウザに配信される。`FIREBASE_SERVICE_ACCOUNT_KEY` にする",
+        "ローカルは web/.env.local、本番は Vercel の環境変数に入れる。**鍵をリポジトリにコミットしない**",
+        "firebaseAdmin.ts で getApps() を見て多重初期化を避ける（firebaseServer.ts と同じ形）",
+        "鍵が無い環境では初期化時に分かるエラーを投げる。undefined のまま進んで意味不明な失敗にしない",
+        "**firebaseServer.ts の冒頭コメントを更新する。** 「サービスアカウント鍵を持ち込まずに済む」と書いてあるが、この変更でその前提は変わる"
+      ],
+      "done_definition": [
+        "firebase-admin が web/package.json にある",
+        "web/src/lib/firebaseAdmin.ts が多重初期化せずに Firestore を返す",
+        "鍵が NEXT_PUBLIC_ でないこと、コミットされていないことを確認した",
+        "cd web && npm run build が成功"
+      ],
+      "verify_commands": ["cd web && npm run build"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_003",
+      "title": "招待コードの生成とパスワードのハッシュを作る",
+      "goal": "推測しにくく、人が読み書きを間違えないコードと、平文を保存しないパスワード照合を用意する。",
+      "scope": [
+        "コード生成（8文字、紛らわしい文字を除く）",
+        "入力の正規化（ハイフン・空白の除去、大文字化）",
+        "scrypt によるハッシュと照合"
+      ],
+      "non_scope": ["bcrypt / argon2 の導入（node:crypto の scrypt を使い、依存を増やさない）", "パスワードの強度チェック UI"],
+      "files_to_read": ["admin/src/services/invitationService.ts"],
+      "files_to_create": [
+        "web/src/lib/invitationCode.ts",
+        "web/src/lib/invitationCode.test.ts",
+        "web/src/lib/passwordHash.server.ts",
+        "web/src/lib/passwordHash.server.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": ["task_002"],
+      "implementation_steps": [
+        "**モジュールを2つに分ける。** invitationCode.ts は正規化と生成（クライアントからも import する）。passwordHash.server.ts は node:crypto を使う側で、先頭に `import 'server-only'` を置く。同居させるとクライアントバンドルに node:crypto が引き込まれてビルドが壊れる",
+        "アルファベットは `ABCDEFGHJKMNPQRSTVWXYZ23456789` の**30文字**。除いたのは `I` `L` `O` `U`（1/I/L、0/O、U/V の取り違え対策。**V は残す**）。**30文字であることと 30^8 ≒ 6,561億通りをコメントに書く。32文字ではない**",
+        "normalizeCode(input): ハイフン・空白を除去して大文字化し、8文字かつアルファベット内でなければ null",
+        "formatCode(code): 表示用に `ABCD-EFGH` にする",
+        "**hashPassword は非同期にする。** node:crypto の `scrypt`（コールバック）を Promise で包む。**scryptSync は使わない**。同期版はイベントループを止め、同一インスタンスの他リクエストを詰まらせる",
+        "hashPassword(password): ランダム salt を付け、`salt:hash` の文字列を返す。**入力長の上限（128文字）を関数側でも弾く**",
+        "verifyPassword(password, stored): (1) `:` で分割して salt と hash を取り出す (2) 分割できない等は例外にせず false (3) 取り出した salt で再計算 (4) **長さを先に比較してから timingSafeEqual**。timingSafeEqual は長さが違うと例外を投げる",
+        "テスト: 正規化（`abcd-efgh` と `ABCD EFGH` が同結果）、アルファベットに I/L/O/U が無い、アルファベットが30文字、ハッシュが毎回異なる、正しいパスワードで true、違うパスワードで false、壊れた stored で false、129文字で拒否"
+      ],
+      "done_definition": [
+        "アルファベットが30文字で I/L/O/U を含まない",
+        "normalizeCode が `abcd-efgh` と `ABCD EFGH` を同じ結果にする",
+        "hashPassword / verifyPassword が非同期で、scryptSync を使っていない",
+        "passwordHash.server.ts に `import 'server-only'` がある",
+        "verifyPassword が長さ比較のうえで timingSafeEqual を使っている",
+        "cd web && npx vitest run が全パス"
+      ],
+      "verify_commands": ["cd web && npx vitest run", "cd web && npm run lint"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_004",
+      "title": "POST /api/invitation/open を作る",
+      "goal": "コードとパスワードからトークンを返す。総当たりを実際に止める。",
+      "scope": [
+        "Route Handler",
+        "失敗回数のカウントとロック（トランザクション）",
+        "存在しないコードにも同じロックを与える",
+        "発信元単位のレート制限",
+        "応答の形と時間の一定化"
+      ],
+      "non_scope": ["CAPTCHA / Turnstile（レート制限で足りなければ次の段階）", "監査ログの可視化 UI"],
+      "files_to_read": [
+        "web/src/app/api/image/route.ts",
+        "web/src/lib/firebaseAdmin.ts",
+        "web/src/lib/invitationCode.ts",
+        "web/src/lib/passwordHash.server.ts"
+      ],
+      "files_to_create": [
+        "web/src/app/api/invitation/open/route.ts",
+        "web/src/app/api/invitation/open/route.test.ts"
+      ],
+      "files_to_modify": [],
+      "dependencies": ["task_003"],
+      "implementation_steps": [
+        "`export const runtime = 'nodejs'`。Edge では node:crypto の scrypt も firebase-admin も動かない",
+        "`Cache-Control: no-store` を付ける。**理由は多層防御。** Route Handler は既定でキャッシュされず POST はキャッシュされないので、『付けないと CDN に載る』は誤り。`dynamic = 'force-dynamic'` は POST では不要",
+        "**高コストな処理の前に発信元単位のレート制限を置く。** 超過は一律 429。scrypt を毎回実行する設計は、そのままだと CPU を消費させる的になる。超過時は scrypt も Firestore アクセスも行わない",
+        "**パスワードの最大長を最初に弾く（128文字）。** 制限しないと scrypt の入力で殴られる",
+        "コードは `invitationCodes/{normalizedCode}` を **ID 指定の get** で引く。`where('code','==')` は使わない（競合と時間差の両方の理由）",
+        "**存在しないコードにも失敗カウンタを持たせる。** `unknownCodeAttempts/{sha256(normalizedCode)}` に記録し、実在コードと同じ段階で 423 を返す。**これが無いと、423 が返るかどうかでコードの実在が分かる**",
+        "**失敗回数の読み取り・ロック判定・更新は Firestore のトランザクションで行う。** 並行リクエストが同じ値を読んで上書きすると、5回失敗しても1回扱いになりロックが効かない",
+        "ロック: 失敗5回で1分、10回で15分、20回で24時間",
+        "**存在しないコードでも scrypt をダミーのハッシュに対して実行する**。さらに**全経路で最低応答時間（例: 300ms）を満たすまで待ってから返す**。Firestore の I/O 回数の差は scrypt だけでは埋まらない",
+        "**401 の本文を「コード違い」「パスワード違い」「存在しない」「期限切れ」で分けない**",
+        "**423 の本文と retryAfterSeconds の出し方を、実在・非実在で同一にする**",
+        "成功したら failedAttempts を 0 に戻し lockedUntil を消す（同じトランザクション内）",
+        "成功後、招待が isActive かつ expiresAt > now であることも確認する。**期限切れの招待のトークンを渡さない**。失敗時の応答は他と同じ 401",
+        "テスト: 正しい組で 200 とトークン、パスワード違いで 401、存在しないコードで 401（本文が同一）、5回失敗後に 423、**存在しないコードでも5回失敗後に 423**、ロック中は正しいパスワードでも 423、期限切れの招待で 401、129文字のパスワードで 400、レート超過で 429、no-store が付く"
+      ],
+      "done_definition": [
+        "正しいコードとパスワードでトークンが返る",
+        "コード違い・パスワード違い・存在しない・期限切れの応答が本文とステータスとも同一",
+        "実在しないコードでもロックされ、423 が実在の判定材料にならない",
+        "失敗回数の更新がトランザクション内で行われる",
+        "レート超過で 429 が返り、その経路では scrypt が実行されない",
+        "Cache-Control: no-store が付いている",
+        "cd web && npx vitest run が全パス"
+      ],
+      "verify_commands": ["cd web && npx vitest run", "cd web && npm run build"],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_005",
+      "title": "管理画面の招待作成にコードとパスワードを足す",
+      "goal": "管理者がコードとパスワードをクライアントに渡せるようにする。",
+      "scope": [
+        "招待作成時に invitationSecrets を書く",
+        "作成完了画面でコードとパスワードを一度だけ表示する",
+        "招待詳細でパスワードを再設定できるようにする"
+      ],
+      "non_scope": ["既存の招待への一括付与（必要になったら別タスク）", "クライアント自身によるパスワード変更"],
+      "files_to_read": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx"
+      ],
+      "files_to_create": ["admin/src/app/api/invitation-secret/route.ts"],
+      "files_to_modify": [
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx"
+      ],
+      "dependencies": ["task_004"],
+      "implementation_steps": [
+        "**admin から invitationSecrets を直接書けない**（ルールで閉じており、admin はクライアント SDK）。admin 側に Route Handler を作り、admin にも firebase-admin を入れる",
+        "**認可を必ず実装する。** (1) ブラウザが Firebase の ID トークンを取得し `Authorization: Bearer <token>` で送る (2) サーバーで Admin SDK の verifyIdToken() で検証 (3) デコードした uid で users/{uid} を読み role == 'admin' を確認 (4) 通った場合だけ書く。**認可なしの Route Handler を置くと、第三者が任意の招待のパスワードを再設定できる**",
+        "この経路は `users/{uid}` の role をクライアントが書けないことが前提。2026-08-22 に firestore.rules で塞いだ",
+        "**invitationCodes/{code} は create() で予約する。** 既存確認してから set すると競合に負け、同じコードが2つできる",
+        "コードは自動生成して表示する。編集させない",
+        "パスワードは**サーバーで生成した候補**を既定にする。管理者が書き換える場合は最低12文字とよくあるパスワードの拒否リストを課す",
+        "**作成後は二度と表示できないことを画面に明示する。** ハッシュしか保存しないため実際に再表示できない",
+        "コピーボタンを置く。手で書き写す前提にしない",
+        "招待詳細に「パスワードを再設定」を置く。再設定時は failedAttempts と lockedUntil も消す",
+        "既存の「リンクをコピー」は残す。**リンク経路を廃止しない**"
+      ],
+      "done_definition": [
+        "招待を作るとコードとパスワードが一度だけ表示される",
+        "パスワードを再設定でき、再設定でロックも解除される",
+        "既存のリンクコピーが従来どおり動く",
+        "cd admin && npx vitest run が全パス、npm run build が成功"
+      ],
+      "verify_commands": ["cd admin && npx vitest run", "cd admin && npm run build"],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_006",
+      "title": "web のトップページをコード入力フォームにする",
+      "goal": "ブラウザからコードとパスワードでギャラリーへ入れるようにする。",
+      "scope": ["web/src/app/page.tsx をフォームに置き換える", "エラー表示", "日英併記"],
+      "non_scope": ["デザインの刷新", "パスワードマネージャ連携の作り込み"],
+      "files_to_read": ["web/src/app/page.tsx", "mobile/src/screens/OpenByLinkScreen.tsx"],
+      "files_to_create": [],
+      "files_to_modify": ["web/src/app/page.tsx"],
+      "dependencies": ["task_004"],
+      "implementation_steps": [
+        "コード欄とパスワード欄。コード欄は autoCapitalize=characters、autoComplete=off",
+        "成功したら router.push(`/gallery/${token}`)",
+        "401 は「コードまたはパスワードが違います」。**どちらが違うか言わない**",
+        "423 は「しばらく待ってからお試しください」と残り時間",
+        "日英併記にする。App Store のレビュアーは日本語話者とは限らない",
+        "**トークンを URL に出したあとブラウザ履歴に残る点をどう扱うか決めて記録する。** 現状のリンク経路と同じなので新たな悪化ではない"
+      ],
+      "done_definition": [
+        "正しいコードとパスワードでギャラリーが開く",
+        "誤りのときにどちらが違うかを表示しない",
+        "ロック中に残り時間が出る",
+        "cd web && npx vitest run が全パス、npm run build が成功"
+      ],
+      "verify_commands": ["cd web && npx vitest run", "cd web && npm run build"],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_007",
+      "title": "アプリの貼り付け画面にパスワード欄を足す",
+      "goal": "アプリでもコードとパスワードで開けるようにする。リンク経路は変えない。",
+      "scope": [
+        "OpenByLinkScreen にパスワード欄を足す",
+        "normalizeInvitationInput をコード判定とURL判定に分ける",
+        "コード入力時は API を叩いてトークンを得る"
+      ],
+      "non_scope": ["ディープリンク処理（resolveDeepLink）の変更", "ブリッジのプロトコル変更"],
+      "files_to_read": [
+        "mobile/src/screens/OpenByLinkScreen.tsx",
+        "mobile/src/navigation/resolveInitialUrl.ts",
+        "mobile/src/navigation/resolveInitialUrl.test.ts",
+        "mobile/App.tsx"
+      ],
+      "files_to_create": ["mobile/src/api/openInvitation.ts"],
+      "files_to_modify": [
+        "mobile/src/screens/OpenByLinkScreen.tsx",
+        "mobile/src/navigation/resolveInitialUrl.ts",
+        "mobile/src/navigation/resolveInitialUrl.test.ts"
+      ],
+      "dependencies": ["task_004"],
+      "implementation_steps": [
+        "**判定を3分岐にする。** { kind: 'url', url } | { kind: 'token', url } | { kind: 'code', code } | null。今は8〜40文字をすべてトークンとみなして `/gallery/<入力>` を組み立てている",
+        "**21文字で TOKEN_ALPHABET（A-Za-z0-9-）のみなら、今までどおりトークンとして扱う。** ここを落とすと『トークンだけ貼り付け』が壊れ、有効なトークンなのにパスワードを求められて開けなくなる。mobile/src/navigation/resolveInitialUrl.test.ts が21文字トークンの貼り付けを検証している",
+        "8文字でコードのアルファベットのみのときだけコードとして扱う",
+        "URL のときはパスワードを使わない。**既存のリンク経路を変えない**",
+        "コードのときはパスワード必須。/api/invitation/open を叩き、返ったトークンで galleryUrlForToken を組み立てる",
+        "通信失敗と 401 と 423 を区別して文言を出し分ける。**通信失敗で保存済みトークンを捨てない**",
+        "日英併記を維持する",
+        "テスト: URL 判定とコード判定、React Native の URL スタブ相当でも壊れないこと（既存テストの方式を踏襲）"
+      ],
+      "done_definition": [
+        "コードとパスワードでギャラリーが開く",
+        "リンクの貼り付けが従来どおり動く（パスワード不要）",
+        "**21文字のトークンだけの貼り付けが従来どおり動く（パスワード不要）**",
+        "ディープリンク（メモからのタップ）が従来どおり動く",
+        "cd mobile && npm run typecheck && npm test が通る"
+      ],
+      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test"],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_008",
+      "title": "総当たり対策が実際に効くことを確認する",
+      "goal": "机上ではなく実際にロックがかかることを確かめる。",
+      "scope": ["連続失敗でロックされることの確認", "応答時間の確認", "本番デプロイ後の再確認"],
+      "non_scope": ["負荷試験", "第三者によるペネトレーションテスト"],
+      "files_to_read": ["docs/invitation-code/acceptance-checks.json"],
+      "files_to_create": ["docs/invitation-code/verification.md"],
+      "files_to_modify": [],
+      "dependencies": ["task_005", "task_006", "task_007"],
+      "implementation_steps": [
+        "使い捨ての招待を作る",
+        "誤ったパスワードを5回送り、6回目が 423 になることを確認する",
+        "ロック中に**正しい**パスワードを送っても 423 になることを確認する",
+        "**存在しないコードでも同じ回数で 423 になることを確認する。** ここが違うとコードの実在が判定できる",
+        "応答時間を **(実在 + パスワード違い) / (非実在) / (ロック中)** の3群で比較する。各群30回以上。**ウォーム済みとコールドスタートを分けて記録する**。中央値だけでなく分布（p50 / p90）を見る",
+        "並行して6リクエストを同時に送り、失敗回数が正しく6数えられることを確認する（トランザクションが効いているか）",
+        "レート制限の超過で 429 が返り、その経路で応答が速すぎない（=情報にならない）ことを確認する",
+        "**推測値を書かない。** 測った値をそのまま verification.md に記録する",
+        "本番へデプロイしたあと、本番でも同じ確認を1周する"
+      ],
+      "done_definition": [
+        "5回失敗でロックされることを実測した",
+        "ロック中は正しいパスワードでも通らないことを実測した",
+        "存在しないコードでも同じ回数でロックされることを実測した",
+        "3群の応答時間分布を、ウォーム/コールドを分けて記録した",
+        "並行リクエストでも失敗回数が正しく数えられることを実測した",
+        "本番でも確認した"
+      ],
+      "verify_commands": [],
+      "risk_level": "medium"
+    }
+  ]
+}

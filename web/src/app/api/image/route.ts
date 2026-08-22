@@ -92,7 +92,20 @@ export async function GET(request: NextRequest) {
     return new Response(new Uint8Array(optimized), {
       headers: {
         'Content-Type': outputType,
-        'Cache-Control': `public, max-age=${CACHE_MAX_AGE}`,
+        /**
+         * s-maxage が無いと Vercel の CDN は一切キャッシュせず、訪問者が変わるたび、
+         * ブラウザのキャッシュが切れるたびに sharp のリサイズが走る。
+         *
+         * 同じ URL は常に同じ画像を返す。元画像の URL には Storage が発行した
+         * トークンが含まれており、写真を差し替えれば URL 自体が変わるため、
+         * immutable を付けても古い画像が残り続けることはない。
+         *
+         * stale-while-revalidate は、期限切れ直後のリクエストに古い応答を返しつつ
+         * 裏で作り直すためのもの。切り替わりの瞬間に待たされるのを避ける。
+         */
+        'Cache-Control': `public, max-age=${CACHE_MAX_AGE}, s-maxage=31536000, stale-while-revalidate=86400, immutable`,
+        // 応答は Accept ヘッダで avif / webp / jpeg に分かれる。
+        // これが無いと、別の形式を受け付けるブラウザへ誤った形式が配られる。
         'Vary': 'Accept',
       },
     });

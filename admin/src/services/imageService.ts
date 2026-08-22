@@ -3,6 +3,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  setDoc,
   updateDoc,
   deleteDoc,
   query,
@@ -26,7 +27,9 @@ import {
   deleteObject,
 } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
-import { generateThumbnails } from '../utils/thumbnailGenerator';
+import type { ThumbnailResult } from '../utils/thumbnailGenerator';
+import { createBatchWriter, MAX_BATCH_OPERATIONS } from '../utils/batchWriter';
+import { runWithConcurrency } from '../utils/uploadQueue';
 import {
   getInvitationsByProject,
   getActiveInvitationsByProject,
@@ -111,25 +114,45 @@ const syncInvitationsOnImageDelete = async (
 };
 
 /**
+ * arrayUnion に一度に渡す ID の最大数。
+ * 公式に上限の明示は無いが、1回のコミットを肥大させないため分割する。
+ */
+const ARRAY_UNION_CHUNK = 300;
+
+/**
  * 新画像IDをアクティブ招待に追加（アトミック操作）
  * arrayUnionは重複追加を防ぐ
+ *
+ * 以前は画像1枚ごとに呼んでいたため、同じ招待ドキュメントへ枚数分の書き込みが
+ * 集中していた。現在は finalizeUploadBatch から**複数IDをまとめて**呼ぶ。
  */
 const syncInvitationsOnImageUpload = async (
   projectId: string,
-  newImageId: string
+  newImageIds: string[]
 ): Promise<void> => {
+  if (newImageIds.length === 0) return;
   try {
     const activeInvitations = await getActiveInvitationsByProject(projectId);
     if (activeInvitations.length === 0) return;
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < newImageIds.length; i += ARRAY_UNION_CHUNK) {
+      chunks.push(newImageIds.slice(i, i + ARRAY_UNION_CHUNK));
+    }
+
     await Promise.all(
-      activeInvitations.map((inv) =>
-        updateDoc(doc(db, INVITATIONS_COLLECTION, inv.id), {
-          imageIds: arrayUnion(newImageId),
-          updatedAt: serverTimestamp(),
-        }).catch((error) =>
-          console.warn(`Failed to sync invitation ${inv.id} on upload:`, error)
-        )
-      )
+      activeInvitations.map(async (inv) => {
+        for (const chunk of chunks) {
+          try {
+            await updateDoc(doc(db, INVITATIONS_COLLECTION, inv.id), {
+              imageIds: arrayUnion(...chunk),
+              updatedAt: serverTimestamp(),
+            });
+          } catch (error) {
+            console.warn(`Failed to sync invitation ${inv.id} on upload:`, error);
+          }
+        }
+      })
     );
   } catch (error) {
     console.warn('Failed to sync invitations on image upload:', error);
@@ -203,11 +226,64 @@ export const getImage = async (imageId: string): Promise<Image | null> => {
   return docToImage(docSnap);
 };
 
-// Upload image with project association (transaction for imageCount sync)
-export const uploadImage = async (
+/**
+ * プロジェクトの存在を1回だけ確認する。
+ *
+ * 以前は画像1枚ごとにトランザクション内で確認していたため、枚数分の読み取りが発生していた。
+ * バッチの開始時に1回呼べば十分である。
+ *
+ * @throws プロジェクトが存在しない場合（従来のトランザクションと同じメッセージ）
+ */
+export const assertProjectExists = async (projectId: string): Promise<void> => {
+  const snap = await getDoc(doc(db, PROJECTS_COLLECTION, projectId));
+  if (!snap.exists()) {
+    throw new Error('Project not found');
+  }
+};
+
+/**
+ * アップロード1バッチ分の後処理をまとめて行う。
+ *
+ * `projects.imageCount` の加算と招待への画像ID追加は、いずれも**同じドキュメント**への
+ * 書き込みになる。これを画像1枚ごとに行うと書き込みが集中して競合し、
+ * アップロード全体が遅くなる。ここでまとめて実行する。
+ *
+ * 呼び出し元のアップロードは既に成功しているため、この関数は**例外を投げない**。
+ * 失敗した場合はログに残し、画像自体は保存済みのままとする。
+ */
+export const finalizeUploadBatch = async (
+  projectId: string,
+  imageIds: string[]
+): Promise<void> => {
+  if (imageIds.length === 0) return;
+
+  try {
+    await updateDoc(doc(db, PROJECTS_COLLECTION, projectId), {
+      imageCount: increment(imageIds.length),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    console.warn('Failed to update project imageCount:', error);
+  }
+
+  await syncInvitationsOnImageUpload(projectId, imageIds);
+};
+
+/**
+ * 画像1枚を Storage と Firestore に保存する。
+ *
+ * この関数は `projects` と `invitations` に**一切書き込まない**。
+ * それらの更新は finalizeUploadBatch がバッチ単位で行う。
+ * ここで書き込むと同じドキュメントへの書き込みが枚数分集中してしまう。
+ *
+ * サムネイルは呼び出し元（prepareUpload）が生成済みのものを受け取る。
+ * 関数内で生成すると画像を2回デコードすることになる。
+ */
+export const uploadImageFile = async (
   projectId: string,
   userId: string,
   file: File,
+  thumbnailResults: ThumbnailResult[],
   title: string,
   description?: string
 ): Promise<Image> => {
@@ -216,20 +292,13 @@ export const uploadImage = async (
   const storagePath = `images/${userId}/${filename}`;
   const storageRef = ref(storage, storagePath);
 
-  // Generate thumbnails + upload original in parallel
   const metadata = { contentType: file.type || 'image/jpeg' };
   const webpMeta = { contentType: 'image/webp' };
 
   let thumbnailData: { small: string; medium: string } | undefined;
   let thumbnailPaths: string[] | undefined;
 
-  const [, thumbnailResults] = await Promise.all([
-    uploadBytes(storageRef, file, metadata),
-    generateThumbnails(file).catch((err) => {
-      console.warn('Thumbnail generation failed, continuing without:', err);
-      return [];
-    }),
-  ]);
+  await uploadBytes(storageRef, file, metadata);
 
   // Upload thumbnails + get original URL in parallel
   const thumbnailUploads = thumbnailResults.map(async (thumb) => {
@@ -254,9 +323,9 @@ export const uploadImage = async (
     }
   }
 
-  // Create document in Firestore with transaction to update project imageCount
+  // 新規ドキュメントへの書き込みなので競合しない。トランザクションは不要。
+  // プロジェクトの存在確認は assertProjectExists がバッチ開始時に済ませている。
   const imageDocRef = doc(collection(db, IMAGES_COLLECTION));
-  const projectDocRef = doc(db, PROJECTS_COLLECTION, projectId);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const imageData: Record<string, any> = {
@@ -275,27 +344,26 @@ export const uploadImage = async (
     imageData.thumbnailPaths = thumbnailPaths;
   }
 
-  await runTransaction(db, async (transaction) => {
-    const projectSnap = await transaction.get(projectDocRef);
-    if (!projectSnap.exists()) {
-      throw new Error('Project not found');
-    }
+  await setDoc(imageDocRef, imageData);
 
-    transaction.set(imageDocRef, imageData);
-
-    transaction.update(projectDocRef, {
-      imageCount: increment(1),
-      updatedAt: serverTimestamp(),
-    });
-  });
-
-  const newDoc = await getDoc(imageDocRef);
-  const newImage = docToImage(newDoc) as Image;
-
-  // トランザクション成功後にベストエフォートで招待同期
-  await syncInvitationsOnImageUpload(projectId, newImage.id);
-
-  return newImage;
+  // 書いたばかりのドキュメントを読み直さず、手元のデータから組み立てる。
+  // Firestore 上の createdAt / updatedAt はサーバー時刻のままで、
+  // クライアント時刻になるのはこの戻り値だけ（呼び出し元は件数にしか使っていない）。
+  const now = new Date();
+  return {
+    id: imageDocRef.id,
+    projectId,
+    url,
+    storagePath,
+    title,
+    description: description || '',
+    userId,
+    likeCount: 0,
+    thumbnails: thumbnailData,
+    thumbnailPaths,
+    createdAt: now,
+    updatedAt: now,
+  };
 };
 
 // Update image
@@ -310,70 +378,223 @@ export const updateImage = async (
   });
 };
 
-// Delete image with transaction for imageCount sync
+/**
+ * 削除の同時実行数。
+ *
+ * 実在する前例に合わせた値（アップロードは UPLOAD_CONCURRENCY = 4）。
+ * ここを上げすぎると Firestore と Storage を叩きすぎてレート制限に当たる。
+ * 実測して調整する（docs/project-delete/measurement.md）。
+ */
+const DELETE_CONCURRENCY = 4;
+
+/** `in` クエリ1回に渡せる値の上限。Firestore Standard は 30。 */
+const IN_QUERY_CHUNK = 30;
+
+/**
+ * 画像に紐づく Storage 上のファイル（原本とサムネイル）を削除する。
+ *
+ * **必ず画像ドキュメントより先に呼ぶ。** ドキュメントを先に消すと storagePath を
+ * 失い、この削除に失敗したファイルは永久に孤児として残る。先に消しておけば
+ * 画像ドキュメントが手元に残るので、再実行で回収できる。
+ *
+ * 失敗しても例外にはしないが、**どのパスが失敗したかは必ず残す**。
+ * ここで止めると Firestore 側を消せなくなり、削除そのものが進まなくなる。
+ */
+const deleteImageFiles = async (
+  storagePath: string | undefined,
+  thumbnailPaths: string[] = []
+): Promise<void> => {
+  const paths = [storagePath, ...thumbnailPaths].filter(
+    (p): p is string => typeof p === 'string' && p.length > 0
+  );
+
+  await Promise.all(
+    paths.map(async (path) => {
+      try {
+        await deleteObject(ref(storage, path));
+      } catch (error) {
+        console.warn(`Failed to delete file from storage: ${path}`, error);
+      }
+    })
+  );
+};
+
+/**
+ * 画像1枚に付いたお気に入りを削除する。
+ *
+ * **失敗を握り潰さない。** 2026-08-17 に firestore.rules の likes の delete から
+ * isAdmin() が抜け落ちた際、ここが try-catch で握り潰していたため、管理画面からの
+ * 画像削除でお気に入りだけが permission-denied で消えず、孤児が溜まり続けていた。
+ * 権限の欠落が表に出ないのが一番まずい。
+ */
+const deleteLikesForImage = async (imageId: string): Promise<void> => {
+  const likesSnapshot = await getDocs(
+    query(collection(db, LIKES_COLLECTION), where('imageId', '==', imageId))
+  );
+  await Promise.all(
+    likesSnapshot.docs.map((likeDoc) =>
+      deleteDoc(doc(db, LIKES_COLLECTION, likeDoc.id))
+    )
+  );
+};
+
+/**
+ * 複数の画像に付いたお気に入りの ID を、画像 ID ごとにまとめて返す。
+ *
+ * 画像1枚ごとにクエリを投げると700枚で700往復になる。`in` でまとめると
+ * 30枚分を1回で引けるので 24 往復で済む。
+ */
+const findLikeIdsForImages = async (
+  imageIds: string[]
+): Promise<Map<string, string[]>> => {
+  const byImage = new Map<string, string[]>();
+  if (imageIds.length === 0) return byImage;
+
+  const chunks: string[][] = [];
+  for (let i = 0; i < imageIds.length; i += IN_QUERY_CHUNK) {
+    chunks.push(imageIds.slice(i, i + IN_QUERY_CHUNK));
+  }
+
+  const results = await runWithConcurrency(chunks, DELETE_CONCURRENCY, (chunk) =>
+    getDocs(query(collection(db, LIKES_COLLECTION), where('imageId', 'in', chunk)))
+  );
+
+  let failures = 0;
+  for (const result of results) {
+    if (!result.ok) {
+      failures += 1;
+      console.warn('Failed to look up likes for images:', result.error);
+      continue;
+    }
+    for (const likeDoc of result.value.docs) {
+      const imageId = likeDoc.data()?.imageId;
+      if (typeof imageId !== 'string') continue;
+      const ids = byImage.get(imageId);
+      if (ids) ids.push(likeDoc.id);
+      else byImage.set(imageId, [likeDoc.id]);
+    }
+  }
+
+  // 引けなかった分を黙って飛ばすと、お気に入りだけが孤児として残る。
+  if (failures > 0) {
+    throw new Error(`Failed to look up likes for ${failures} image chunk(s)`);
+  }
+
+  return byImage;
+};
+
+/** 削除の進捗。件数は画像の枚数で数える。 */
+export interface DeleteProgress {
+  completed: number;
+  total: number;
+}
+
+/**
+ * プロジェクトに属する画像をまとめて削除する。
+ *
+ * 1枚ずつの deleteImage とは**意図的に別経路**にしている。プロジェクトごと消す場合、
+ * 招待は先に消えているので招待同期は要らない。1枚ごとに走らせると700枚で
+ * 700回の招待取得が発生し、これが遅さの主因だった。
+ *
+ * 引数が ID ではなく Image なのは、Storage を消すのに storagePath と
+ * thumbnailPaths が要るため。getImagesByProject の結果をそのまま渡せる。
+ *
+ * 順序は **Storage → Firestore**。逆にすると storagePath を失う。
+ * `imageCount` はバッチごとに減らす。省くと、途中で失敗したときに
+ * 「700枚」と表示されたまま中身が空、という戻せない状態になる。
+ *
+ * @throws Firestore の削除に失敗した場合。Storage の失敗だけは警告に留める。
+ */
+export const deleteImagesForProject = async (
+  projectId: string,
+  images: Image[],
+  onProgress?: (progress: DeleteProgress) => void
+): Promise<void> => {
+  if (images.length === 0) return;
+
+  const likeIdsByImage = await findLikeIdsForImages(images.map((img) => img.id));
+
+  // 1. Storage を先に消す。失敗しても止めない（あとから掃除できる）。
+  await runWithConcurrency(images, DELETE_CONCURRENCY, (image) =>
+    deleteImageFiles(image.storagePath, image.thumbnailPaths)
+  );
+
+  // 2. Firestore はバッチで消す。commit が失敗すればそのまま例外になる。
+  const writer = createBatchWriter(db);
+  const projectRef = doc(db, PROJECTS_COLLECTION, projectId);
+  let queued = 0;
+  let completed = 0;
+
+  const commitGroup = async (): Promise<void> => {
+    if (queued === 0) return;
+    await writer.update(projectRef, {
+      imageCount: increment(-queued),
+      updatedAt: serverTimestamp(),
+    });
+    await writer.flush();
+    completed += queued;
+    queued = 0;
+    onProgress?.({ completed, total: images.length });
+  };
+
+  for (const image of images) {
+    const likeIds = likeIdsByImage.get(image.id) ?? [];
+    // この画像の分（画像1 + お気に入り + プロジェクト更新1）が収まらなければ先に確定させる。
+    // 収まらないまま積むと BatchWriter が画像の途中で分割し、imageCount の減算が
+    // その画像の削除とは別のバッチに落ちる。
+    if (writer.size + likeIds.length + 2 > MAX_BATCH_OPERATIONS) {
+      await commitGroup();
+    }
+    await writer.delete(doc(db, IMAGES_COLLECTION, image.id));
+    for (const likeId of likeIds) {
+      await writer.delete(doc(db, LIKES_COLLECTION, likeId));
+    }
+    queued += 1;
+  }
+
+  await commitGroup();
+};
+
+/**
+ * 画像1枚を削除する。管理画面の画像一覧から呼ばれる経路。
+ *
+ * 順序は **Storage → お気に入り → 画像ドキュメント**。
+ * 以前は Storage の削除とお気に入りの検索をトランザクションのコールバック内で
+ * 行っていた。トランザクションは競合すると**丸ごと再実行される**ため、
+ * 中に外部への副作用を置くと Storage の削除が何度も走る。
+ * トランザクションに残すのは、画像ドキュメントの削除と imageCount の更新だけ。
+ */
 export const deleteImage = async (imageId: string): Promise<void> => {
   const imageDocRef = doc(db, IMAGES_COLLECTION, imageId);
-  let projectId: string | undefined;
 
-  // Use transaction to atomically delete image and update project count
+  const imageSnap = await getDoc(imageDocRef);
+  if (!imageSnap.exists()) {
+    throw new Error('Image not found');
+  }
+
+  const imageData = imageSnap.data();
+  const projectId: string | undefined = imageData?.projectId;
+
+  await deleteImageFiles(imageData?.storagePath, imageData?.thumbnailPaths);
+  await deleteLikesForImage(imageId);
+
   await runTransaction(db, async (transaction) => {
-    const imageSnap = await transaction.get(imageDocRef);
-    if (!imageSnap.exists()) {
-      throw new Error('Image not found');
-    }
+    const current = await transaction.get(imageDocRef);
+    // 別経路で既に消えている場合、ここで imageCount を二重に減らさない。
+    if (!current.exists()) return;
 
-    const imageData = imageSnap.data();
-    const storagePath = imageData?.storagePath;
-    projectId = imageData?.projectId;
-    const thumbPaths: string[] = imageData?.thumbnailPaths || [];
-
-    // Delete from Storage (best-effort)
-    if (storagePath) {
-      const storageRef = ref(storage, storagePath);
-      try {
-        await deleteObject(storageRef);
-      } catch (error) {
-        console.warn('Failed to delete file from storage:', error);
-      }
-    }
-
-    // Delete thumbnails (best-effort)
-    for (const tp of thumbPaths) {
-      try {
-        await deleteObject(ref(storage, tp));
-      } catch (error) {
-        console.warn('Failed to delete thumbnail from storage:', error);
-      }
-    }
-
-    // Delete associated likes (best-effort, outside transaction)
-    try {
-      const likesQuery = query(
-        collection(db, LIKES_COLLECTION),
-        where('imageId', '==', imageId)
-      );
-      const likesSnapshot = await getDocs(likesQuery);
-      for (const likeDoc of likesSnapshot.docs) {
-        await deleteDoc(doc(db, LIKES_COLLECTION, likeDoc.id));
-      }
-    } catch (error) {
-      console.warn('Failed to delete likes for image:', error);
-    }
-
-    // Delete image document
     transaction.delete(imageDocRef);
 
-    // Update project imageCount if projectId exists
     if (projectId) {
-      const projectDocRef = doc(db, PROJECTS_COLLECTION, projectId);
-      transaction.update(projectDocRef, {
+      transaction.update(doc(db, PROJECTS_COLLECTION, projectId), {
         imageCount: increment(-1),
         updatedAt: serverTimestamp(),
       });
     }
   });
 
-  // トランザクション成功後にベストエフォートで招待同期
+  // 招待から画像 ID を外す。プロジェクトごと消す場合は招待が先に消えるため不要で、
+  // deleteImagesForProject では呼んでいない。
   if (projectId) {
     await syncInvitationsOnImageDelete(projectId, imageId);
   }

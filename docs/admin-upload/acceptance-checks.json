@@ -1,0 +1,165 @@
+{
+  "feature": "admin の画像アップロード高速化",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "速度（本計画の主目的）",
+      "rule": "同一条件でのアップロード所要時間が、変更前より短くなっている",
+      "expected_result": "同じ画像セット・同じ枚数・同じ回線で計測し、変更後の所要時間が変更前を下回る。改善幅は実測値で記録される",
+      "manual_or_automated": "manual",
+      "verification_method": "task_001 で記録した変更前の値と、task_007 で記録した変更後の値を docs/admin-upload/measurement.md で突き合わせる。条件が揃っていない計測は無効とする"
+    },
+    {
+      "id": "check_002",
+      "target": "サーバー往復の削減",
+      "rule": "画像1枚あたりのサーバーへのリクエスト数が減っている",
+      "expected_result": "変更前は約11回（元画像1・サムネ2・URL取得3・トランザクション2・読み直し1・招待クエリ1・招待更新1以上）。変更後は7回前後で、projects と invitations への書き込みが1枚ごとには発生しない",
+      "manual_or_automated": "manual",
+      "verification_method": "ブラウザ開発者ツールのネットワークタブで、10枚アップロードしたときの firestore.googleapis.com と firebasestorage.googleapis.com へのリクエスト数を数え、枚数で割る"
+    },
+    {
+      "id": "check_003",
+      "target": "images ドキュメントの同一性（最重要の回帰条件）",
+      "rule": "保存される画像ドキュメントのフィールド構成が変更前と一致する",
+      "expected_result": "projectId / url / storagePath / title / description / userId / likeCount / thumbnails / thumbnailPaths / createdAt / updatedAt がすべて存在し、型と意味が変更前と同じ",
+      "manual_or_automated": "manual",
+      "verification_method": "変更前にアップロードした画像ドキュメントと、変更後にアップロードした画像ドキュメントを Firebase コンソールで並べて比較する"
+    },
+    {
+      "id": "check_004",
+      "target": "タイムスタンプがサーバー時刻であること",
+      "rule": "createdAt / updatedAt が Firestore 上でサーバー時刻である。クライアント時刻になっていない",
+      "expected_result": "serverTimestamp() による値が保存されている。端末の時計を故意にずらしても保存値は影響を受けない",
+      "manual_or_automated": "manual",
+      "verification_method": "Firebase コンソールで保存値を確認する。加えて imageService のコードで serverTimestamp() が使われ続けていることを確認する（getDoc の読み直しを廃止した戻り値だけがクライアント時刻の近似になる想定）"
+    },
+    {
+      "id": "check_005",
+      "target": "Storage の保存先とサムネイル仕様の同一性",
+      "rule": "Storage のパス・ファイル形式・サムネイル寸法が変更前と一致する",
+      "expected_result": "元画像は images/{userId}/{filename}、サムネイルは thumbnails/{userId}/{filename}_{width}.webp。サムネイルの幅は 384 と 640、形式は WebP",
+      "manual_or_automated": "manual",
+      "verification_method": "Firebase コンソールの Storage で、変更前後のファイルのパスと寸法を比較する。サムネイルは実際にダウンロードして幅を確認する"
+    },
+    {
+      "id": "check_006",
+      "target": "デコード回数（task_002 のコア）",
+      "rule": "1枚の画像に対して createImageBitmap が1回しか呼ばれない",
+      "expected_result": "4MB を超える画像でも、圧縮とサムネイル生成で合計1回のデコードで済む",
+      "manual_or_automated": "automated",
+      "verification_method": "admin/src/utils/prepareUpload.test.ts で createImageBitmap をモックし、呼び出し回数が1であることを検証する"
+    },
+    {
+      "id": "check_007",
+      "target": "圧縮仕様の同一性",
+      "rule": "圧縮の閾値・最大寸法・品質・出力形式が変更前と一致する",
+      "expected_result": "4MB 以下は無圧縮、最大寸法3840、品質0.85（超過時0.7で再試行）、PNG は WebP、それ以外は JPEG。圧縮後が元より大きければ元を採用",
+      "manual_or_automated": "automated",
+      "verification_method": "prepareUpload.test.ts で各条件を検証する。既存の imageCompression.ts の実装と突き合わせる"
+    },
+    {
+      "id": "check_008",
+      "target": "imageCount の整合（データベースの振る舞い）",
+      "rule": "アップロード完了後の projects.imageCount が実際の画像件数と一致する",
+      "expected_result": "100枚アップロードしたら imageCount が正確に100増える。多くも少なくもならない",
+      "manual_or_automated": "manual",
+      "verification_method": "アップロード前の imageCount を記録し、100枚アップロード後の値と images コレクションの実件数を Firebase コンソールで突き合わせる"
+    },
+    {
+      "id": "check_009",
+      "target": "招待同期の整合（データベースの振る舞い）",
+      "rule": "アクティブな招待の imageIds に新規画像が全件含まれ、重複がない",
+      "expected_result": "アップロードした全画像IDが招待に含まれ、同じIDが2回現れない",
+      "manual_or_automated": "manual",
+      "verification_method": "Firebase コンソールで招待の imageIds の件数と、アップロード前後の差分を確認する。重複は配列の長さと Set の要素数を比較して確認する"
+    },
+    {
+      "id": "check_010",
+      "target": "非アクティブ招待が対象外であること",
+      "rule": "isActive が false の招待には画像IDが追加されない",
+      "expected_result": "非アクティブ招待の imageIds がアップロード前後で変化しない",
+      "manual_or_automated": "automated",
+      "verification_method": "imageService.test.ts の招待同期テストで、非アクティブ招待に updateDoc が呼ばれないことを検証する（既存の観点を finalizeUploadBatch へ移設したもの）"
+    },
+    {
+      "id": "check_011",
+      "target": "同一ドキュメントへの書き込み回数",
+      "rule": "finalizeUploadBatch が imageIds の件数に関わらず、projects への書き込み1回で完了する",
+      "expected_result": "50件を渡しても projects への updateDoc は1回。招待は1件あたり最大 ceil(件数/300) 回",
+      "manual_or_automated": "automated",
+      "verification_method": "imageService.test.ts で updateDoc のモック呼び出し回数を検証する"
+    },
+    {
+      "id": "check_012",
+      "target": "エラー処理: 1枚失敗しても継続",
+      "rule": "1枚のアップロードが失敗しても残りが継続し、成功/失敗件数が表示される",
+      "expected_result": "「N枚成功、M枚失敗」が表示され、成功分は正しく保存されている",
+      "manual_or_automated": "manual",
+      "verification_method": "壊れた画像ファイルを1枚混ぜてアップロードし、表示メッセージと実際の保存件数を確認する"
+    },
+    {
+      "id": "check_013",
+      "target": "エラー処理: 存在しないプロジェクト",
+      "rule": "存在しないプロジェクトIDでアップロードを開始すると、1枚もアップロードせずにエラーになる",
+      "expected_result": "エラーメッセージが表示され、Storage にファイルが残らない",
+      "manual_or_automated": "manual",
+      "verification_method": "URL のプロジェクトIDを存在しない値に書き換えてアップロードを試し、Storage にファイルが作られていないことを確認する"
+    },
+    {
+      "id": "check_014",
+      "target": "エラー処理: 招待同期の失敗",
+      "rule": "招待同期に失敗しても、画像自体のアップロードは成功として扱われる",
+      "expected_result": "finalizeUploadBatch が例外を投げず、画面は成功メッセージを表示する",
+      "manual_or_automated": "automated",
+      "verification_method": "imageService.test.ts で updateDoc を失敗させ、finalizeUploadBatch が reject しないことを検証する（既存の観点を移設したもの）"
+    },
+    {
+      "id": "check_015",
+      "target": "並列制御（task_005 のコア）",
+      "rule": "同時実行数の上限を超えて処理が走らない",
+      "expected_result": "concurrency=4 を指定したら、同時に実行中の worker が4を超えない",
+      "manual_or_automated": "automated",
+      "verification_method": "uploadQueue.test.ts で実行中カウンタの最大値を記録し、指定値以下であることを検証する"
+    },
+    {
+      "id": "check_016",
+      "target": "UI: 進捗表示",
+      "rule": "進捗が完了枚数/総数で更新され、最終的に総数に達する",
+      "expected_result": "並列実行で複数枚が同時に完了しても、カウントの取りこぼしがなく最終値が総数と一致する",
+      "manual_or_automated": "manual",
+      "verification_method": "50枚以上をアップロードし、進捗バーの最終値が総数と一致することを目視で確認する"
+    },
+    {
+      "id": "check_017",
+      "target": "UI: 既存機能の回帰",
+      "rule": "ファイル選択・フォルダ選択・重複除去・自然順ソート・1000枚上限・システムファイル除外が変更前と同じに動く",
+      "expected_result": "いずれの機能も変更前と同じ挙動を示す",
+      "manual_or_automated": "manual",
+      "verification_method": "フォルダ選択で同じフォルダを2回追加して重複が増えないこと、IMG_2 が IMG_10 より前に並ぶこと、.DS_Store が除外されることを確認する"
+    },
+    {
+      "id": "check_018",
+      "target": "テストと lint とビルドの回帰",
+      "rule": "admin のテストが全パスし、lint エラーが 0 のまま、ビルドが成功する",
+      "expected_result": "cd admin && npx vitest run が全パス（テスト数はベースライン 103 を下回らない）、npx eslint src が 0 errors、npm run build が成功",
+      "manual_or_automated": "automated",
+      "verification_method": "3コマンドを実行し、出力をそのまま記録する"
+    },
+    {
+      "id": "check_019",
+      "target": "テストカバレッジの維持（品質の回帰）",
+      "rule": "招待同期の4観点がテストで担保され続けている",
+      "expected_result": "(1) アクティブ招待に同期される (2) 非アクティブは対象外 (3) 失敗しても継続 (4) 複数招待に反映される、の4つがすべて存在する",
+      "manual_or_automated": "manual",
+      "verification_method": "imageService.test.ts の差分を読み、4観点が finalizeUploadBatch に対する検証として残っていることを確認する。削除や期待値の緩和で通していないこと"
+    },
+    {
+      "id": "check_020",
+      "target": "中断時の不整合（既知の制約の確認）",
+      "rule": "アップロード中にブラウザを閉じた場合の不整合が、想定した範囲（直近49枚分）に収まる",
+      "expected_result": "60枚のアップロードを30枚目付近で中断したとき、imageCount と招待の反映漏れが50枚未満に収まる。画像自体は Storage と images に残る",
+      "manual_or_automated": "manual",
+      "verification_method": "60枚のアップロードを途中でタブごと閉じ、Firebase コンソールで images の件数・imageCount・招待の imageIds の差を確認する。task_009 未実施の場合、この差は手動または再同期で解消する必要がある"
+    }
+  ]
+}

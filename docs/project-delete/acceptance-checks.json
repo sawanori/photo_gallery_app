@@ -1,0 +1,181 @@
+{
+  "feature": "プロジェクト削除の高速化",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "プロジェクト削除の所要時間",
+      "rule": "変更前の 1/5 以下になる",
+      "expected_result": "同じ条件（枚数・招待数・お気に入り数・回線・ブラウザ）での実測値が 1/5 以下",
+      "manual_or_automated": "manual",
+      "verification_method": "task_001 と task_006 で、使い捨てプロジェクトを使って同条件で計測し docs/project-delete/measurement.md に記録する。**推測値を書かない。** 満たさない場合は何が律速かを記録する"
+    },
+    {
+      "id": "check_002",
+      "target": "変更前の計測",
+      "rule": "ベースラインがコード変更の前に取られている",
+      "expected_result": "measurement.md の変更前の記録が、task_003 以降のコード変更より前の日時である",
+      "manual_or_automated": "manual",
+      "verification_method": "task_001 を最初に実行する。改善後のコードで測ったベースラインは意味を成さない"
+    },
+    {
+      "id": "check_003",
+      "target": "管理者のお気に入り削除権限",
+      "rule": "firestore.rules の likes の delete に isAdmin() がある",
+      "expected_result": "`allow delete: if isAdmin() || (hasValidSession() && ...)` になっており、デプロイ済み",
+      "manual_or_automated": "automated",
+      "verification_method": "firestore.rules を grep する。**これが無いと writeBatch に likes を含めた瞬間にバッチ全体が巻き戻り、プロジェクト削除が永久に失敗する**"
+    },
+    {
+      "id": "check_004",
+      "target": "管理者のお気に入り削除（実動作）",
+      "rule": "管理画面で画像を削除すると、その画像のお気に入りが実際に消える",
+      "expected_result": "Firebase コンソールの likes に、削除した画像の imageId を持つドキュメントが残らない",
+      "manual_or_automated": "manual",
+      "verification_method": "ギャラリーでお気に入りに入れた画像を管理画面から削除し、コンソールで likes を確認する。**2026-08-17 から現在まで、この削除は permission-denied で失敗し続けている**"
+    },
+    {
+      "id": "check_005",
+      "target": "回帰: 閲覧者のお気に入り解除",
+      "rule": "ギャラリーでお気に入りを外せる",
+      "expected_result": "ハートを外すと likes ドキュメントが消える",
+      "manual_or_automated": "manual",
+      "verification_method": "ルール変更後、実際にギャラリーでお気に入りを外す。isAdmin() を足す際に既存の条件を壊していないことの確認"
+    },
+    {
+      "id": "check_006",
+      "target": "トランザクションの使い方",
+      "rule": "runTransaction の中に Storage の操作とお気に入りの検索が無い",
+      "expected_result": "runTransaction のコールバック内に deleteObject / getDocs / deleteDoc が現れない",
+      "manual_or_automated": "automated",
+      "verification_method": "コードレビューと grep。**トランザクションは競合時に再実行されるため、中に置くと Storage 削除が繰り返される**"
+    },
+    {
+      "id": "check_007",
+      "target": "削除順序: Storage が先",
+      "rule": "Storage の削除が画像ドキュメントの削除より前に実行される",
+      "expected_result": "imageService のテストで deleteObject の呼び出しが deleteDoc / transaction.delete より前である",
+      "manual_or_automated": "automated",
+      "verification_method": "テストで呼び出し順序を検証する。**ドキュメントを先に消すと storagePath を失い、失敗時にファイルが永久に孤児になる**"
+    },
+    {
+      "id": "check_008",
+      "target": "お気に入り削除の失敗検知",
+      "rule": "お気に入りの削除に失敗したら例外になる",
+      "expected_result": "deleteDoc が拒否された場合に deleteImage が reject する",
+      "manual_or_automated": "automated",
+      "verification_method": "imageService のテストで、likes の削除がエラーを返す場合の挙動を検証する。**現在は握りつぶされており、失敗が表に出ない**"
+    },
+    {
+      "id": "check_009",
+      "target": "Firestore の一括書き込み",
+      "rule": "操作数が 500 を超える場合に分割される",
+      "expected_result": "600 操作を積むと writeBatch の commit が 2 回に分かれる",
+      "manual_or_automated": "automated",
+      "verification_method": "batchWriter のテストで commit の呼び出し回数を検証する。**上限はドキュメント数ではなく操作数である。** 画像とお気に入りを同じバッチに積む以上、ドキュメント数で数えると超過する"
+    },
+    {
+      "id": "check_010",
+      "target": "削除順序: 招待が最初",
+      "rule": "招待が画像より先に消える",
+      "expected_result": "projectService のテストで、招待の削除が deleteImagesForProject より前に呼ばれる",
+      "manual_or_automated": "automated",
+      "verification_method": "テストで呼び出し順序を検証する。**画像を先に消して途中で失敗すると、生きた招待リンクが壊れたギャラリーを指したまま残る**"
+    },
+    {
+      "id": "check_011",
+      "target": "削除順序: プロジェクトが最後",
+      "rule": "画像の削除が失敗したらプロジェクトのドキュメントが消えない",
+      "expected_result": "projectService のテストで、画像削除が例外を投げた場合にプロジェクトの deleteDoc が呼ばれない",
+      "manual_or_automated": "automated",
+      "verification_method": "テストで検証する。途中で失敗したプロジェクトは画面に残り、再実行できること"
+    },
+    {
+      "id": "check_012",
+      "target": "部分失敗の検知",
+      "rule": "Firestore の削除失敗が握りつぶされない",
+      "expected_result": "runWithConcurrency の結果を集計し、ドキュメント削除の失敗があれば例外になる",
+      "manual_or_automated": "automated",
+      "verification_method": "imageService のテストで、1件が失敗する場合に deleteImagesForProject が reject することを検証する。**runWithConcurrency は1件失敗しても止まらない設計である**"
+    },
+    {
+      "id": "check_013",
+      "target": "imageCount の整合",
+      "rule": "バッチごとに imageCount が減算される",
+      "expected_result": "途中で失敗しても、消えた枚数の分だけ imageCount が減っている",
+      "manual_or_automated": "automated",
+      "verification_method": "imageService のテストで increment(-件数) の呼び出しを検証する。**省くと「700枚」と表示されたまま中身が空になる**"
+    },
+    {
+      "id": "check_014",
+      "target": "プロジェクト削除の往復回数",
+      "rule": "画像1枚あたりの往復が減る",
+      "expected_result": "deleteProject が syncInvitationsOnImageDelete を呼ばない",
+      "manual_or_automated": "automated",
+      "verification_method": "projectService のテストで検証する。招待は先に消えているため不要。現在は画像1枚ごとに招待を取得しており、700枚なら700回走る"
+    },
+    {
+      "id": "check_015",
+      "target": "プロジェクト削除の結果",
+      "rule": "プロジェクト・画像ドキュメント・招待がすべて消える",
+      "expected_result": "削除後、ダッシュボードにプロジェクトが出ず、Firestore の projects / images / invitations にも残っていない",
+      "manual_or_automated": "manual",
+      "verification_method": "削除後に Firebase コンソールで確認する"
+    },
+    {
+      "id": "check_016",
+      "target": "Storage",
+      "rule": "原本とサムネイルが消える",
+      "expected_result": "Storage の images/ と thumbnails/ から該当ファイルが消えている。失敗した分はコンソールに警告が出る",
+      "manual_or_automated": "manual",
+      "verification_method": "Firebase コンソールの Storage で確認する。best-effort のため一部残る場合があるが、その場合は何が失敗したかが警告に出ていること"
+    },
+    {
+      "id": "check_017",
+      "target": "回帰: 画像1枚の削除",
+      "rule": "画面から画像を1枚削除する経路が従来どおり動く",
+      "expected_result": "imageCount が 1 減り、招待の imageIds からその画像が除かれる",
+      "manual_or_automated": "manual",
+      "verification_method": "管理画面で画像を1枚削除し、プロジェクトの枚数表示と招待の中身を確認する。**プロジェクト削除で省いた処理を、こちらでも省いてしまっていないか**"
+    },
+    {
+      "id": "check_018",
+      "target": "進捗表示",
+      "rule": "削除中に進捗が見える",
+      "expected_result": "「削除しています… 12 / 50」のように件数が更新される",
+      "manual_or_automated": "manual",
+      "verification_method": "50枚のプロジェクトを削除して画面を見る"
+    },
+    {
+      "id": "check_019",
+      "target": "進捗表示",
+      "rule": "失敗しても表示が残らない",
+      "expected_result": "エラー時に loading の表示が消え、エラーメッセージが出る",
+      "manual_or_automated": "manual",
+      "verification_method": "機内モードやネットワークを切った状態で削除を実行する"
+    },
+    {
+      "id": "check_020",
+      "target": "ダッシュボードの一括削除",
+      "rule": "複数プロジェクトを直列に処理し、進捗が出る",
+      "expected_result": "「3 / 5 件」のようにプロジェクト単位で進捗が出て、全件が消える",
+      "manual_or_automated": "manual",
+      "verification_method": "使い捨てプロジェクトを3件作り、ダッシュボードから一括削除する。**Promise.all のままだと同時実行数がプロジェクト数倍に膨らむ**"
+    },
+    {
+      "id": "check_021",
+      "target": "同時実行数",
+      "rule": "レート制限のエラーが出ない",
+      "expected_result": "採用した同時実行数で、Firestore と Storage のエラーが発生しない",
+      "manual_or_automated": "manual",
+      "verification_method": "task_006 の計測中にコンソールのエラーを確認する。出た場合は同時実行数を下げて再計測する。採用値と理由を measurement.md とコードのコメントに残す"
+    },
+    {
+      "id": "check_022",
+      "target": "ビルドと静的検査",
+      "rule": "検証コマンドが既存のベースラインを超えない",
+      "expected_result": "npx vitest run が全パス、npx eslint src が 0 errors / 1 warning 以内、npm run build が成功",
+      "manual_or_automated": "automated",
+      "verification_method": "cd admin && npx vitest run && npx eslint src && npm run build。**cd admin && npm run lint は使わない。Next.js 16 で next lint が削除されており、終了コード 0 を返すが何も検査していない**"
+    }
+  ]
+}

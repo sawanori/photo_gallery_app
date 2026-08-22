@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Image as ImageType } from '@/types';
 import { isAndroid } from '@/utils/device';
+import { useIsNativeShell } from '@/hooks/useIsNativeShell';
 
 interface ShareButtonProps {
   image: ImageType;
@@ -11,6 +12,7 @@ interface ShareButtonProps {
 
 export default function ShareButton({ image, size = 'md' }: ShareButtonProps) {
   const [isSharing, setIsSharing] = useState(false);
+  const { isNative } = useIsNativeShell();
 
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -42,6 +44,8 @@ export default function ShareButton({ image, size = 'md' }: ShareButtonProps) {
 
   // Hide on browsers that don't support sharing files
   // On Android, DownloadButton opens image in new tab, so share is redundant
+  // ネイティブシェル内では保存ボタンが主導線になるため共有は重複する
+  if (isNative) return null;
   if (typeof navigator !== 'undefined' && (!navigator.share || isAndroid())) {
     return null;
   }

@@ -7,13 +7,24 @@ import jaJP from 'antd/locale/ja_JP';
 
 const mockGetInvitation = vi.fn();
 const mockUpdateInvitation = vi.fn();
-vi.mock('../../../../../../services/invitationService', () => ({
+vi.mock('../../../../../../../services/invitationService', () => ({
   getInvitation: (...args: unknown[]) => mockGetInvitation(...args),
   updateInvitation: (...args: unknown[]) => mockUpdateInvitation(...args),
   getGalleryUrl: (token: string) => `http://localhost:3002/gallery/${token}`,
 }));
 
-vi.mock('../../../../../../contexts/AuthContext', () => ({
+// 選定結果の表示で使うサービス。モックしないと本物の Firebase を初期化して落ちる。
+const mockGetLikedImageIdsByInvitation = vi.fn();
+const mockGetImage = vi.fn();
+vi.mock('../../../../../../../services/likeService', () => ({
+  getLikedImageIdsByInvitation: (...args: unknown[]) =>
+    mockGetLikedImageIdsByInvitation(...args),
+}));
+vi.mock('../../../../../../../services/imageService', () => ({
+  getImage: (...args: unknown[]) => mockGetImage(...args),
+}));
+
+vi.mock('../../../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },
     profile: { id: 'admin-uid', email: 'admin@test.com', role: 'admin' },
@@ -51,6 +62,9 @@ let InvitationDetailPage: React.ComponentType;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  // 既定は「まだ選ばれていない」。選定を伴う検証は各テストで上書きする。
+  mockGetLikedImageIdsByInvitation.mockResolvedValue([]);
+  mockGetImage.mockResolvedValue(null);
   const mod = await import('../page');
   InvitationDetailPage = mod.default;
 });
@@ -115,5 +129,49 @@ describe('InvitationDetailPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/3 枚/)).toBeInTheDocument();
     });
+  });
+
+  it('選定が0件のときは空状態を出す', async () => {
+    mockGetInvitation.mockResolvedValue(sampleInvitation);
+    mockGetLikedImageIdsByInvitation.mockResolvedValue([]);
+
+    renderWithProviders(<InvitationDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('まだ選ばれていません')).toBeInTheDocument();
+    });
+  });
+
+  it('選定された写真の枚数とファイル名を表示する', async () => {
+    mockGetInvitation.mockResolvedValue(sampleInvitation);
+    mockGetLikedImageIdsByInvitation.mockResolvedValue(['image-2', 'image-1']);
+    mockGetImage.mockImplementation(async (id: string) =>
+      id === 'image-1'
+        ? { id: 'image-1', url: 'https://example.com/1.jpg', storagePath: 'images/u/1', title: 'DSC_2' }
+        : { id: 'image-2', url: 'https://example.com/2.jpg', storagePath: 'images/u/2', title: 'DSC_10' }
+    );
+
+    renderWithProviders(<InvitationDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('選ばれた枚数')).toBeInTheDocument();
+    });
+    expect(screen.getByText('DSC_2')).toBeInTheDocument();
+    expect(screen.getByText('DSC_10')).toBeInTheDocument();
+    // 取得順（image-2, image-1）ではなく、ファイル名の自然順に並ぶ
+    const names = screen.getAllByTitle(/^DSC_/).map((el) => el.textContent);
+    expect(names).toEqual(['DSC_2', 'DSC_10']);
+  });
+
+  it('選定の取得に失敗したら再試行できる', async () => {
+    mockGetInvitation.mockResolvedValue(sampleInvitation);
+    mockGetLikedImageIdsByInvitation.mockRejectedValue(new Error('firestore down'));
+
+    renderWithProviders(<InvitationDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('選定結果を読み込めませんでした。')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /再試行/ })).toBeInTheDocument();
   });
 });
