@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import dayjs from 'dayjs';
-import { mockFirestore } from '../../test/mocks/firebase';
+import { mockFirestore, mockBatch } from '../../test/mocks/firebase';
 import { createMockDocSnapshot, createMockQuerySnapshot, sampleProject, sampleImage, sampleInvitation } from '../../test/fixtures';
 import type { Project, ProjectStatus } from '../projectService';
 
@@ -17,6 +17,8 @@ vi.mock('firebase/firestore', () => ({
   where: (...args: unknown[]) => mockFirestore.where(...args),
   orderBy: (...args: unknown[]) => mockFirestore.orderBy(...args),
   serverTimestamp: () => mockFirestore.serverTimestamp(),
+  increment: (n: number) => mockFirestore.increment(n),
+  writeBatch: (...args: unknown[]) => mockFirestore.writeBatch(...args),
   Timestamp: mockFirestore.Timestamp,
 }));
 
@@ -26,18 +28,16 @@ vi.mock('../../lib/firebase', () => ({
 
 // imageServiceとinvitationServiceをモック
 const mockGetImagesByProject = vi.fn();
-const mockDeleteImage = vi.fn();
+const mockDeleteImagesForProject = vi.fn();
 const mockGetInvitationsByProject = vi.fn();
-const mockDeleteInvitation = vi.fn();
 
 vi.mock('../imageService', () => ({
   getImagesByProject: (...args: unknown[]) => mockGetImagesByProject(...args),
-  deleteImage: (...args: unknown[]) => mockDeleteImage(...args),
+  deleteImagesForProject: (...args: unknown[]) => mockDeleteImagesForProject(...args),
 }));
 
 vi.mock('../invitationService', () => ({
   getInvitationsByProject: (...args: unknown[]) => mockGetInvitationsByProject(...args),
-  deleteInvitation: (...args: unknown[]) => mockDeleteInvitation(...args),
 }));
 
 let projectService: typeof import('../projectService');
@@ -244,67 +244,97 @@ describe('projectService', () => {
   });
 
   describe('deleteProject（カスケード）', () => {
-    it('getImagesByProjectで全画像を取得する', async () => {
-      mockGetImagesByProject.mockResolvedValue([]);
-      mockGetInvitationsByProject.mockResolvedValue([]);
+    const setupDelete = (images: unknown[] = [], invitations: unknown[] = []) => {
+      mockGetImagesByProject.mockResolvedValue(images);
+      mockGetInvitationsByProject.mockResolvedValue(invitations);
+      mockDeleteImagesForProject.mockResolvedValue(undefined);
       mockFirestore.doc.mockReturnValue('doc-ref');
       mockFirestore.deleteDoc.mockResolvedValue(undefined);
+    };
+
+    it('getImagesByProjectで全画像を取得する', async () => {
+      setupDelete();
 
       await projectService.deleteProject('project-1');
 
       expect(mockGetImagesByProject).toHaveBeenCalledWith('project-1');
     });
 
-    it('各画像のdeleteImageを呼び出す', async () => {
-      mockGetImagesByProject.mockResolvedValue([
+    it('画像はdeleteImagesForProjectにまとめて渡す', async () => {
+      // 1枚ずつ deleteImage を呼ぶと、枚数分の招待取得と imageCount 更新が走る。
+      // 招待は先に消えているのでどちらも無駄。
+      const images = [
         { ...sampleImage, id: 'image-1' },
         { ...sampleImage, id: 'image-2' },
-      ]);
-      mockGetInvitationsByProject.mockResolvedValue([]);
-      mockDeleteImage.mockResolvedValue(undefined);
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockFirestore.deleteDoc.mockResolvedValue(undefined);
+      ];
+      setupDelete(images);
 
       await projectService.deleteProject('project-1');
 
-      expect(mockDeleteImage).toHaveBeenCalledWith('image-1');
-      expect(mockDeleteImage).toHaveBeenCalledWith('image-2');
+      expect(mockDeleteImagesForProject).toHaveBeenCalledWith(
+        'project-1',
+        images,
+        undefined
+      );
     });
 
     it('getInvitationsByProjectで全招待を取得する', async () => {
-      mockGetImagesByProject.mockResolvedValue([]);
-      mockGetInvitationsByProject.mockResolvedValue([]);
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockFirestore.deleteDoc.mockResolvedValue(undefined);
+      setupDelete();
 
       await projectService.deleteProject('project-1');
 
       expect(mockGetInvitationsByProject).toHaveBeenCalledWith('project-1');
     });
 
-    it('各招待のdeleteInvitationを呼び出す', async () => {
-      mockGetImagesByProject.mockResolvedValue([]);
-      mockGetInvitationsByProject.mockResolvedValue([
+    it('招待をバッチで削除する', async () => {
+      setupDelete([], [
         { id: 'invitation-1', ...sampleInvitation },
+        { id: 'invitation-2', ...sampleInvitation },
       ]);
-      mockDeleteInvitation.mockResolvedValue(undefined);
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockFirestore.deleteDoc.mockResolvedValue(undefined);
 
       await projectService.deleteProject('project-1');
 
-      expect(mockDeleteInvitation).toHaveBeenCalledWith('invitation-1');
+      expect(mockBatch.delete).toHaveBeenCalledTimes(2);
+      expect(mockBatch.commit).toHaveBeenCalledTimes(1);
     });
 
-    it('プロジェクトドキュメントを削除する', async () => {
-      mockGetImagesByProject.mockResolvedValue([]);
-      mockGetInvitationsByProject.mockResolvedValue([]);
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockFirestore.deleteDoc.mockResolvedValue(undefined);
+    it('招待を画像より先に削除する', async () => {
+      // 画像を先に消して途中で失敗すると、生きた招待リンクが空のギャラリーを
+      // 指したまま残り、クライアントが「写真が消えた」画面を見ることになる。
+      setupDelete(
+        [{ ...sampleImage, id: 'image-1' }],
+        [{ id: 'invitation-1', ...sampleInvitation }]
+      );
+
+      await projectService.deleteProject('project-1');
+
+      expect(mockBatch.commit.mock.invocationCallOrder[0]).toBeLessThan(
+        mockDeleteImagesForProject.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('プロジェクトドキュメントを最後に削除する', async () => {
+      setupDelete([{ ...sampleImage, id: 'image-1' }]);
 
       await projectService.deleteProject('project-1');
 
       expect(mockFirestore.deleteDoc).toHaveBeenCalledWith('doc-ref');
+      expect(mockFirestore.deleteDoc.mock.invocationCallOrder[0]).toBeGreaterThan(
+        mockDeleteImagesForProject.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('進捗コールバックを画像削除へ渡す', async () => {
+      const onProgress = vi.fn();
+      setupDelete([{ ...sampleImage, id: 'image-1' }]);
+
+      await projectService.deleteProject('project-1', onProgress);
+
+      expect(mockDeleteImagesForProject).toHaveBeenCalledWith(
+        'project-1',
+        expect.anything(),
+        onProgress
+      );
     });
   });
 
@@ -319,23 +349,22 @@ describe('projectService', () => {
       ).rejects.toThrow();
     });
 
-    it('画像削除が部分失敗してもプロジェクト削除を続行する', async () => {
+    it('画像削除が失敗したらプロジェクトドキュメントを消さない', async () => {
+      // 以前は失敗を握り潰してプロジェクトを消していた。その結果、画像だけが
+      // 残ったまま一覧から消え、再実行する手段が無くなっていた。
+      // 残しておけば管理者がもう一度削除できる。
       mockGetImagesByProject.mockResolvedValue([
         { id: 'image-1', ...sampleImage },
         { id: 'image-2', ...sampleImage },
       ]);
       mockGetInvitationsByProject.mockResolvedValue([]);
-      mockDeleteImage
-        .mockRejectedValueOnce(new Error('Delete failed'))
-        .mockResolvedValueOnce(undefined);
+      mockDeleteImagesForProject.mockRejectedValue(new Error('Delete failed'));
       mockFirestore.doc.mockReturnValue('doc-ref');
       mockFirestore.deleteDoc.mockResolvedValue(undefined);
 
-      // Should not throw
-      await projectService.deleteProject('project-1');
+      await expect(projectService.deleteProject('project-1')).rejects.toThrow('Delete failed');
 
-      // Project document should still be deleted
-      expect(mockFirestore.deleteDoc).toHaveBeenCalled();
+      expect(mockFirestore.deleteDoc).not.toHaveBeenCalled();
     });
   });
 

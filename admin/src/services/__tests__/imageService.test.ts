@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mockFirestore, mockStorage, mockTransaction } from '../../test/mocks/firebase';
+import { mockFirestore, mockStorage, mockTransaction, mockBatch } from '../../test/mocks/firebase';
 import { createMockDocSnapshot, createMockQuerySnapshot, sampleImage, sampleInvitation } from '../../test/fixtures';
 
 // --- invitationService モック ---
@@ -33,6 +33,7 @@ vi.mock('firebase/firestore', () => ({
   arrayUnion: (...args: unknown[]) => mockFirestore.arrayUnion(...args),
   Timestamp: mockFirestore.Timestamp,
   runTransaction: (...args: unknown[]) => mockFirestore.runTransaction(...args),
+  writeBatch: (...args: unknown[]) => mockFirestore.writeBatch(...args),
   DocumentSnapshot: vi.fn(),
   QueryDocumentSnapshot: vi.fn(),
 }));
@@ -256,20 +257,30 @@ describe('imageService（projectId対応）', () => {
   });
 
   // --- deleteImage ---
+  // 削除の順序は Storage → お気に入り → 画像ドキュメント。
+  // 以前は Storage 削除とお気に入り検索がトランザクションのコールバック内にあった。
+  // トランザクションは競合すると丸ごと再実行されるため、中に外部への副作用を
+  // 置くと Storage の削除が何度も走る。
+  const setupDelete = (
+    data: Record<string, unknown> = { ...sampleImage, storagePath: 'images/admin-uid/12345-abc' },
+    likeIds: string[] = []
+  ) => {
+    const imageDoc = createMockDocSnapshot('image-1', data);
+    mockFirestore.doc.mockReturnValue('doc-ref');
+    mockFirestore.getDoc.mockResolvedValue(imageDoc);
+    mockFirestore.getDocs.mockResolvedValue(
+      createMockQuerySnapshot(likeIds.map((id) => ({ id, data: { imageId: 'image-1' } })))
+    );
+    mockFirestore.deleteDoc.mockResolvedValue(undefined);
+    mockTransaction.get.mockResolvedValue(imageDoc);
+    mockStorage.ref.mockReturnValue('storageRef');
+    mockStorage.deleteObject.mockResolvedValue(undefined);
+    return imageDoc;
+  };
+
   describe('deleteImage', () => {
     it('transaction.deleteで画像ドキュメントを削除する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
-        ...sampleImage,
-        storagePath: 'images/admin-uid/12345-abc',
-      });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc); // get image
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      ); // get project
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
+      setupDelete();
 
       await imageService.deleteImage('image-1');
 
@@ -277,19 +288,11 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('transaction.updateでプロジェクトのimageCountを-1する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       await imageService.deleteImage('image-1');
 
@@ -302,22 +305,74 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('Storageからファイルを削除する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
-        ...sampleImage,
-        storagePath: 'images/admin-uid/12345-abc',
-      });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
+      setupDelete();
 
       await imageService.deleteImage('image-1');
 
       expect(mockStorage.deleteObject).toHaveBeenCalledWith('storageRef');
+    });
+
+    it('サムネイルも削除する', async () => {
+      setupDelete({
+        ...sampleImage,
+        storagePath: 'images/admin-uid/12345-abc',
+        thumbnailPaths: [
+          'thumbnails/admin-uid/12345-abc_384.webp',
+          'thumbnails/admin-uid/12345-abc_640.webp',
+        ],
+      });
+
+      await imageService.deleteImage('image-1');
+
+      // 原本 + サムネイル2枚
+      expect(mockStorage.deleteObject).toHaveBeenCalledTimes(3);
+    });
+
+    it('Storageの削除を画像ドキュメントの削除より先に行う', async () => {
+      // 逆順にすると storagePath を失い、Storage 削除に失敗したファイルが
+      // 永久に孤児として残る。
+      setupDelete();
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockStorage.deleteObject.mock.invocationCallOrder[0]).toBeLessThan(
+        mockTransaction.delete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('Storage削除とお気に入り検索をトランザクションの外で行う', async () => {
+      setupDelete({ ...sampleImage, storagePath: 'images/admin-uid/12345-abc' }, ['like-1']);
+
+      await imageService.deleteImage('image-1');
+
+      const transactionStart = mockFirestore.runTransaction.mock.invocationCallOrder[0];
+      for (const order of mockStorage.deleteObject.mock.invocationCallOrder) {
+        expect(order).toBeLessThan(transactionStart);
+      }
+      for (const order of mockFirestore.getDocs.mock.invocationCallOrder) {
+        expect(order).toBeLessThan(transactionStart);
+      }
+    });
+
+    it('画像に紐づくお気に入りを削除する', async () => {
+      setupDelete({ ...sampleImage, storagePath: 'images/admin-uid/12345-abc' }, [
+        'inv-1_image-1',
+        'inv-2_image-1',
+      ]);
+
+      await imageService.deleteImage('image-1');
+
+      expect(mockFirestore.deleteDoc).toHaveBeenCalledTimes(2);
+    });
+
+    it('お気に入りの削除に失敗したら例外を投げる', async () => {
+      // 2026-08-17 から 2026-08-22 まで、ルールの権限漏れでこれが
+      // permission-denied になっていたのに try-catch で握り潰されていた。
+      setupDelete({ ...sampleImage, storagePath: 'images/admin-uid/12345-abc' }, ['like-1']);
+      mockFirestore.deleteDoc.mockRejectedValue(new Error('permission-denied'));
+
+      await expect(imageService.deleteImage('image-1')).rejects.toThrow('permission-denied');
+      expect(mockTransaction.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -334,28 +389,18 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('存在しない画像IDでdeleteImage時にエラーをスローする', async () => {
-      const emptyDoc = createMockDocSnapshot('nonexistent', null);
       mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValue(emptyDoc);
+      mockFirestore.getDoc.mockResolvedValue(createMockDocSnapshot('nonexistent', null));
 
       await expect(imageService.deleteImage('nonexistent')).rejects.toThrow();
     });
 
     it('Storage削除失敗でもFirestore削除は実行する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
-        ...sampleImage,
-        storagePath: 'images/admin-uid/12345-abc',
-      });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockTransaction.get.mockResolvedValueOnce(
-        createMockDocSnapshot('project-1', { imageCount: 5 })
-      );
-      mockStorage.ref.mockReturnValue('storageRef');
+      // Storage に残ったファイルは後から掃除できるが、ここで止めると
+      // Firestore 側が消せなくなり削除そのものが進まなくなる。
+      setupDelete();
       mockStorage.deleteObject.mockRejectedValue(new Error('Storage delete failed'));
 
-      // Should not throw even if storage delete fails
       await imageService.deleteImage('image-1');
 
       expect(mockTransaction.delete).toHaveBeenCalled();
@@ -365,16 +410,11 @@ describe('imageService（projectId対応）', () => {
   // --- 招待同期 ---
   describe('招待同期（画像削除時）', () => {
     it('削除した画像IDが関連する招待からarrayRemoveで除去される', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       mockGetInvitationsByProject.mockResolvedValue([
         { ...sampleInvitation, id: 'inv-1' },
@@ -390,16 +430,11 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('招待同期失敗でもdeleteImage自体は成功する', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       mockGetInvitationsByProject.mockRejectedValue(new Error('Firestore error'));
 
@@ -409,20 +444,154 @@ describe('imageService（projectId対応）', () => {
     });
 
     it('projectIdがない画像の削除時は同期をスキップする', async () => {
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: undefined,
         storagePath: 'images/admin-uid/12345-abc',
       });
 
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
-
       await imageService.deleteImage('image-1');
 
       expect(mockGetInvitationsByProject).not.toHaveBeenCalled();
+    });
+  });
+
+  // --- deleteImagesForProject ---
+  // プロジェクトごと消す経路。1枚ずつの deleteImage とは別物である。
+  describe('deleteImagesForProject', () => {
+    const makeImages = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        ...sampleImage,
+        id: `image-${i}`,
+        storagePath: `images/admin-uid/file-${i}`,
+        thumbnailPaths: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }));
+
+    const setupBulk = (likeDocs: Array<{ id: string; data: Record<string, unknown> }> = []) => {
+      mockFirestore.doc.mockImplementation((_db: unknown, coll: string, id: string) => `${coll}/${id}`);
+      mockFirestore.getDocs.mockResolvedValue(createMockQuerySnapshot(likeDocs));
+      mockStorage.ref.mockReturnValue('storageRef');
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+    };
+
+    it('画像ドキュメントをバッチで削除する', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockBatch.delete).toHaveBeenCalledTimes(3);
+      expect(mockBatch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('招待同期を呼ばない', async () => {
+      // 招待は deleteProject が先に消している。1枚ごとに呼ぶと
+      // 700枚で700回の招待取得になり、これが遅さの主因だった。
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockGetInvitationsByProject).not.toHaveBeenCalled();
+    });
+
+    it('imageCountをまとめて減算する', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockFirestore.increment).toHaveBeenCalledWith(-3);
+      expect(mockBatch.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('Storageの削除を画像ドキュメントの削除より先に行う', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockStorage.deleteObject.mock.invocationCallOrder[0]).toBeLessThan(
+        mockBatch.delete.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('お気に入りも同じバッチで削除する', async () => {
+      setupBulk([
+        { id: 'inv-1_image-0', data: { imageId: 'image-0' } },
+        { id: 'inv-1_image-1', data: { imageId: 'image-1' } },
+      ]);
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      // 画像3件 + お気に入り2件
+      expect(mockBatch.delete).toHaveBeenCalledTimes(5);
+    });
+
+    it('お気に入りの検索は in で30件ずつまとめる', async () => {
+      // 1枚ごとにクエリを投げると700枚で700往復になる。
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(70));
+
+      expect(mockFirestore.getDocs).toHaveBeenCalledTimes(3); // 30 + 30 + 10
+    });
+
+    it('操作数が500を超えるとバッチを分ける', async () => {
+      // 上限はドキュメント数ではなく操作数。1バッチには
+      // 画像の削除 499 件 + imageCount の更新 1 件しか入らない。
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(600));
+
+      expect(mockBatch.commit).toHaveBeenCalledTimes(2);
+      expect(mockBatch.delete).toHaveBeenCalledTimes(600);
+      expect(mockBatch.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('バッチのcommitが失敗したら例外を投げる', async () => {
+      setupBulk();
+      mockBatch.commit.mockRejectedValue(new Error('permission-denied'));
+
+      await expect(
+        imageService.deleteImagesForProject('project-1', makeImages(3))
+      ).rejects.toThrow('permission-denied');
+    });
+
+    it('お気に入りの検索に失敗したら例外を投げる', async () => {
+      // 引けなかった分を黙って飛ばすと、お気に入りだけが孤児として残る。
+      mockFirestore.doc.mockReturnValue('doc-ref');
+      mockFirestore.getDocs.mockRejectedValue(new Error('permission-denied'));
+
+      await expect(
+        imageService.deleteImagesForProject('project-1', makeImages(3))
+      ).rejects.toThrow();
+      expect(mockStorage.deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('Storageの削除に失敗してもFirestoreの削除は続ける', async () => {
+      setupBulk();
+      mockStorage.deleteObject.mockRejectedValue(new Error('Storage delete failed'));
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(mockBatch.delete).toHaveBeenCalledTimes(3);
+    });
+
+    it('進捗を通知する', async () => {
+      setupBulk();
+      const onProgress = vi.fn();
+
+      await imageService.deleteImagesForProject('project-1', makeImages(3), onProgress);
+
+      expect(onProgress).toHaveBeenLastCalledWith({ completed: 3, total: 3 });
+    });
+
+    it('画像が0枚なら何もしない', async () => {
+      setupBulk();
+
+      await imageService.deleteImagesForProject('project-1', []);
+
+      expect(mockFirestore.getDocs).not.toHaveBeenCalled();
+      expect(mockBatch.commit).not.toHaveBeenCalled();
     });
   });
 
@@ -521,15 +690,11 @@ describe('imageService（projectId対応）', () => {
       mockGetActiveInvitationsByProject.mockResolvedValue([]);
 
       // Delete
-      const imageDoc = createMockDocSnapshot('image-1', {
+      setupDelete({
         ...sampleImage,
         projectId: 'project-1',
         storagePath: 'images/admin-uid/12345-abc',
       });
-      mockFirestore.doc.mockReturnValue('doc-ref');
-      mockTransaction.get.mockResolvedValueOnce(imageDoc);
-      mockStorage.ref.mockReturnValue('storageRef');
-      mockStorage.deleteObject.mockResolvedValue(undefined);
 
       await imageService.deleteImage('image-1');
 

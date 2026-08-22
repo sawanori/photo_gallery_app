@@ -8,8 +8,21 @@ export const mockTransaction = {
   delete: vi.fn(),
 };
 
+/**
+ * writeBatch が返すバッチ。writeBatch() は毎回この同じオブジェクトを返すので、
+ * delete / update の呼び出しは全バッチ分が積み上がる。
+ * 「何回コミットされたか」は commit の呼び出し回数で見る。
+ */
+export const mockBatch = {
+  set: vi.fn(),
+  update: vi.fn(),
+  delete: vi.fn(),
+  commit: vi.fn(async () => undefined),
+};
+
 // Firestore mock functions
 export const mockFirestore = {
+  writeBatch: vi.fn(() => mockBatch),
   collection: vi.fn(),
   doc: vi.fn(),
   addDoc: vi.fn(),

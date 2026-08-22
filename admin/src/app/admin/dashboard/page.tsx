@@ -56,13 +56,28 @@ export default function DashboardPage() {
       okType: 'danger',
       cancelText: 'キャンセル',
       onOk: async () => {
+        const key = 'bulk-delete';
         try {
-          await Promise.all(expiredProjects.map((p) => deleteProject(p.id)));
+          // Promise.all で並べない。deleteProject の内部が既に並列で動くため、
+          // ここで重ねるとプロジェクト数の分だけ同時実行数が膨らむ。
+          for (let i = 0; i < expiredProjects.length; i += 1) {
+            message.open({
+              key,
+              type: 'loading',
+              content: `削除しています… ${i + 1} / ${expiredProjects.length} 件目`,
+              duration: 0,
+            });
+            await deleteProject(expiredProjects[i].id);
+          }
+          message.destroy(key);
           message.success('期限切れプロジェクトを削除しました');
           loadProjects();
         } catch (error) {
+          message.destroy(key);
           console.error('Failed to bulk delete:', error);
           message.error('一括削除に失敗しました');
+          // 途中まで消えているので一覧を取り直す
+          loadProjects();
         }
       },
     });
@@ -77,11 +92,22 @@ export default function DashboardPage() {
       okType: 'danger',
       cancelText: 'キャンセル',
       onOk: async () => {
+        const key = `delete-${project.id}`;
         try {
-          await deleteProject(project.id);
+          message.open({ key, type: 'loading', content: '削除しています…', duration: 0 });
+          await deleteProject(project.id, ({ completed, total }) => {
+            message.open({
+              key,
+              type: 'loading',
+              content: `削除しています… ${completed} / ${total} 枚`,
+              duration: 0,
+            });
+          });
+          message.destroy(key);
           message.success('プロジェクトを削除しました');
           loadProjects();
         } catch (error) {
+          message.destroy(key);
           console.error('Failed to delete project:', error);
           message.error('プロジェクトの削除に失敗しました');
         }

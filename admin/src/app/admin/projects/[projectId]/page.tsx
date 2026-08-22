@@ -98,11 +98,23 @@ export default function ProjectDetailPage() {
       okType: 'danger',
       cancelText: 'キャンセル',
       onOk: async () => {
+        const key = 'delete-project';
         try {
-          await deleteProject(projectId);
+          message.open({ key, type: 'loading', content: '削除しています…', duration: 0 });
+          await deleteProject(projectId, ({ completed, total }) => {
+            message.open({
+              key,
+              type: 'loading',
+              content: `削除しています… ${completed} / ${total} 枚`,
+              duration: 0,
+            });
+          });
+          // 失敗経路でも必ず閉じる。閉じないと duration: 0 の表示が残り続ける。
+          message.destroy(key);
           message.success('プロジェクトを削除しました');
           router.push('/admin/dashboard');
         } catch (error) {
+          message.destroy(key);
           console.error('Failed to delete project:', error);
           message.error('プロジェクトの削除に失敗しました');
         }
