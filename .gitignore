@@ -21,3 +21,7 @@ playwright-report/
 # 開発ツールの作業ファイル
 .serena/
 .claude/settings.local.json
+
+# Claude Code のローカル作業ファイル（エージェント定義など）。
+# このプロジェクトのソースではないため追跡しない。
+.claude/
