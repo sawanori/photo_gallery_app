@@ -10,18 +10,37 @@ import {
   Switch,
   Descriptions,
   message,
+  Row,
+  Col,
+  Statistic,
+  Image as AntImage,
 } from 'antd';
 import {
   ArrowLeftOutlined,
   CopyOutlined,
   LinkOutlined,
+  HeartOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { getInvitation, updateInvitation, getGalleryUrl, Invitation } from '@/services/invitationService';
+import { getLikedImageIdsByInvitation } from '@/services/likeService';
+import { getImage, type Image } from '@/services/imageService';
 import dayjs from 'dayjs';
 import 'dayjs/locale/ja';
 
 dayjs.locale('ja');
+
+/**
+ * 後工程に渡すファイル名。
+ *
+ * title はアップロード時の元ファイル名。storagePath の末尾は拡張子を持たない
+ * 保存名（例 1786861045375-0ubf6g）になっていることがあるため、title を優先する。
+ */
+function selectionFileName(image: Image): string {
+  const fromPath = image.storagePath?.split('/').pop() || '';
+  return image.title || fromPath || image.id;
+}
 
 export default function InvitationDetailPage() {
   const router = useRouter();
@@ -32,6 +51,11 @@ export default function InvitationDetailPage() {
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+
+  // クライアントが選んだ写真。撮影者が後工程（レタッチ・納品）に渡すために見る。
+  const [selected, setSelected] = useState<Image[] | null>(null);
+  const [selectionLoading, setSelectionLoading] = useState(false);
+  const [selectionFailed, setSelectionFailed] = useState(false);
 
   useEffect(() => {
     if (invitationId) {
@@ -45,10 +69,41 @@ export default function InvitationDetailPage() {
       setLoading(true);
       const inv = await getInvitation(invitationId);
       setInvitation(inv);
+      if (inv) void loadSelection(inv.id);
     } catch (error) {
       console.error('Failed to load invitation:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSelection = async (id: string) => {
+    try {
+      setSelectionLoading(true);
+      setSelectionFailed(false);
+      const imageIds = await getLikedImageIdsByInvitation(id);
+      const images = (await Promise.all(imageIds.map((imageId) => getImage(imageId))))
+        .filter((image): image is Image => image !== null);
+      // 撮影者が見る順序は、管理画面のアップロード順（ファイル名の自然順）に揃える
+      const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+      images.sort((a, b) => collator.compare(selectionFileName(a), selectionFileName(b)));
+      setSelected(images);
+    } catch (error) {
+      console.error('Failed to load selection:', error);
+      setSelectionFailed(true);
+      setSelected(null);
+    } finally {
+      setSelectionLoading(false);
+    }
+  };
+
+  const handleCopyFileNames = async () => {
+    if (!selected || selected.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(selected.map(selectionFileName).join('\n'));
+      message.success(`${selected.length}件のファイル名をコピーしました`);
+    } catch {
+      message.error('コピーできませんでした');
     }
   };
 
@@ -210,6 +265,80 @@ export default function InvitationDetailPage() {
             コピー
           </Button>
         </div>
+      </Card>
+
+      {/* 選定結果 */}
+      <Card
+        style={{ marginTop: 16 }}
+        title={
+          <span>
+            <HeartOutlined /> クライアントの選定
+          </span>
+        }
+        extra={
+          selected && selected.length > 0 ? (
+            <Button size="small" icon={<CopyOutlined />} onClick={handleCopyFileNames}>
+              ファイル名をコピー
+            </Button>
+          ) : null
+        }
+      >
+        {selectionLoading ? (
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <Spin />
+          </div>
+        ) : selectionFailed ? (
+          <div style={{ textAlign: 'center', padding: '16px 0' }}>
+            <p style={{ color: 'var(--color-ink-secondary, #595959)', marginBottom: 12 }}>
+              選定結果を読み込めませんでした。
+            </p>
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={() => invitation && loadSelection(invitation.id)}
+            >
+              再試行
+            </Button>
+          </div>
+        ) : !selected || selected.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="まだ選ばれていません"
+          />
+        ) : (
+          <>
+            <Statistic
+              title="選ばれた枚数"
+              value={selected.length}
+              suffix={`/ ${invitation.imageIds.length} 枚`}
+              style={{ marginBottom: 16 }}
+            />
+            <Row gutter={[8, 8]}>
+              {selected.map((image) => (
+                <Col key={image.id} xs={12} sm={8} md={6}>
+                  <AntImage
+                    src={image.url}
+                    alt={selectionFileName(image)}
+                    style={{ borderRadius: 6, objectFit: 'cover', aspectRatio: '1 / 1' }}
+                    width="100%"
+                  />
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--color-ink-secondary, #595959)',
+                      marginTop: 4,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                    title={selectionFileName(image)}
+                  >
+                    {selectionFileName(image)}
+                  </div>
+                </Col>
+              ))}
+            </Row>
+          </>
+        )}
       </Card>
     </div>
   );
