@@ -51,10 +51,23 @@ service cloud.firestore {
       // 匿名認証しただけの第三者が管理者のメールアドレスと役割を列挙できる
       // （2026-08-17 に実際に列挙できることを確認した）。
       // web は users を一切読まない。admin は自分自身の取得と管理者としての一覧のみ。
+      //
+      // **role を自分で書けてはいけない。** isAdmin() はこのドキュメントの role
+      // だけを見るため、自分の users ドキュメントを role: 'admin' で作れると、
+      // 匿名認証しただけの第三者がそのまま管理者になり、招待を全件列挙して
+      // トークンを平文で収穫できる。2026-08-17 の list 制限が丸ごと無意味になる。
+      // 2026-08-22 のレビューで発覚し、ここで塞いだ。
+      //
+      // 昇格は管理者のみが行う（admin/src/services/userService.ts の updateUserRole）。
+      // クライアントから users を作る経路は現在存在しない（管理者は Firebase
+      // コンソールで作っている）が、将来の signUp のために create 自体は残す。
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && request.auth.uid == userId &&
+        request.resource.data.role == 'user';
+      allow update: if isAdmin() ||
+        (isOwner(userId) &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
       allow delete: if isAdmin();
     }
 
@@ -100,8 +113,13 @@ service cloud.firestore {
         request.resource.data.invitationId == sessionInvitationId() &&
         request.resource.data.imageId is string &&
         likeId == request.resource.data.invitationId + '_' + request.resource.data.imageId;
-      allow delete: if hasValidSession() &&
-        resource.data.invitationId == sessionInvitationId();
+      // 管理者にも削除を許す。画像を削除したとき、その画像に付いたお気に入りも
+      // 一緒に消す必要があるため。2026-08-17 に read を get / list へ分けた際、
+      // delete から isAdmin() が抜け落ちていた。その結果、管理画面からの画像削除で
+      // お気に入りの削除だけが permission-denied で失敗し、try-catch に握り潰されて
+      // 表に出ないまま孤児が溜まっていた。
+      allow delete: if isAdmin() ||
+        (hasValidSession() && resource.data.invitationId == sessionInvitationId());
     }
 
     // Invitations collection
