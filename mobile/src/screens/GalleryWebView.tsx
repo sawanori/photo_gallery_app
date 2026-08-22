@@ -21,9 +21,11 @@ const MAX_RENDERER_RESTARTS = 3;
 
 interface Props {
   sourceUrl: string;
+  /** web が「この招待は確かに無効だ」と通知してきたときに呼ばれる。 */
+  onInvitationInvalid?: (token: string) => void;
 }
 
-export default function GalleryWebView({ sourceUrl }: Props) {
+export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props) {
   const webViewRef = useRef<WebView>(null);
   const [hasError, setHasError] = useState(false);
   const restartCount = useRef(0);
@@ -40,8 +42,8 @@ export default function GalleryWebView({ sourceUrl }: Props) {
   }, []);
 
   const handler = useMemo(
-    () => createMessageHandler(nonce, sendToWeb),
-    [nonce, sendToWeb]
+    () => createMessageHandler(nonce, sendToWeb, onInvitationInvalid),
+    [nonce, sendToWeb, onInvitationInvalid]
   );
 
   const handleShouldStartLoad = useCallback(

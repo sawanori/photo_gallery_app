@@ -13,7 +13,7 @@ const INVITATIONS_COLLECTION = 'invitations';
 const SESSIONS_COLLECTION = 'sessions';
 
 /**
- * 招待をトークンで取得する。
+ * 招待の取得結果。
  *
  * **コレクションクエリ（list）を使ってはいけない。** 招待ドキュメントの ID は
  * トークンそのものであり、単一ドキュメント取得（get）で引く。
@@ -21,22 +21,55 @@ const SESSIONS_COLLECTION = 'sessions';
  * その list を許可すると匿名認証しただけの第三者が招待を全件列挙して
  * トークンを平文で収穫できる状態に戻る（2026-08-17 に実際に列挙できることを確認した）。
  *
- * 見つからない場合と、ルールに拒否された場合（無効化済み・期限切れ）を
- * どちらも null に正規化する。呼び出し側で区別すると、
- * トークンが実在するかどうかを第三者に伝えてしまう。
+ * 「サーバーが拒否した」と「サーバーに届かなかった」を区別する。
+ * 前者は確定した無効であり、ネイティブアプリに保存済みトークンを破棄させてよい。
+ * 後者は一時障害であり、破棄すると電波の悪い場所でアプリを開いただけで
+ * 有効なトークンが消える。
+ *
+ * **不存在と無効・期限切れは区別しない（できない）。** Firestore のルールが
+ * `resource.data.isActive` を評価するため、ドキュメントが無い場合も
+ * 評価に失敗して `permission-denied` になる。列挙対策としてもこれが正しい。
+ *
+ * `fromCache` は、取得がキャッシュ由来かどうか。古いデータで
+ * 「期限切れ」と判断してトークンを破棄しないために呼び出し側が見る。
  */
-export const getInvitationByToken = async (token: string): Promise<Invitation | null> => {
+export type InvitationLookup =
+  | { status: 'found'; invitation: Invitation; fromCache: boolean }
+  /** サーバーが拒否した。不存在・無効化・期限切れのいずれか */
+  | { status: 'denied' }
+  /** サーバーに届かなかった。オフライン等 */
+  | { status: 'unavailable' };
+
+export const lookupInvitation = async (token: string): Promise<InvitationLookup> => {
   let docSnap;
   try {
     docSnap = await getDoc(doc(db, INVITATIONS_COLLECTION, token));
-  } catch {
-    return null;
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    return code === 'permission-denied' ? { status: 'denied' } : { status: 'unavailable' };
   }
-  if (!docSnap.exists()) return null;
 
-  const data = docSnap.data();
+  // ルールが `resource` に依存するため、匿名クライアントでここに来ることは無い想定。
+  // 将来ルールが変わって「存在しない」が素通りしたときのために拒否として扱う。
+  if (!docSnap.exists()) return { status: 'denied' };
+
   return {
-    id: docSnap.id,
+    status: 'found',
+    fromCache: docSnap.metadata.fromCache,
+    invitation: toInvitation(docSnap.id, docSnap.data()),
+  };
+};
+
+/** 既存の呼び出し互換。区別が要る場合は lookupInvitation を使う。 */
+export const getInvitationByToken = async (token: string): Promise<Invitation | null> => {
+  const result = await lookupInvitation(token);
+  return result.status === 'found' ? result.invitation : null;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toInvitation(id: string, data: any): Invitation {
+  return {
+    id,
     token: data.token,
     clientName: data.clientName,
     clientEmail: data.clientEmail,
@@ -49,7 +82,7 @@ export const getInvitationByToken = async (token: string): Promise<Invitation | 
     createdAt: data.createdAt?.toDate(),
     updatedAt: data.updatedAt?.toDate(),
   };
-};
+}
 
 /**
  * 招待が閲覧可能かどうか。

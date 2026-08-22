@@ -12,13 +12,20 @@ import { saveOne } from '../save/saveToLibrary';
 
 export type SendToWeb = (message: OutboundMessage) => void;
 
+/** web が「この招待は確かに無効だ」と通知してきたときに呼ばれる。 */
+export type OnInvitationInvalid = (token: string) => void;
+
 /**
  * web から届いたメッセージを捌く。
  *
  * 不正 JSON・nonce 不一致・未知の type は黙って無視する（例外を投げない）。
  * 実行中のリクエストは requestId で管理し、cancelSave でフラグを立てる。
  */
-export function createMessageHandler(nonce: string, send: SendToWeb) {
+export function createMessageHandler(
+  nonce: string,
+  send: SendToWeb,
+  onInvitationInvalid?: OnInvitationInvalid
+) {
   const cancelled = new Set<string>();
   const running = new Set<string>();
 
@@ -59,6 +66,12 @@ export function createMessageHandler(nonce: string, send: SendToWeb) {
 
       case 'cancelSave':
         if (running.has(message.requestId)) cancelled.add(message.requestId);
+        return;
+
+      case 'invitationInvalid':
+        // 判断は上位（App）に委ねる。ここでは伝えるだけ。
+        // どのトークンが無効かを渡し、上位が表示中・保存中のものと照合する。
+        onInvitationInvalid?.(message.token);
         return;
 
       case 'saveImage': {

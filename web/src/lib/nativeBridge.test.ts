@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   BRIDGE_VERSION,
   detectNativeShell,
+  notifyInvitationInvalid,
   postToNative,
   subscribeToNative,
   supportsFeature,
@@ -192,5 +193,66 @@ describe('保存メッセージに URL を含めない（認可の前提）', ()
     const payload = JSON.parse(postMessage.mock.calls[0][0] as string);
     expect(payload.imageIds).toEqual(['a', 'b']);
     expect(JSON.stringify(payload)).not.toContain('http');
+  });
+});
+
+/**
+ * 無効な招待の通知。
+ *
+ * これが無いと、無効なトークンを一度保存したアプリは回復できない。
+ * 一方、送るべきでない場面（通信障害）で送ると、有効なトークンが端末から消える。
+ * 送る／送らないの判断は useInvitation 側にあるが、
+ * ここでは「送るときに正しく届くか」「ブラウザで壊れないか」を固定する。
+ */
+describe('notifyInvitationInvalid', () => {
+  it('nonce があれば即座に送る', () => {
+    injectCapabilities();
+    const postMessage = vi.fn();
+    window.ReactNativeWebView = { postMessage };
+
+    notifyInvitationInvalid('tok-123');
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const sent = JSON.parse(postMessage.mock.calls[0][0]);
+    expect(sent).toMatchObject({
+      type: 'invitationInvalid',
+      token: 'tok-123',
+      v: BRIDGE_VERSION,
+      nonce: 'test-nonce',
+    });
+  });
+
+  // Android では注入が遅れて nonce が無いことがある。
+  // その状態で送るとネイティブ側が nonce 不一致で捨てるため、注入を待つ必要がある。
+  it('nonce がまだ無ければ、注入完了を待ってから送る', () => {
+    setUserAgent('Mozilla/5.0 (Linux; Android 14) AppleWebKit PhotoGalleryApp/1.0.0');
+    const postMessage = vi.fn();
+    window.ReactNativeWebView = { postMessage };
+
+    notifyInvitationInvalid('tok-123');
+    expect(postMessage).not.toHaveBeenCalled();
+
+    injectCapabilities();
+    window.dispatchEvent(new Event('native-gallery-ready'));
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(postMessage.mock.calls[0][0]).nonce).toBe('test-nonce');
+  });
+
+  it('注入完了を待つ経路でも二重に送らない', () => {
+    setUserAgent('Mozilla/5.0 (Linux; Android 14) AppleWebKit PhotoGalleryApp/1.0.0');
+    const postMessage = vi.fn();
+    window.ReactNativeWebView = { postMessage };
+
+    notifyInvitationInvalid('tok-123');
+    injectCapabilities();
+    window.dispatchEvent(new Event('native-gallery-ready'));
+    window.dispatchEvent(new Event('native-gallery-ready'));
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('通常のブラウザでは何もしないし、例外も投げない', () => {
+    expect(() => notifyInvitationInvalid('tok-123')).not.toThrow();
   });
 });

@@ -26,7 +26,10 @@
         "web/src/types/index.ts",
         "docs/app-store/implementation-plan.md"
       ],
-      "files_to_create": ["web/src/utils/viewingWindow.ts", "web/src/utils/viewingWindow.test.ts"],
+      "files_to_create": [
+        "web/src/utils/viewingWindow.ts",
+        "web/src/utils/viewingWindow.test.ts"
+      ],
       "files_to_modify": [
         "web/src/services/invitationService.ts",
         "web/src/services/manifestService.ts",
@@ -56,7 +59,11 @@
         "cd web && npm test が全パス",
         "cd web && npm run build が成功"
       ],
-      "verify_commands": ["cd web && npm test", "cd web && npm run lint", "cd web && npm run build"],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run lint",
+        "cd web && npm run build"
+      ],
       "risk_level": "medium"
     },
     {
@@ -69,7 +76,10 @@
         "招待詳細に閲覧期限を表示する",
         "テストを更新する"
       ],
-      "non_scope": ["作成済み招待の viewingDays の編集機能", "expiresAt の仕様変更"],
+      "non_scope": [
+        "作成済み招待の viewingDays の編集機能",
+        "expiresAt の仕様変更"
+      ],
       "files_to_read": [
         "admin/src/services/invitationService.ts",
         "admin/src/services/__tests__/invitationService.test.ts",
@@ -169,7 +179,8 @@
         "cd web && npm test",
         "cd web && npm run build"
       ],
-      "risk_level": "medium"
+      "risk_level": "medium",
+      "status": "完了（2026-08-22）。web が確定した無効判定をブリッジで通知し、ネイティブが表示中・保存中の両方と照合してトークンを破棄する。直前の有効トークンがあれば復帰させる。実機で「無効トークン→再起動→入口画面」を確認。本番の web で「無効なら1件送信・有効なら0件」を実測。web 97件 / mobile 66件のテストが合格。**機内モードでの誤破棄しない確認は未実施。**"
     },
     {
       "task_id": "task_004",
@@ -196,13 +207,17 @@
         "mobile/src/config.ts",
         "docs/native-app/device-test-log.md"
       ],
-      "files_to_create": ["mobile/src/screens/OpenByLinkScreen.tsx"],
+      "files_to_create": [
+        "mobile/src/screens/OpenByLinkScreen.tsx"
+      ],
       "files_to_modify": [
         "mobile/src/navigation/resolveInitialUrl.ts",
         "mobile/src/navigation/resolveInitialUrl.test.ts",
         "mobile/App.tsx"
       ],
-      "dependencies": ["task_003"],
+      "dependencies": [
+        "task_003"
+      ],
       "implementation_steps": [
         "normalizeInvitationInput(raw: string, webOrigin: string): string | null を書く。前後の空白と改行を除去し、http(s):// または photogallery:// で始まればそのまま返し、それ以外で ^[A-Za-z0-9_-]{8,40}$ に一致すればトークンとみなして `${webOrigin}/gallery/${token}` を組み立て、どれにも当てはまらなければ null を返す",
         "**長さの範囲（8〜40）を定数にして根拠をコメントに残す。** 下限8はデモ用の短い招待コード（REVIEW-DEMO-2026 は16文字）を通すため、上限40は既存の nanoid 21文字に余裕を持たせるため",
@@ -225,7 +240,10 @@
         "cd mobile && npm run typecheck がエラーなし",
         "cd mobile && npm test が全パス"
       ],
-      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test"],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test"
+      ],
       "risk_level": "medium"
     },
     {
@@ -236,11 +254,21 @@
         "iOS 実機で単体保存・一括保存・キャンセル・バックグラウンド中断・権限ダイアログ・ファイル名を確認する",
         "結果を docs/native-app/device-test-log.md に追記する"
       ],
-      "non_scope": ["Android の再検証", "空き容量不足時の挙動（審査に無関係）"],
-      "files_to_read": ["docs/native-app/device-test-log.md", "mobile/src/save/saveBatch.ts"],
+      "non_scope": [
+        "Android の再検証",
+        "空き容量不足時の挙動（審査に無関係）"
+      ],
+      "files_to_read": [
+        "docs/native-app/device-test-log.md",
+        "mobile/src/save/saveBatch.ts"
+      ],
       "files_to_create": [],
-      "files_to_modify": ["docs/native-app/device-test-log.md"],
-      "dependencies": ["task_004"],
+      "files_to_modify": [
+        "docs/native-app/device-test-log.md"
+      ],
+      "dependencies": [
+        "task_004"
+      ],
       "implementation_steps": [
         "preview プロファイルでビルドし、USB で実機にインストールする（docs/native-app/eas-build-setup.md の手順）",
         "**権限ダイアログの文言を確認する。** 「写真の追加のみ」を求めるものであること。読み取りを求めていたら設計と食い違うため実装を直す",
@@ -276,9 +304,17 @@
         "submit.production への App Store Connect ID の設定（アプリレコード作成後。task_012）",
         "バンドル識別子の変更"
       ],
-      "files_to_read": ["mobile/app.config.ts", "mobile/eas.json", "mobile/src/config.ts", "mobile/package.json"],
+      "files_to_read": [
+        "mobile/app.config.ts",
+        "mobile/eas.json",
+        "mobile/src/config.ts",
+        "mobile/package.json"
+      ],
       "files_to_create": [],
-      "files_to_modify": ["mobile/app.config.ts", "mobile/eas.json"],
+      "files_to_modify": [
+        "mobile/app.config.ts",
+        "mobile/eas.json"
+      ],
       "dependencies": [],
       "implementation_steps": [
         "ios.supportsTablet を false にし、理由（iPad で一度も検証しておらず、宣言すると iPad 実機審査と 13インチのスクリーンショットが必須になる）をコメントに残す",
@@ -306,8 +342,15 @@
       "task_id": "task_007",
       "title": "プライバシーポリシーのページを追加する",
       "goal": "App Store 提出の必須項目であるプライバシーポリシー URL を用意する。",
-      "scope": ["web/src/app/privacy/page.tsx を新設する", "実装に即した内容だけを書く"],
-      "non_scope": ["利用規約のページ", "会社サイト（non-turn.com）側への掲載", "多言語対応"],
+      "scope": [
+        "web/src/app/privacy/page.tsx を新設する",
+        "実装に即した内容だけを書く"
+      ],
+      "non_scope": [
+        "利用規約のページ",
+        "会社サイト（non-turn.com）側への掲載",
+        "多言語対応"
+      ],
       "files_to_read": [
         "web/src/app/layout.tsx",
         "web/src/app/globals.css",
@@ -315,7 +358,9 @@
         "mobile/app.config.ts",
         "storage.rules"
       ],
-      "files_to_create": ["web/src/app/privacy/page.tsx"],
+      "files_to_create": [
+        "web/src/app/privacy/page.tsx"
+      ],
       "files_to_modify": [],
       "dependencies": [],
       "implementation_steps": [
@@ -333,19 +378,33 @@
         "本文に「URL を知る者は期限後もアクセスできる」旨が含まれる",
         "本文の記載が App Privacy の申告内容と矛盾しない"
       ],
-      "verify_commands": ["cd web && npm run build", "cd web && npm run lint"],
+      "verify_commands": [
+        "cd web && npm run build",
+        "cd web && npm run lint"
+      ],
       "risk_level": "low"
     },
     {
       "task_id": "task_008",
       "title": "web を本番にデプロイする",
       "goal": "アプリが読み込む本番（gallery.non-turn.com）に、viewingDays・無効通知・プライバシーポリシーを反映する。これが無いと task_009 以降の検証が成立しない。",
-      "scope": ["web の本番デプロイ", "反映の確認"],
-      "non_scope": ["admin のデプロイ（task_002 の完了時に別途行う）"],
-      "files_to_read": ["docs/native-app/eas-build-setup.md"],
+      "scope": [
+        "web の本番デプロイ",
+        "反映の確認"
+      ],
+      "non_scope": [
+        "admin のデプロイ（task_002 の完了時に別途行う）"
+      ],
+      "files_to_read": [
+        "docs/native-app/eas-build-setup.md"
+      ],
       "files_to_create": [],
       "files_to_modify": [],
-      "dependencies": ["task_001", "task_003", "task_007"],
+      "dependencies": [
+        "task_001",
+        "task_003",
+        "task_007"
+      ],
       "implementation_steps": [
         "リポジトリのルートで vercel deploy --prod --yes を実行する（プロジェクトの Root Directory が web のため、ルートから実行する）",
         "gallery.non-turn.com でギャラリーが表示されることを確認する",
@@ -374,10 +433,17 @@
         "実クライアントの納品写真の使用（契約・プライバシー上できない）",
         "管理画面からの人間可読トークンの発行機能（createInvitation は nanoid 固定。デモ1件のためにUIを作らない）"
       ],
-      "files_to_read": ["admin/src/services/invitationService.ts", "docs/app-store/implementation-plan.md"],
+      "files_to_read": [
+        "admin/src/services/invitationService.ts",
+        "docs/app-store/implementation-plan.md"
+      ],
       "files_to_create": [],
       "files_to_modify": [],
-      "dependencies": ["task_002", "task_004", "task_008"],
+      "dependencies": [
+        "task_002",
+        "task_004",
+        "task_008"
+      ],
       "implementation_steps": [
         "管理画面で「App Store 審査用デモ」プロジェクトを作り、NonTurn のサンプル写真を 20〜46 枚アップロードする（枚数が少なすぎると一括保存の価値が伝わらない）",
         "**招待は Firebase コンソールから手動で作る。** createInvitation は nanoid でトークンを生成するため、管理画面からは人間が打てる ID を作れない",
@@ -405,15 +471,22 @@
         "scripts/verify-demo-invitation.mjs を新設する",
         "招待の状態と各経路の到達性を検査する"
       ],
-      "non_scope": ["実機での保存の自動化（できない。task_005 で人が行う）"],
+      "non_scope": [
+        "実機での保存の自動化（できない。task_005 で人が行う）"
+      ],
       "files_to_read": [
         "scripts/migrate-invitation-ids.mjs",
         "web/src/services/manifestService.ts",
         "web/src/utils/viewingWindow.ts"
       ],
-      "files_to_create": ["scripts/verify-demo-invitation.mjs"],
+      "files_to_create": [
+        "scripts/verify-demo-invitation.mjs"
+      ],
       "files_to_modify": [],
-      "dependencies": ["task_008", "task_009"],
+      "dependencies": [
+        "task_008",
+        "task_009"
+      ],
       "implementation_steps": [
         "既存の scripts/migrate-invitation-ids.mjs と同じ方式（web/node_modules の Firebase クライアント SDK、web/.env.local から設定を読む）にする",
         "引数でデモの招待コードを受け取る",
@@ -427,7 +500,9 @@
         "存在しない招待コードを渡すと非ゼロで終了し、理由が出力される",
         "検査項目が9件すべて実装されている"
       ],
-      "verify_commands": ["node scripts/verify-demo-invitation.mjs REVIEW-DEMO-2026"],
+      "verify_commands": [
+        "node scripts/verify-demo-invitation.mjs REVIEW-DEMO-2026"
+      ],
       "risk_level": "low"
     },
     {
@@ -443,10 +518,17 @@
         "iPad のスクリーンショット（task_006 で supportsTablet を false にするため不要）",
         "App Preview（ストア掲載用の動画）"
       ],
-      "files_to_read": ["docs/app-store/implementation-plan.md"],
-      "files_to_create": ["docs/app-store/screenshots.md"],
+      "files_to_read": [
+        "docs/app-store/implementation-plan.md"
+      ],
+      "files_to_create": [
+        "docs/app-store/screenshots.md"
+      ],
       "files_to_modify": [],
-      "dependencies": ["task_005", "task_009"],
+      "dependencies": [
+        "task_005",
+        "task_009"
+      ],
       "implementation_steps": [
         "**ストア掲載用と審査添付用を分ける。** ストア掲載画像に OS の権限ダイアログを含めるのは Guideline 2.3.3（実際の使用体験を見せる）と摩擦がある",
         "ストア掲載用（5カット）: (1) ギャラリー一覧 (2) 写真の拡大表示 (3) 一括保存の進捗 (4) 保存完了のトースト (5) 招待を開く画面",
@@ -476,11 +558,25 @@
         "メタデータの全項目を登録する",
         "eas.json の submit.production を設定する"
       ],
-      "non_scope": ["価格設定（無料）以外の販売設定", "Android / Play Console"],
-      "files_to_read": ["mobile/eas.json", "docs/app-store/implementation-plan.md"],
-      "files_to_create": ["docs/app-store/store-listing.md"],
-      "files_to_modify": ["mobile/eas.json"],
-      "dependencies": ["task_006", "task_008", "task_011"],
+      "non_scope": [
+        "価格設定（無料）以外の販売設定",
+        "Android / Play Console"
+      ],
+      "files_to_read": [
+        "mobile/eas.json",
+        "docs/app-store/implementation-plan.md"
+      ],
+      "files_to_create": [
+        "docs/app-store/store-listing.md"
+      ],
+      "files_to_modify": [
+        "mobile/eas.json"
+      ],
+      "dependencies": [
+        "task_006",
+        "task_008",
+        "task_011"
+      ],
       "implementation_steps": [
         "説明文の原稿を docs/app-store/store-listing.md に書く。**ネイティブ固有の価値（フォトライブラリへの直接保存・一括保存）を冒頭に置く**。4.2 の判断材料になる",
         "App Store Connect でアプリレコードを作る。表示名 'NonTurn Gallery' の空きを確認し、使用済みなら代替を決めて implementation-plan の Assumption 6 を更新する",
@@ -509,14 +605,22 @@
         "docs/app-store/review-notes.md に本文を書く",
         "App Store Connect の App Review Information に貼る"
       ],
-      "non_scope": ["デモ用アカウントの作成（アカウントの概念が無い）"],
+      "non_scope": [
+        "デモ用アカウントの作成（アカウントの概念が無い）"
+      ],
       "files_to_read": [
         "docs/native-app/app-store-submission.md",
         "docs/native-app/device-test-log.md"
       ],
-      "files_to_create": ["docs/app-store/review-notes.md"],
+      "files_to_create": [
+        "docs/app-store/review-notes.md"
+      ],
       "files_to_modify": [],
-      "dependencies": ["task_005", "task_009", "task_011"],
+      "dependencies": [
+        "task_005",
+        "task_009",
+        "task_011"
+      ],
       "implementation_steps": [
         "**英語で書く**（レビュアーが日本語話者とは限らない）。日本語版も併記する",
         "**到達手順を2通り書く**: (a) アプリを起動し、入力欄に招待コード `<DEMO_CODE>` を入力して Open を押す（推奨） (b) このリンクをタップするとアプリが開く。**(a) を先に書く。** リンクのタップはユニバーサルリンクの登録状況に左右され、Safari で開く場合がある",
@@ -543,12 +647,26 @@
       "task_id": "task_014",
       "title": "production ビルドを作って提出する",
       "goal": "審査に提出する。",
-      "scope": ["production プロファイルでビルドする", "IPA を検査する", "eas submit で送る", "審査に提出する"],
-      "non_scope": ["却下された場合の対応（task_017）"],
-      "files_to_read": ["mobile/eas.json", "docs/app-store/review-notes.md"],
+      "scope": [
+        "production プロファイルでビルドする",
+        "IPA を検査する",
+        "eas submit で送る",
+        "審査に提出する"
+      ],
+      "non_scope": [
+        "却下された場合の対応（task_017）"
+      ],
+      "files_to_read": [
+        "mobile/eas.json",
+        "docs/app-store/review-notes.md"
+      ],
       "files_to_create": [],
       "files_to_modify": [],
-      "dependencies": ["task_010", "task_012", "task_013"],
+      "dependencies": [
+        "task_010",
+        "task_012",
+        "task_013"
+      ],
       "implementation_steps": [
         "**node scripts/verify-demo-invitation.mjs <招待コード> を実行し、全項目合格を確認する**",
         "npx eas-cli build --platform ios --profile production を実行する",
@@ -581,16 +699,25 @@
         "一括保存の進捗と完了をネイティブのモーダルで表示する",
         "既存の web 側の表示はブラウザ用に残す"
       ],
-      "non_scope": ["ギャラリー本体のネイティブ化（UI は web を使うという方針を崩さない）"],
+      "non_scope": [
+        "ギャラリー本体のネイティブ化（UI は web を使うという方針を崩さない）"
+      ],
       "files_to_read": [
         "mobile/src/screens/GalleryWebView.tsx",
         "mobile/src/bridge/handleMessage.ts",
         "web/src/components/DownloadProgressModal.tsx",
         "web/src/components/NativeSaveNotice.tsx"
       ],
-      "files_to_create": ["mobile/src/screens/SaveProgressOverlay.tsx"],
-      "files_to_modify": ["mobile/src/screens/GalleryWebView.tsx", "mobile/src/bridge/handleMessage.ts"],
-      "dependencies": ["task_005"],
+      "files_to_create": [
+        "mobile/src/screens/SaveProgressOverlay.tsx"
+      ],
+      "files_to_modify": [
+        "mobile/src/screens/GalleryWebView.tsx",
+        "mobile/src/bridge/handleMessage.ts"
+      ],
+      "dependencies": [
+        "task_005"
+      ],
       "implementation_steps": [
         "レビュー3件が一致して『4.2 の緩和が審査メモの文章だけ』と指摘した。**文章は binary が何であるかを変えない**",
         "保存の進捗（saveProgress）と結果（saveResult）はすでにネイティブ側で発生している。現在はそれを web へ送り返して web が描画している",
@@ -605,7 +732,11 @@
         "cd mobile && npm test が全パス",
         "cd web && npm test が全パス"
       ],
-      "verify_commands": ["cd mobile && npm run typecheck", "cd mobile && npm test", "cd web && npm test"],
+      "verify_commands": [
+        "cd mobile && npm run typecheck",
+        "cd mobile && npm test",
+        "cd web && npm test"
+      ],
       "risk_level": "medium",
       "optional": true
     },
@@ -613,8 +744,12 @@
       "task_id": "task_016",
       "title": "[任意] ID＋合言葉サインインを実装する",
       "goal": "リンクを扱えないクライアントのために、ID と合言葉でギャラリーを開けるようにする。2.1 で却下された場合の escalate 先でもある。",
-      "scope": ["docs/app-signin/ の計画（task_001〜task_015、**全15タスク**）を実施する"],
-      "non_scope": ["本計画の初回提出に組み込むこと"],
+      "scope": [
+        "docs/app-signin/ の計画（task_001〜task_015、**全15タスク**）を実施する"
+      ],
+      "non_scope": [
+        "本計画の初回提出に組み込むこと"
+      ],
       "files_to_read": [
         "docs/app-signin/implementation-plan.md",
         "docs/app-signin/task-list.json",
@@ -622,7 +757,9 @@
       ],
       "files_to_create": [],
       "files_to_modify": [],
-      "dependencies": ["task_004"],
+      "dependencies": [
+        "task_004"
+      ],
       "implementation_steps": [
         "docs/app-signin/implementation-plan.md の『未解決の前提条件』を確認する。**invitations の list 制限は 2026-08-17 に完了しており、(a) の条件は満たされている**",
         "同計画の task_001 から順に実施する。task_015（ブラウザ側のサインイン画面）は同計画でも任意",
@@ -634,7 +771,11 @@
         "App Store Connect のサインイン情報欄に登録できる形式のデモ資格情報がある",
         "リンクの貼り付けと ID＋合言葉のどちらでも開ける、または後者に一本化されている"
       ],
-      "verify_commands": ["cd web && npm test", "cd admin && npx vitest run", "cd mobile && npm test"],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd admin && npx vitest run",
+        "cd mobile && npm test"
+      ],
       "risk_level": "medium",
       "optional": true
     },
@@ -642,12 +783,26 @@
       "task_id": "task_017",
       "title": "[任意] 却下された場合のフォールバック",
       "goal": "却下理由に応じて次の手を決め、納品手段を確保する。",
-      "scope": ["却下理由の分類", "2.1 なら修正して再提出", "4.2 なら配布形態の切り替え", "デモ招待の後始末"],
-      "non_scope": ["公開ストアへの再挑戦の是非（ユーザーの判断）"],
-      "files_to_read": ["docs/native-app/app-store-submission.md", "docs/native-app/decisions.md"],
+      "scope": [
+        "却下理由の分類",
+        "2.1 なら修正して再提出",
+        "4.2 なら配布形態の切り替え",
+        "デモ招待の後始末"
+      ],
+      "non_scope": [
+        "公開ストアへの再挑戦の是非（ユーザーの判断）"
+      ],
+      "files_to_read": [
+        "docs/native-app/app-store-submission.md",
+        "docs/native-app/decisions.md"
+      ],
       "files_to_create": [],
-      "files_to_modify": ["docs/native-app/decisions.md"],
-      "dependencies": ["task_014"],
+      "files_to_modify": [
+        "docs/native-app/decisions.md"
+      ],
+      "dependencies": [
+        "task_014"
+      ],
       "implementation_steps": [
         "却下理由を分類する",
         "**2.1（到達できない・デモが動かない）なら本計画の実装漏れ。** 修正して再提出する。理由が『デモに到達できない』であれば task_016（ID＋合言葉）へ escalate する",

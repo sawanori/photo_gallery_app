@@ -90,11 +90,31 @@ export interface OpenSettingsMessage extends BaseInbound {
   type: 'openSettings';
 }
 
+/**
+ * web が「この招待は確かに無効だ」と確認したときの通知。
+ *
+ * これが無いと、無効なトークンを一度保存したアプリは回復できない。
+ * 無効な招待でも web は HTTP 200 とエラーページを返すため、
+ * ネイティブ側からは正常な表示と区別がつかないからである。
+ *
+ * **web は通信障害では送らない。** サーバーが明示的に拒否した場合と、
+ * 取得できた招待が期限切れだった場合に限る。通信障害で送ると、
+ * 電波の悪い場所でアプリを開いただけで有効なトークンが消える。
+ *
+ * `token` は対象を特定するために必須。ネイティブは表示中の招待と
+ * 保存中のトークンの両方に一致した場合だけ破棄する。
+ */
+export interface InvitationInvalidMessage extends BaseInbound {
+  type: 'invitationInvalid';
+  token: string;
+}
+
 export type InboundMessage =
   | SaveImageMessage
   | SaveImagesMessage
   | CancelSaveMessage
-  | OpenSettingsMessage;
+  | OpenSettingsMessage
+  | InvitationInvalidMessage;
 
 /* ---------- native → web ---------- */
 
@@ -172,6 +192,10 @@ export function parseInboundMessage(
 
     case 'openSettings':
       return msg as unknown as OpenSettingsMessage;
+
+    case 'invitationInvalid':
+      if (typeof msg.token !== 'string' || msg.token.length === 0) return null;
+      return msg as unknown as InvitationInvalidMessage;
 
     default:
       // 未知の type は黙って無視する。将来の web が新しい type を送ってきても落ちない。

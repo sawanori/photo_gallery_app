@@ -69,7 +69,8 @@ type OutgoingMessage =
   | { type: 'saveImage'; requestId: string; token: string; imageId: string }
   | { type: 'saveImages'; requestId: string; token: string; imageIds: string[] }
   | { type: 'cancelSave'; requestId: string }
-  | { type: 'openSettings' };
+  | { type: 'openSettings' }
+  | { type: 'invitationInvalid'; token: string };
 
 interface ReactNativeWebViewBridge {
   postMessage: (message: string) => void;
@@ -198,6 +199,42 @@ export function subscribeToNative(
 
   window.addEventListener('native-gallery', listener);
   return () => window.removeEventListener('native-gallery', listener);
+}
+
+/**
+ * 「この招待は確かに無効だ」とネイティブへ知らせる。
+ *
+ * これが無いと、無効なトークンを一度保存したアプリは回復できない。
+ * 無効な招待でも web は HTTP 200 とエラーページを返すため、
+ * ネイティブ側からは正常な表示と区別がつかないからである。
+ *
+ * **通信障害では呼ばないこと。** サーバーが明示的に拒否した場合と、
+ * 取得できた招待が期限切れだった場合に限る。呼び出し側（useInvitation）が判断する。
+ *
+ * nonce が届く前（Android の注入遅延）に送るとネイティブ側で捨てられるため、
+ * nonce が無ければ注入完了のイベントを待って送る。
+ * ネイティブ側の処理は冪等なので、二重に届いても害はない。
+ *
+ * ブラウザでは何もしない。
+ */
+export function notifyInvitationInvalid(token: string): void {
+  if (typeof window === 'undefined') return;
+
+  const send = () => postToNative({ type: 'invitationInvalid', token });
+
+  // nonce があれば即送る。
+  if (detectNativeShell()?.nonce) {
+    send();
+    return;
+  }
+
+  // 注入がまだ届いていない。イベントを待つ。
+  // **一度だけ購読する。** subscribeToShellReady は addEventListener の薄い包みで、
+  // 既に発火したイベントは拾えない。だから先に上の即時送信を試している。
+  const unsubscribe = subscribeToShellReady(() => {
+    unsubscribe();
+    send();
+  });
 }
 
 function extractAppVersion(ua: string): string | null {
