@@ -44,6 +44,10 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageC
 
   return (
     <div
+      // 申請前の受け入れ確認（e2e/review-demo.spec.ts）が、審査担当者の経路で
+      // ネイティブ保存の認可 API を呼ぶために画像 ID を必要とする。
+      // 画面には出ないが、この経路が壊れると審査で「保存できない」と見える。
+      data-image-id={image.id}
       className="
         break-inside-avoid mb-4 group relative
         rounded-lg overflow-hidden
