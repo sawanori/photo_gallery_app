@@ -1,27 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { isIos } from '@/utils/device';
 import { detectNativeShell } from '@/lib/nativeBridge';
+import { useDismissibleGuide } from '@/hooks/useDismissibleGuide';
 
 const STORAGE_KEY = 'ios_save_guide_dismissed';
 
+// ネイティブシェル内では保存ボタンから直接保存できるため手順の案内は不要
+const isApplicable = () => isIos() && detectNativeShell() === null;
+
 export default function IosSaveGuide() {
-  const [show, setShow] = useState(false);
-
-  useEffect(() => {
-    const dismissed = localStorage.getItem(STORAGE_KEY);
-    // ネイティブシェル内では保存ボタンから直接保存できるため手順の案内は不要
-    if (detectNativeShell()) return;
-    if (isIos() && !dismissed) {
-      setShow(true);
-    }
-  }, []);
-
-  const handleDismiss = () => {
-    localStorage.setItem(STORAGE_KEY, '1');
-    setShow(false);
-  };
+  const { show, dismiss: handleDismiss } = useDismissibleGuide(STORAGE_KEY, isApplicable);
 
   if (!show) return null;
 
@@ -39,7 +28,7 @@ export default function IosSaveGuide() {
               写真を保存するには
             </p>
             <p className="text-xs text-muted mt-0.5">
-              写真を長押しして「"写真"に追加」を選択してください
+              写真を長押しして「&quot;写真&quot;に追加」を選択してください
             </p>
           </div>
           <button

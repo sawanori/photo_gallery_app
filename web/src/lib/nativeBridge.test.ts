@@ -109,6 +109,34 @@ describe('postToNative', () => {
     injectCapabilities();
     expect(postToNative({ type: 'openSettings' })).toBe(false);
   });
+
+  /**
+   * nonce が無いまま送ると、ネイティブ側（protocol.ts）が黙って捨てるため
+   * 返事が永遠に来ない。web は isSaving を立てたままになり、ボタンは disabled、
+   * モーダルは 0/N で固まる（監査 F3）。送らずに false を返して
+   * 呼び出し側をブラウザ挙動へ落とす。
+   */
+  it('nonce が無ければ送らず false を返す', () => {
+    setUserAgent('Mozilla/5.0 (Linux; Android 14) AppleWebKit PhotoGalleryApp/1.2.3');
+    const postMessage = vi.fn();
+    window.ReactNativeWebView = { postMessage };
+
+    // UA だけで検出できた状態＝nonce は null
+    expect(detectNativeShell()?.nonce).toBeNull();
+    expect(
+      postToNative({ type: 'saveImages', requestId: 'r1', token: 'tok', imageIds: ['a'] })
+    ).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('nonce が空文字でも送らない', () => {
+    const postMessage = vi.fn();
+    window.ReactNativeWebView = { postMessage };
+    injectCapabilities({ nonce: '' });
+
+    expect(postToNative({ type: 'openSettings' })).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('subscribeToNative', () => {

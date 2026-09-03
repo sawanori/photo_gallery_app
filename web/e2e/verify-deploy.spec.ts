@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING, galleryOrigin } from './galleryUrl';
 
 test('Verify deployment reflects security fixes', async ({ page }) => {
-  const baseUrl = 'https://web-kappa-neon-94.vercel.app';
-  const galleryUrl = `${baseUrl}/gallery/UR0ht6dvnku-SpUuMnQmo`;
+  test.skip(!E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING);
+
+  const baseUrl = galleryOrigin();
+  const galleryUrl = E2E_GALLERY_URL;
 
   console.log('=== Testing: ' + galleryUrl + ' ===');
 

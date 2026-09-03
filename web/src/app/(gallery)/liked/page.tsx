@@ -26,13 +26,24 @@ const NativeSaveNotice = dynamic(() => import('@/components/NativeSaveNotice'), 
   ssr: false,
 });
 
+const BulkDownloadNotice = dynamic(() => import('@/components/BulkDownloadNotice'), {
+  ssr: false,
+});
+
 function LikedPageContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
   const { isLoading, error, isValid } = useInvitation(token);
   const { invitation } = useGallery();
   const { likedImages } = useLikedImages();
-  const { isDownloading, progress, startDownload, cancelDownload } = useBulkDownload();
+  const {
+    isDownloading,
+    progress,
+    lastResult: downloadResult,
+    startDownload,
+    cancelDownload,
+    clearResult: clearDownloadResult,
+  } = useBulkDownload();
   const { isNative } = useIsNativeShell();
   const nativeSave = useNativeSave();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -47,7 +58,9 @@ function LikedPageContent() {
     const zipName = invitation?.clientName
       ? `${invitation.clientName}_favorites`
       : 'favorites';
-    startDownload(likedImages, zipName);
+    // 失敗は startDownload が lastResult に入れて下の通知に出す。
+    // ここで受けないと unhandled rejection になる。
+    startDownload(likedImages, zipName).catch(() => {});
   };
 
   if (isLoading) {
@@ -144,6 +157,10 @@ function LikedPageContent() {
           result={nativeSave.lastResult}
           onClose={nativeSave.clearResult}
         />
+      )}
+
+      {downloadResult && (
+        <BulkDownloadNotice result={downloadResult} onClose={clearDownloadResult} />
       )}
     </div>
   );

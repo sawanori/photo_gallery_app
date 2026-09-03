@@ -14,9 +14,20 @@ const NativeSaveNotice = dynamic(() => import('./NativeSaveNotice'), {
   ssr: false,
 });
 
+const BulkDownloadNotice = dynamic(() => import('./BulkDownloadNotice'), {
+  ssr: false,
+});
+
 export default function BulkDownloadButton() {
   const { allImages, invitation } = useGallery();
-  const { isDownloading, progress, startDownload, cancelDownload } = useBulkDownload();
+  const {
+    isDownloading,
+    progress,
+    lastResult: downloadResult,
+    startDownload,
+    cancelDownload,
+    clearResult: clearDownloadResult,
+  } = useBulkDownload();
   const { isNative } = useIsNativeShell();
   const nativeSave = useNativeSave();
 
@@ -28,7 +39,9 @@ export default function BulkDownloadButton() {
     if (nativeSave.saveMany(allImages)) return;
 
     const zipName = invitation?.clientName || 'photos';
-    startDownload(allImages, zipName);
+    // 失敗は startDownload が lastResult に入れて下の通知に出す。
+    // ここで受けないと unhandled rejection になる。
+    startDownload(allImages, zipName).catch(() => {});
   };
 
   const busy = isDownloading || nativeSave.isSaving;
@@ -71,6 +84,10 @@ export default function BulkDownloadButton() {
           result={nativeSave.lastResult}
           onClose={nativeSave.clearResult}
         />
+      )}
+
+      {downloadResult && (
+        <BulkDownloadNotice result={downloadResult} onClose={clearDownloadResult} />
       )}
     </>
   );

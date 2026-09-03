@@ -1,9 +1,10 @@
-import { test, expect } from '@playwright/test';
-
-const GALLERY_URL = 'https://web-kappa-neon-94.vercel.app/gallery/X4Gr0DcdrhgRqjUs_JGl2';
+import { test } from '@playwright/test';
+import { E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING } from './galleryUrl';
 
 test.describe('Production gallery debug', () => {
   test('Access gallery URL and capture detailed logs', async ({ page }) => {
+    test.skip(!E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING);
+
     const consoleLogs: string[] = [];
     page.on('console', (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
 
@@ -22,7 +23,7 @@ test.describe('Production gallery debug', () => {
     });
 
     console.log('Navigating to gallery...');
-    await page.goto(GALLERY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await page.goto(E2E_GALLERY_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     await page.waitForTimeout(15_000);
 
     console.log('\n=== CONSOLE LOGS ===');

@@ -1,6 +1,9 @@
 import { test } from '@playwright/test';
+import { E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING } from './galleryUrl';
 
-test('Verify optimized images on web-kappa-neon-94', async ({ page }) => {
+test('Verify optimized images on the deployed gallery', async ({ page }) => {
+  test.skip(!E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING);
+
   const networkErrors: string[] = [];
   const apiImageRequests: string[] = [];
 
@@ -14,7 +17,7 @@ test('Verify optimized images on web-kappa-neon-94', async ({ page }) => {
     }
   });
 
-  await page.goto('https://web-kappa-neon-94.vercel.app/gallery/UR0ht6dvnku-SpUuMnQmo', {
+  await page.goto(E2E_GALLERY_URL, {
     waitUntil: 'domcontentloaded',
     timeout: 30000,
   });

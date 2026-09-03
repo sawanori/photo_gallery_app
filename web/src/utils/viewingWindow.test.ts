@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_VIEWING_DAYS,
+  effectiveDeadline,
   isWithinViewingWindow,
   normalizeViewingDays,
   viewingDeadline,
@@ -75,5 +76,45 @@ describe('isWithinViewingWindow', () => {
     expect(isWithinViewingWindow(CREATED, 0, at(8))).toBe(false);
     expect(isWithinViewingWindow(CREATED, -1, at(8))).toBe(false);
     expect(isWithinViewingWindow(CREATED, 'forever', at(8))).toBe(false);
+  });
+});
+
+/**
+ * 実効期限。
+ *
+ * 管理画面は `expiresAt` だけ、web のヘッダーは閲覧期限だけを見ていたため、
+ * 「有効期限 10月31日」と出ているのにクライアントは 7 日で見られなくなる、
+ * という食い違いが起きていた（監査 F6）。**早いほう**を1つの答えにする。
+ */
+describe('effectiveDeadline', () => {
+  const EXPIRES = at(30);
+
+  it('閲覧期限のほうが早ければ閲覧期限', () => {
+    expect(effectiveDeadline(CREATED, 7, EXPIRES)?.toISOString()).toBe(at(7).toISOString());
+  });
+
+  it('expiresAt のほうが早ければ expiresAt', () => {
+    expect(effectiveDeadline(CREATED, 180, EXPIRES)?.toISOString()).toBe(
+      EXPIRES.toISOString()
+    );
+  });
+
+  it('expiresAt が無ければ閲覧期限', () => {
+    expect(effectiveDeadline(CREATED, 7, undefined)?.toISOString()).toBe(
+      at(7).toISOString()
+    );
+  });
+
+  it('createdAt が無ければ expiresAt（両方無ければ null）', () => {
+    expect(effectiveDeadline(undefined, 7, EXPIRES)?.toISOString()).toBe(
+      EXPIRES.toISOString()
+    );
+    expect(effectiveDeadline(undefined, 7, undefined)).toBeNull();
+  });
+
+  it('不正な viewingDays は既定の 7 日として扱う', () => {
+    expect(effectiveDeadline(CREATED, 0, EXPIRES)?.toISOString()).toBe(
+      at(7).toISOString()
+    );
   });
 });

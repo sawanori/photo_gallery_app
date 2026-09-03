@@ -62,7 +62,10 @@ export default function MasonryGrid({ images, onImageClick, hasMore, isLoadingMo
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, loadMore]);
+    // images.length を依存に入れるのは、次ページが届いても sentinel が
+    // 交差したままだと IntersectionObserver が再発火せず、そこで止まるため。
+    // 縦長の画面ではこれで無限スクロールが 1 ページで死んでいた（監査 F13）。
+  }, [hasMore, loadMore, images.length]);
 
   const columns = useMemo(() => {
     const cols: { image: ImageWithLikeStatus; originalIndex: number }[][] = Array.from(

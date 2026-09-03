@@ -36,6 +36,16 @@ interface UseNativeSaveResult {
   clearResult: () => void;
 }
 
+/**
+ * 進捗も結果も届かないまま保存が固まったと見なすまでの時間。
+ *
+ * ネイティブ側が nonce 不一致でメッセージを捨てた場合や、アプリが落ちた場合、
+ * web には何も返ってこない。それでも `isSaving` を立てたままなので、
+ * ボタンは disabled、モーダルは 0/N のまま**永遠に終わらない**（監査 F3）。
+ * 保存は 1 枚ずつ進捗が来る作りなので、60 秒何も来なければ異常と判断してよい。
+ */
+const WATCHDOG_MS = 60_000;
+
 export function useNativeSave(): UseNativeSaveResult {
   // 招待トークンはマニフェスト API の認証に使う。native には URL を渡さない。
   const { invitation } = useGallery();
@@ -44,6 +54,32 @@ export function useNativeSave(): UseNativeSaveResult {
   const [progress, setProgress] = useState<NativeSaveProgress | null>(null);
   const [lastResult, setLastResult] = useState<NativeSaveResult | null>(null);
   const requestIdRef = useRef<string | null>(null);
+  const watchdogRef = useRef<number | null>(null);
+  const totalRef = useRef(0);
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current !== null) {
+      window.clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
+
+  /** 何か届くたびに張り直す。届かないまま時間が過ぎたら失敗として畳む。 */
+  const armWatchdog = useCallback(() => {
+    clearWatchdog();
+    watchdogRef.current = window.setTimeout(() => {
+      watchdogRef.current = null;
+      requestIdRef.current = null;
+      setIsSaving(false);
+      setProgress(null);
+      setLastResult({
+        ok: false,
+        savedCount: 0,
+        failedCount: totalRef.current,
+        errorCode: 'save_failed',
+      });
+    }, WATCHDOG_MS);
+  }, [clearWatchdog]);
 
   useEffect(() => {
     return subscribeToNative((event) => {
@@ -51,6 +87,7 @@ export function useNativeSave(): UseNativeSaveResult {
       if (event.requestId !== requestIdRef.current) return;
 
       if (event.type === 'saveProgress') {
+        armWatchdog();
         setProgress({
           current: event.current,
           total: event.total,
@@ -60,6 +97,7 @@ export function useNativeSave(): UseNativeSaveResult {
         return;
       }
 
+      clearWatchdog();
       setLastResult({
         ok: event.ok,
         savedCount: event.savedCount,
@@ -71,22 +109,31 @@ export function useNativeSave(): UseNativeSaveResult {
       setProgress(null);
       requestIdRef.current = null;
     });
-  }, []);
+  }, [armWatchdog, clearWatchdog]);
 
-  const begin = useCallback((total: number): string => {
-    const requestId = newRequestId();
-    requestIdRef.current = requestId;
-    setLastResult(null);
-    setIsSaving(true);
-    setProgress({ current: 0, total, percentage: 0 });
-    return requestId;
-  }, []);
+  // アンマウント時に監視タイマーを残さない
+  useEffect(() => clearWatchdog, [clearWatchdog]);
+
+  const begin = useCallback(
+    (total: number): string => {
+      const requestId = newRequestId();
+      requestIdRef.current = requestId;
+      totalRef.current = total;
+      setLastResult(null);
+      setIsSaving(true);
+      setProgress({ current: 0, total, percentage: 0 });
+      armWatchdog();
+      return requestId;
+    },
+    [armWatchdog]
+  );
 
   const abort = useCallback(() => {
+    clearWatchdog();
     requestIdRef.current = null;
     setIsSaving(false);
     setProgress(null);
-  }, []);
+  }, [clearWatchdog]);
 
   const saveOne = useCallback(
     (image: Image): boolean => {

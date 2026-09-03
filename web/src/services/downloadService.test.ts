@@ -102,6 +102,8 @@ describe('downloadImagesAsZip', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
       blob: () => Promise.resolve(new Blob(['x'], { type: 'image/jpeg' })),
     });
   });
@@ -144,5 +146,97 @@ describe('downloadImagesAsZip', () => {
     ).rejects.toThrow();
 
     expect(saveAs).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 取得失敗の扱い。
+ *
+ * 以前は `response.ok` を見ずに `blob()` していたため、403/404 の XML 本文が
+ * `.jpg` として ZIP に混入していた。さらに `Promise.all` だったので 1 枚失敗すると
+ * 全体が拒否され、呼び出し側は catch していなかったのでモーダルが消えるだけだった
+ * （監査 F1）。**残りは渡し、失敗した枚数を返す。**
+ */
+describe('downloadImagesAsZip / 失敗の扱い', () => {
+  const images: Image[] = [
+    { ...mockImage, id: 'a', title: 'a', url: 'https://example.com/a.jpg' },
+    { ...mockImage, id: 'b', title: 'b', url: 'https://example.com/b.jpg' },
+    { ...mockImage, id: 'c', title: 'c', url: 'https://example.com/c.jpg' },
+  ];
+
+  const okResponse = () => ({
+    ok: true,
+    status: 200,
+    blob: () => Promise.resolve(new Blob(['x'], { type: 'image/jpeg' })),
+  });
+
+  const forbiddenResponse = () => ({
+    ok: false,
+    status: 403,
+    blob: () =>
+      Promise.resolve(new Blob(['<Error>AccessDenied</Error>'], { type: 'application/xml' })),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('非 ok の応答は ZIP に入れず、失敗数として数える', async () => {
+    const { downloadImagesAsZip } = await import('./downloadService');
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('b.jpg') ? forbiddenResponse() : okResponse()
+    ) as unknown as typeof fetch;
+
+    const JSZip = (await import('jszip')).default;
+    const added: string[] = [];
+    vi.spyOn(JSZip.prototype, 'file').mockImplementation(function (
+      this: unknown,
+      name: unknown
+    ) {
+      added.push(String(name));
+      return this as never;
+    });
+
+    const result = await downloadImagesAsZip(images, 'photos');
+
+    expect(result).toEqual({ savedCount: 2, failedCount: 1 });
+    expect(added).toHaveLength(2);
+    expect(added.some((name) => name.includes('_b.'))).toBe(false);
+  });
+
+  it('1 枚失敗しても残りは保存される', async () => {
+    const { downloadImagesAsZip } = await import('./downloadService');
+    const { saveAs } = await import('file-saver');
+    vi.mocked(saveAs).mockClear();
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('b.jpg') ? forbiddenResponse() : okResponse()
+    ) as unknown as typeof fetch;
+
+    const result = await downloadImagesAsZip(images, 'photos');
+
+    expect(saveAs).toHaveBeenCalledTimes(1);
+    expect(result.failedCount).toBe(1);
+  });
+
+  it('通信そのものが失敗した枚数も数える', async () => {
+    const { downloadImagesAsZip } = await import('./downloadService');
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('c.jpg')) throw new TypeError('Failed to fetch');
+      return okResponse();
+    }) as unknown as typeof fetch;
+
+    const result = await downloadImagesAsZip(images, 'photos');
+
+    expect(result).toEqual({ savedCount: 2, failedCount: 1 });
+  });
+
+  it('全部成功なら failedCount は 0', async () => {
+    const { downloadImagesAsZip } = await import('./downloadService');
+    globalThis.fetch = vi.fn(async () => okResponse()) as unknown as typeof fetch;
+
+    expect(await downloadImagesAsZip(images, 'photos')).toEqual({
+      savedCount: 3,
+      failedCount: 0,
+    });
   });
 });

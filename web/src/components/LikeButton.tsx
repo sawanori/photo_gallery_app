@@ -8,11 +8,10 @@ import { toggleLike } from '@/services/likeService';
 interface LikeButtonProps {
   imageId: string;
   isLiked: boolean;
-  likeCount: number;
   size?: 'sm' | 'md';
 }
 
-export default function LikeButton({ imageId, isLiked, likeCount, size = 'md' }: LikeButtonProps) {
+export default function LikeButton({ imageId, isLiked, size = 'md' }: LikeButtonProps) {
   const { user } = useAuth();
   const { invitation, toggleLikedId, updateImageLikeCount } = useGallery();
   const [isAnimating, setIsAnimating] = useState(false);

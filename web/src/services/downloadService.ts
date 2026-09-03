@@ -46,38 +46,72 @@ export interface DownloadProgress {
   phase?: 'fetching' | 'zipping';
 }
 
+/**
+ * 一括 ZIP の結果。
+ *
+ * 以前は `Promise.all` だったため 1 枚失敗すると全体が拒否され、
+ * 呼び出し側は await も catch もしていなかったのでモーダルが消えるだけだった
+ * （監査 F1）。**失敗しても残りは渡し、失敗した枚数を返す。**
+ */
+export interface BulkDownloadResult {
+  /** ZIP に入った枚数 */
+  savedCount: number;
+  /** 取得に失敗して ZIP に入らなかった枚数 */
+  failedCount: number;
+}
+
 export const downloadImagesAsZip = async (
   images: Image[],
   zipName: string,
   onProgress?: (progress: DownloadProgress) => void,
   abortSignal?: AbortSignal,
-): Promise<void> => {
+): Promise<BulkDownloadResult> => {
   const zip = new JSZip();
   const total = images.length;
   const batchSize = 50;
+  let failedCount = 0;
 
   for (let i = 0; i < total; i += batchSize) {
     const batch = images.slice(i, i + batchSize);
 
-    await Promise.all(
+    // allSettled にするのは、1 枚の失敗で残り全部を捨てないため。
+    const settled = await Promise.allSettled(
       batch.map(async (image, batchIndex) => {
-        if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
-
-        const response = await fetch(image.url, { signal: abortSignal });
-        const blob = await response.blob();
-        const extension = blob.type.split('/')[1] || 'jpg';
         const index = i + batchIndex + 1;
-        const filename = `${String(index).padStart(3, '0')}_${image.title || image.id}.${extension}`;
-        zip.file(filename, blob);
+        try {
+          if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-        onProgress?.({
-          current: i + batchIndex + 1,
-          total,
-          percentage: Math.round(((i + batchIndex + 1) / total) * 100),
-          phase: 'fetching',
-        });
+          const response = await fetch(image.url, { signal: abortSignal });
+          // response.ok を見ずに blob() していたため、403/404 の XML 本文が
+          // `.jpg` として ZIP に混入していた。
+          if (!response.ok) {
+            throw new Error(`Failed to fetch image ${image.id}: ${response.status}`);
+          }
+
+          const blob = await response.blob();
+          const extension = blob.type.split('/')[1] || 'jpg';
+          const filename = `${String(index).padStart(3, '0')}_${image.title || image.id}.${extension}`;
+          zip.file(filename, blob);
+        } finally {
+          onProgress?.({
+            current: index,
+            total,
+            percentage: Math.round((index / total) * 100),
+            phase: 'fetching',
+          });
+        }
       })
     );
+
+    // 中止は「失敗」ではなく中断。呼び出し側へそのまま伝える。
+    if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    for (const result of settled) {
+      if (result.status === 'rejected') {
+        console.error('Bulk download item failed:', result.reason);
+        failedCount += 1;
+      }
+    }
   }
 
   if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -109,4 +143,6 @@ export const downloadImagesAsZip = async (
   if (abortSignal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   saveAs(content, `${zipName}.zip`);
+
+  return { savedCount: total - failedCount, failedCount };
 };

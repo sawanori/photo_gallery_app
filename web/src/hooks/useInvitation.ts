@@ -44,6 +44,15 @@ export function useInvitation(token: string): UseInvitationResult {
         setIsLoading(true);
         setError(null);
 
+        // 0. トークンが無いのは「拒否された」のと同じ扱いにする。
+        //    以前は空文字のまま doc(db,'invitations','') に渡して例外になり、
+        //    /liked?token= 無しで開くと「読み込みに失敗しました」と出ていた（監査 F13）。
+        if (!token) {
+          setError(INVALID_INVITATION_MESSAGE);
+          setIsValid(false);
+          return;
+        }
+
         // 1. Sign in anonymously if not already
         let currentUser = user;
         if (!currentUser) {
@@ -91,22 +100,16 @@ export function useInvitation(token: string): UseInvitationResult {
 
         // 4. Create or update session
         const existingSession = await getSession(currentUser.uid);
-        // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
-        // 古い ID を持ったままのセッションは作り直す。お気に入りの読み取りは
-        // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
-        if (existingSession && existingSession.invitationId !== invitation.id) {
+        if (!existingSession) {
+          await createSession(currentUser.uid, invitation.id);
+        } else if (existingSession.invitationId !== invitation.id) {
+          // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
+          // 古い ID を持ったままのセッション。お気に入りの読み取りは
+          // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
           try {
             await updateSessionInvitation(currentUser.uid, invitation.id);
           } catch (e) {
             console.warn('Failed to refresh session invitation:', e);
-          }
-        }
-        if (!existingSession) {
-          await createSession(currentUser.uid, invitation.id);
-          try {
-            await updateInvitationAccess(invitation.id);
-          } catch (e) {
-            console.warn('Failed to update invitation access count:', e);
           }
         } else {
           try {
@@ -116,10 +119,22 @@ export function useInvitation(token: string): UseInvitationResult {
           }
         }
 
-        // 5. Store token in localStorage for session recovery
+        // 5. アクセス回数は**開くたびに**加算する。
+        //    以前はセッションが無いときだけ加算していたため、再訪も、同じ匿名 UID で
+        //    開いた 2 つ目の招待も数えられず、管理画面の値は「端末あたり最大 1」だった（監査 F5）。
+        //    Firestore ルールは「有効なセッションを持つ者が +1 する」ことを要求するので、
+        //    **必ずセッションを確保した後に呼ぶ。**
+        //    失敗しても閲覧の妨げにはしない（統計が 1 回抜けるだけ）。
+        try {
+          await updateInvitationAccess(invitation.id);
+        } catch (e) {
+          console.warn('Failed to update invitation access count:', e);
+        }
+
+        // 6. Store token in localStorage for session recovery
         localStorage.setItem('gallery_token', token);
 
-        // 6 & 7. Fetch all image metadata and liked status in parallel
+        // 7 & 8. Fetch all image metadata and liked status in parallel
         const [images, likedImageIds] = await Promise.all([
           getImagesByIds(invitation.imageIds),
           // お気に入りは招待に紐づく。匿名 UID ではない。
@@ -140,7 +155,7 @@ export function useInvitation(token: string): UseInvitationResult {
 
         const likedSet = new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id)));
 
-        // 8. Update context
+        // 9. Update context
         setInvitation(invitation);
         setAllImages(images);
         setLikedIds(likedSet);

@@ -1,5 +1,3 @@
-import { Timestamp } from 'firebase/firestore';
-
 export interface Image {
   id: string;
   url: string;
@@ -8,6 +6,12 @@ export interface Image {
   description?: string;
   userId: string;
   likeCount: number;
+  /**
+   * 原本のバイト数。アップロード時に保存する（admin 側）。
+   * 2026-09 より前にアップロードした画像には無いため任意項目。
+   * ネイティブの一括保存が空き容量を判定するのに使う。
+   */
+  size?: number;
   thumbnails?: {
     small: string;
     medium: string;
