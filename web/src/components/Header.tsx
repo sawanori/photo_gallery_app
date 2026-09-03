@@ -4,7 +4,6 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useGallery } from '@/contexts/GalleryContext';
 import BulkDownloadButton from './BulkDownloadButton';
-import LineShareButton from './LineShareButton';
 import { effectiveDeadline } from '@/utils/viewingWindow';
 
 interface HeaderProps {
@@ -86,7 +85,6 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
                 <span>{likedIds.size}</span>
               </Link>
             )}
-            <LineShareButton />
             {showDownload && <BulkDownloadButton />}
           </div>
         </div>
