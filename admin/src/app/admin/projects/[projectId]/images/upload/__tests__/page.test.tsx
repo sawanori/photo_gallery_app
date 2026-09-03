@@ -165,6 +165,80 @@ describe('ProjectImageUploadPage', () => {
     ]);
   });
 
+  /**
+   * HEIC は `image/*` を通るが Chrome / Windows / Android の createImageBitmap が
+   * 復号できない。4MB 超は例外、4MB 以下はサムネイル無しの HEIC がそのまま上がり、
+   * web で表示できない状態になっていた。`type` が空のファイルは無言で落ちていた。
+   */
+  describe('受け入れる形式', () => {
+    // `accept` は OS のダイアログでの絞り込みでしかない（利用者は「すべてのファイル」を
+    // 選べるし、ドラッグ＆ドロップは素通りする）。テストでも applyAccept: false にして
+    // **アプリ側の判定**を確かめる。
+    const setupUser = () => userEvent.setup({ applyAccept: false });
+
+    it('HEIC を弾き、ファイル名を挙げて知らせる', async () => {
+      const user = setupUser();
+      renderWithProviders(<ProjectImageUploadPage />);
+
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(input, new File(['a'], 'IMG_0001.HEIC', { type: 'image/heic' }));
+
+      expect(
+        await screen.findByText(/JPEG \/ PNG \/ WebP 以外は取り込めません: IMG_0001.HEIC/)
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /枚をアップロード/ })
+      ).not.toBeInTheDocument();
+    });
+
+    it('type が空のファイルも弾く', async () => {
+      const user = setupUser();
+      renderWithProviders(<ProjectImageUploadPage />);
+
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(input, new File(['a'], 'noext', { type: '' }));
+
+      expect(
+        await screen.findByText(/JPEG \/ PNG \/ WebP 以外は取り込めません: noext/)
+      ).toBeInTheDocument();
+    });
+
+    it('JPEG / PNG / WebP は受け入れ、弾いた分だけ知らせる', async () => {
+      const user = setupUser();
+      renderWithProviders(<ProjectImageUploadPage />);
+
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(input, [
+        new File(['a'], 'a.jpg', { type: 'image/jpeg' }),
+        new File(['b'], 'b.png', { type: 'image/png' }),
+        new File(['c'], 'c.webp', { type: 'image/webp' }),
+        new File(['d'], 'd.heic', { type: 'image/heic' }),
+      ]);
+
+      expect(
+        await screen.findByRole('button', { name: /3枚をアップロード/ })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/JPEG \/ PNG \/ WebP 以外は取り込めません: d.heic/)
+      ).toBeInTheDocument();
+    });
+
+    it('4件以上弾いたときは3件だけ並べて残りは件数で示す', async () => {
+      const user = setupUser();
+      renderWithProviders(<ProjectImageUploadPage />);
+
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await user.upload(
+        input,
+        ['a', 'b', 'c', 'd', 'e'].map(
+          (name) => new File([name], `${name}.heic`, { type: 'image/heic' })
+        )
+      );
+
+      expect(await screen.findByText(/ほか2件/)).toBeInTheDocument();
+    });
+  });
+
   // プロジェクトが無いのに Storage にファイルを撒かないこと
   it('プロジェクトが存在しない場合は1枚もアップロードしない', async () => {
     mockAssertProjectExists.mockRejectedValue(new Error('Project not found'));

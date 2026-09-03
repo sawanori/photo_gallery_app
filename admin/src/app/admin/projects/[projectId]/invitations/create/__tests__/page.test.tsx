@@ -53,6 +53,10 @@ const sampleImages = [
     title: '写真1',
     userId: 'admin-uid',
     likeCount: 0,
+    thumbnails: {
+      small: 'https://example.com/img1_384.webp',
+      medium: 'https://example.com/img1_640.webp',
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
   },
@@ -92,8 +96,9 @@ describe('CreateInvitationPage', () => {
 
     await waitFor(() => {
       const imgs = document.querySelectorAll('img');
+      // 原本ではなくサムネイル（384px WebP）を読み込む
       const thumbnails = Array.from(imgs).filter((img) =>
-        img.src.includes('example.com/img1.jpg')
+        img.src.includes('example.com/img1_384.webp')
       );
       expect(thumbnails.length).toBeGreaterThan(0);
     });
@@ -201,5 +206,74 @@ describe('CreateInvitationPage', () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue('http://localhost:3002/gallery/test-token')).toBeInTheDocument();
     });
+  });
+
+  // 700枚のプロジェクトで原本（3〜4MB）を並べていた。
+  it('選択用グリッドはサムネイル（small）を読み込み、無ければ原本に落ちる', async () => {
+    mockGetImagesByProject.mockResolvedValue([
+      sampleImages[0],
+      { ...sampleImages[0], id: 'image-2', title: '写真2', thumbnails: undefined },
+    ]);
+
+    renderWithProviders(<CreateInvitationPage />);
+
+    await waitFor(() => {
+      expect(screen.getByAltText('写真1')).toHaveAttribute(
+        'src',
+        'https://example.com/img1_384.webp'
+      );
+    });
+    expect(screen.getByAltText('写真2')).toHaveAttribute(
+      'src',
+      'https://example.com/img1.jpg'
+    );
+  });
+
+  /**
+   * NEXT_PUBLIC_WEB_URL が未設定のとき、以前は管理画面のドメインを指す
+   * 404 のリンクを黙って発行していた。招待自体は作成できているので、
+   * 「作成失敗」ではなく URL を作れなかったことを画面に出す。
+   */
+  it('ギャラリーURLを作れない場合は招待の作成は成功扱いのままエラーを表示する', async () => {
+    mockGetImagesByProject.mockResolvedValue(sampleImages);
+    mockCreateInvitation.mockResolvedValue({
+      id: 'invitation-1',
+      token: 'test-token',
+      projectId: 'project-1',
+      clientName: 'テストクライアント',
+      createdBy: 'admin-uid',
+      imageIds: ['image-1'],
+      expiresAt: new Date(),
+      isActive: true,
+      accessCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockGetGalleryUrl.mockImplementation(() => {
+      throw new Error('NEXT_PUBLIC_WEB_URL が設定されていないため…');
+    });
+
+    const user = userEvent.setup();
+    renderWithProviders(<CreateInvitationPage />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/クライアント名/)).toBeInTheDocument();
+    });
+    await user.type(screen.getByLabelText(/クライアント名/), 'テストクライアント');
+
+    const imageCard = document.querySelector('[data-image-id="image-1"]') as HTMLElement;
+    await user.click(imageCard);
+
+    const submitBtn = document.querySelector('button[type="submit"]') as HTMLButtonElement;
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('ギャラリーのURLを作れませんでした')).toBeInTheDocument();
+    });
+    // 見出しとトーストの両方に出る
+    expect(screen.getAllByText('招待を作成しました').length).toBeGreaterThan(0);
+    expect(
+      screen.getByText('NEXT_PUBLIC_WEB_URL が設定されていないため…')
+    ).toBeInTheDocument();
   });
 });

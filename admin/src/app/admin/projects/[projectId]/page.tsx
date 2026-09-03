@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Card,
   Tag,
@@ -20,11 +20,18 @@ import {
   UserOutlined,
   EyeOutlined,
   DeleteOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { getProject, deleteProject, getProjectExpiryInfo, Project, ProjectStatus } from '@/services/projectService';
-import { getImagesByProject, deleteImage, Image as ImageType } from '@/services/imageService';
+import {
+  getImagesByProject,
+  deleteImage,
+  type DeleteImagesResult,
+  Image as ImageType,
+} from '@/services/imageService';
 import { getInvitationsByProject, Invitation } from '@/services/invitationService';
+import { effectiveDeadline } from '@/utils/viewingWindow';
 import dayjs from 'dayjs';
 import 'dayjs/locale/ja';
 
@@ -36,6 +43,13 @@ const statusConfig: Record<ProjectStatus, { label: string; color: string }> = {
   archived: { label: 'アーカイブ', color: 'default' },
 };
 
+/**
+ * Storage の削除に消し残しがあったときの文言。
+ * 「削除しました」で終わらせると、課金され続けるファイルに誰も気付かない。
+ */
+const storageFailureMessage = (result: DeleteImagesResult): string =>
+  `Storage の削除に失敗した画像が ${result.failed.length} 件あります。再実行してください。`;
+
 export default function ProjectDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -46,37 +60,73 @@ export default function ProjectDetailPage() {
   const [images, setImages] = useState<ImageType[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // 取り直しの合図。値そのものに意味は無く、effect を走らせるためだけに使う。
+  const [reloadKey, setReloadKey] = useState(0);
+
+  /**
+   * 取り直しを予約する。`setLoading(true)` は**イベント側で**行う。
+   * effect の中で同期的に呼ぶと描画が余分に走る（react-hooks/set-state-in-effect）。
+   */
+  const reload = useCallback(() => {
+    setLoading(true);
+    setLoadFailed(false);
+    setReloadKey((key) => key + 1);
+  }, []);
 
   useEffect(() => {
-    if (projectId) {
-      loadData();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    if (!projectId) return;
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const [proj, imgs, invs] = await Promise.all([
-        getProject(projectId),
-        getImagesByProject(projectId),
-        getInvitationsByProject(projectId),
-      ]);
-      setProject(proj);
-      setImages(imgs);
-      setInvitations(invs);
-    } catch (error) {
-      console.error('Failed to load project data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const [proj, imgs, invs] = await Promise.all([
+          getProject(projectId),
+          getImagesByProject(projectId),
+          getInvitationsByProject(projectId),
+        ]);
+        if (cancelled) return;
+        setProject(proj);
+        setImages(imgs);
+        setInvitations(invs);
+        setLoadFailed(false);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load project data:', error);
+        // 読み込み失敗を「見つかりません」と混同させない。別の表示にする。
+        setLoadFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, reloadKey]);
 
   if (loading) {
     return (
       <div className="admin-spinner">
         <Spin size="large" />
       </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="プロジェクトの読み込みに失敗しました"
+        description="通信状況を確認して再試行してください。"
+        action={
+          <Button size="small" icon={<ReloadOutlined />} onClick={reload}>
+            再試行
+          </Button>
+        }
+      />
     );
   }
 
@@ -101,7 +151,7 @@ export default function ProjectDetailPage() {
         const key = 'delete-project';
         try {
           message.open({ key, type: 'loading', content: '削除しています…', duration: 0 });
-          await deleteProject(projectId, ({ completed, total }) => {
+          const result = await deleteProject(projectId, ({ completed, total }) => {
             message.open({
               key,
               type: 'loading',
@@ -111,6 +161,13 @@ export default function ProjectDetailPage() {
           });
           // 失敗経路でも必ず閉じる。閉じないと duration: 0 の表示が残り続ける。
           message.destroy(key);
+          if (result.failed.length > 0) {
+            // プロジェクトは消えていない（サービス層が残している）。
+            // 一覧に飛ばさず、この画面で取り直させる。
+            message.warning(storageFailureMessage(result));
+            reload();
+            return;
+          }
           message.success('プロジェクトを削除しました');
           router.push('/admin/dashboard');
         } catch (error) {
@@ -122,9 +179,22 @@ export default function ProjectDetailPage() {
     });
   };
 
+  /**
+   * クライアントが実際に見られなくなる日。
+   *
+   * `expiresAt` だけで判定していたため、閲覧期限（作成から viewingDays 日）が
+   * 切れた招待が一覧で「有効」と表示されていた。招待詳細は既に
+   * effectiveDeadline を使っており、同じ招待で表示が食い違っていた。
+   */
+  const invitationDeadline = (inv: Invitation) =>
+    effectiveDeadline(inv.createdAt, inv.viewingDays, inv.expiresAt);
+
   const getInvitationStatus = (inv: Invitation) => {
     if (!inv.isActive) return { label: '無効', color: 'default' as const };
-    if (new Date(inv.expiresAt) < new Date()) return { label: '期限切れ', color: 'error' as const };
+    const deadline = invitationDeadline(inv);
+    if (deadline && deadline < new Date()) {
+      return { label: '期限切れ', color: 'error' as const };
+    }
     return { label: '有効', color: 'success' as const };
   };
 
@@ -137,7 +207,12 @@ export default function ProjectDetailPage() {
       cancelText: 'キャンセル',
       onOk: async () => {
         try {
-          await deleteImage(img.id);
+          const result = await deleteImage(img.id);
+          if (result.failed.length > 0) {
+            // 画像ドキュメントは残っている。一覧からも消さない。
+            message.warning(storageFailureMessage(result));
+            return;
+          }
           message.success('画像を削除しました');
           const updatedImages = images.filter((i) => i.id !== img.id);
           setImages(updatedImages);
@@ -187,8 +262,9 @@ export default function ProjectDetailPage() {
         >
           {images.map((img) => (
             <div key={img.id} style={{ position: 'relative' }}>
+              {/* 一覧に原本（3〜4MB）を並べない。384px の WebP サムネイルを使う。 */}
               <Image
-                src={img.url}
+                src={img.thumbnails?.small ?? img.url}
                 alt={img.title}
                 width="100%"
                 height={120}
@@ -200,6 +276,8 @@ export default function ProjectDetailPage() {
                 danger
                 size="small"
                 icon={<DeleteOutlined />}
+                // アイコンだけのボタンには名前が要る（読み上げにも、テストにも）
+                aria-label={`${img.title} を削除`}
                 onClick={() => handleDeleteImage(img)}
                 style={{
                   position: 'absolute',
@@ -261,6 +339,7 @@ export default function ProjectDetailPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {invitations.map((inv) => {
             const status = getInvitationStatus(inv);
+            const deadline = invitationDeadline(inv);
             return (
               <Card
                 key={inv.id}
@@ -277,7 +356,9 @@ export default function ProjectDetailPage() {
                     <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--color-ink-muted)' }}>
                       <span><PictureOutlined /> {inv.imageIds.length} 枚</span>
                       <span><EyeOutlined /> {inv.accessCount} 回</span>
-                      <span>{dayjs(inv.expiresAt).format('YYYY/MM/DD')} まで</span>
+                      <span>
+                        {deadline ? `${dayjs(deadline).format('YYYY/MM/DD')} まで` : '—'}
+                      </span>
                     </div>
                   </div>
                   <Tag color={status.color}>{status.label}</Tag>

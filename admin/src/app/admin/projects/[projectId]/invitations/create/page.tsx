@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Button, Card, Input, InputNumber, DatePicker, Form, Empty, Spin, App } from 'antd';
+import { Alert, Button, Card, Input, InputNumber, DatePicker, Form, Empty, Spin, App } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
@@ -28,26 +28,31 @@ export default function CreateInvitationPage() {
   const [submitting, setSubmitting] = useState(false);
   const [createdInvitation, setCreatedInvitation] = useState<Invitation | null>(null);
   const [galleryUrl, setGalleryUrl] = useState<string>('');
+  // NEXT_PUBLIC_WEB_URL が未設定で URL を作れなかったときの文言。
+  const [galleryUrlError, setGalleryUrlError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (projectId) {
-      loadImages();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    if (!projectId) return;
 
-  const loadImages = async () => {
-    try {
-      setLoading(true);
-      const imgs = await getImagesByProject(projectId);
-      setImages(imgs);
-    } catch (error) {
-      console.error('Failed to load images:', error);
-      message.error('画像の取得に失敗しました');
-    } finally {
-      setLoading(false);
-    }
-  };
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const imgs = await getImagesByProject(projectId);
+        if (!cancelled) setImages(imgs);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load images:', error);
+        message.error('画像の取得に失敗しました');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, message]);
 
   const toggleImageSelection = (imageId: string) => {
     setSelectedImageIds((prev) =>
@@ -86,10 +91,20 @@ export default function CreateInvitationPage() {
         viewingDays: values.viewingDays,
       });
 
-      const url = getGalleryUrl(invitation.token);
-      setGalleryUrl(url);
+      // 招待は既に作られている。URL を組み立てられなくても「作成失敗」にはしない。
       setCreatedInvitation(invitation);
       message.success('招待を作成しました');
+
+      try {
+        setGalleryUrl(getGalleryUrl(invitation.token));
+        setGalleryUrlError(null);
+      } catch (error) {
+        console.error('Failed to build gallery url:', error);
+        setGalleryUrl('');
+        setGalleryUrlError(
+          error instanceof Error ? error.message : 'ギャラリーの URL を作れません。'
+        );
+      }
     } catch (error) {
       console.error('Failed to create invitation:', error);
       message.error('招待の作成に失敗しました');
@@ -148,29 +163,39 @@ export default function CreateInvitationPage() {
               以下のURLをクライアントに共有してください
             </p>
 
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                background: '#f5f5f5',
-                padding: '12px 16px',
-                borderRadius: 8,
-                marginBottom: 24,
-              }}
-            >
-              <Input
-                value={galleryUrl}
-                readOnly
-                style={{ flex: 1 }}
+            {galleryUrlError ? (
+              <Alert
+                type="error"
+                showIcon
+                message="ギャラリーのURLを作れませんでした"
+                description={galleryUrlError}
+                style={{ marginBottom: 24, textAlign: 'left' }}
               />
-              <Button
-                icon={<CopyOutlined />}
-                onClick={handleCopyUrl}
+            ) : (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  background: '#f5f5f5',
+                  padding: '12px 16px',
+                  borderRadius: 8,
+                  marginBottom: 24,
+                }}
               >
-                コピー
-              </Button>
-            </div>
+                <Input
+                  value={galleryUrl}
+                  readOnly
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  icon={<CopyOutlined />}
+                  onClick={handleCopyUrl}
+                >
+                  コピー
+                </Button>
+              </div>
+            )}
 
             <Button
               type="primary"
@@ -343,8 +368,9 @@ export default function CreateInvitationPage() {
                       transition: 'border-color 0.2s',
                     }}
                   >
+                    {/* 一覧に原本（3〜4MB）を並べない。384px の WebP サムネイルを使う。 */}
                     <img
-                      src={img.url}
+                      src={img.thumbnails?.small ?? img.url}
                       alt={img.title}
                       style={{
                         width: '100%',

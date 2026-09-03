@@ -7,10 +7,11 @@ import jaJP from 'antd/locale/ja_JP';
 
 const mockGetInvitation = vi.fn();
 const mockUpdateInvitation = vi.fn();
+const mockGetGalleryUrl = vi.fn();
 vi.mock('../../../../../../../services/invitationService', () => ({
   getInvitation: (...args: unknown[]) => mockGetInvitation(...args),
   updateInvitation: (...args: unknown[]) => mockUpdateInvitation(...args),
-  getGalleryUrl: (token: string) => `http://localhost:3002/gallery/${token}`,
+  getGalleryUrl: (...args: unknown[]) => mockGetGalleryUrl(...args),
 }));
 
 // 選定結果の表示で使うサービス。モックしないと本物の Firebase を初期化して落ちる。
@@ -65,6 +66,9 @@ beforeEach(async () => {
   // 既定は「まだ選ばれていない」。選定を伴う検証は各テストで上書きする。
   mockGetLikedImageIdsByInvitation.mockResolvedValue([]);
   mockGetImage.mockResolvedValue(null);
+  mockGetGalleryUrl.mockImplementation(
+    (token: string) => `http://localhost:3002/gallery/${token}`
+  );
   const mod = await import('../page');
   InvitationDetailPage = mod.default;
 });
@@ -173,5 +177,139 @@ describe('InvitationDetailPage', () => {
       expect(screen.getByText('選定結果を読み込めませんでした。')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /再試行/ })).toBeInTheDocument();
+  });
+
+  // 700枚のプロジェクトで原本（3〜4MB）を並べていた。
+  it('選定の一覧はサムネイル（small）を読み込み、無ければ原本に落ちる', async () => {
+    mockGetInvitation.mockResolvedValue(sampleInvitation);
+    mockGetLikedImageIdsByInvitation.mockResolvedValue(['image-1', 'image-2']);
+    mockGetImage.mockImplementation(async (id: string) =>
+      id === 'image-1'
+        ? {
+            id: 'image-1',
+            url: 'https://example.com/1.jpg',
+            storagePath: 'images/u/1',
+            title: 'DSC_1',
+            thumbnails: {
+              small: 'https://example.com/1_384.webp',
+              medium: 'https://example.com/1_640.webp',
+            },
+          }
+        : {
+            id: 'image-2',
+            url: 'https://example.com/2.jpg',
+            storagePath: 'images/u/2',
+            title: 'DSC_2',
+          }
+    );
+
+    renderWithProviders(<InvitationDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByAltText('DSC_1')).toHaveAttribute(
+        'src',
+        'https://example.com/1_384.webp'
+      );
+    });
+    expect(screen.getByAltText('DSC_2')).toHaveAttribute(
+      'src',
+      'https://example.com/2.jpg'
+    );
+  });
+
+  /**
+   * NEXT_PUBLIC_WEB_URL が未設定のとき、以前は管理画面のドメインを指す
+   * 404 のリンクを黙って出していた。
+   */
+  it('ギャラリーURLを作れない場合はエラーを表示し、リンクを出さない', async () => {
+    mockGetInvitation.mockResolvedValue(sampleInvitation);
+    mockGetGalleryUrl.mockImplementation(() => {
+      throw new Error('NEXT_PUBLIC_WEB_URL が設定されていないため…');
+    });
+
+    renderWithProviders(<InvitationDetailPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('NEXT_PUBLIC_WEB_URL が設定されていないため…')
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/gallery\/abc123def456/)).not.toBeInTheDocument();
+  });
+
+  // 「招待が見つかりません」は削除済みを意味する。読み込み失敗とは別物。
+  describe('読み込み失敗', () => {
+    it('取得に失敗したら Alert と再試行ボタンを出す', async () => {
+      mockGetInvitation.mockRejectedValue(new Error('network'));
+
+      renderWithProviders(<InvitationDetailPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('招待の読み込みに失敗しました')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /再試行/ })).toBeInTheDocument();
+      expect(screen.queryByText('招待が見つかりません')).not.toBeInTheDocument();
+    });
+
+    it('再試行ボタンで取り直す', async () => {
+      mockGetInvitation.mockRejectedValueOnce(new Error('network'));
+
+      const user = userEvent.setup();
+      renderWithProviders(<InvitationDetailPage />);
+
+      const retry = await screen.findByRole('button', { name: /再試行/ });
+      mockGetInvitation.mockResolvedValue(sampleInvitation);
+      await user.click(retry);
+
+      await waitFor(() => {
+        expect(screen.getByText('田中太郎')).toBeInTheDocument();
+      });
+    });
+
+    it('本当に見つからない場合は空状態を出す', async () => {
+      mockGetInvitation.mockResolvedValue(null);
+
+      renderWithProviders(<InvitationDetailPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('招待が見つかりません')).toBeInTheDocument();
+      });
+    });
+  });
+
+  // 以前は await も catch も無く、権限が無くても「コピーしました」と出していた。
+  describe('URL のコピー', () => {
+    // userEvent.setup() は navigator.clipboard を自前のスタブで置き換えるため、
+    // **setup のあとに**差し替える。先に置くと上書きされて失敗経路を作れない。
+    const setClipboard = (writeText: () => Promise<void>) => {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText },
+      });
+    };
+
+    it('成功したら成功を伝える', async () => {
+      mockGetInvitation.mockResolvedValue(sampleInvitation);
+
+      const user = userEvent.setup();
+      setClipboard(() => Promise.resolve());
+      renderWithProviders(<InvitationDetailPage />);
+
+      await user.click(await screen.findByRole('button', { name: /コピー/ }));
+
+      expect(await screen.findByText('URLをコピーしました')).toBeInTheDocument();
+    });
+
+    it('失敗したら失敗を伝える', async () => {
+      mockGetInvitation.mockResolvedValue(sampleInvitation);
+
+      const user = userEvent.setup();
+      setClipboard(() => Promise.reject(new Error('denied')));
+      renderWithProviders(<InvitationDetailPage />);
+
+      await user.click(await screen.findByRole('button', { name: /コピー/ }));
+
+      expect(await screen.findByText('コピーできませんでした')).toBeInTheDocument();
+    });
   });
 });

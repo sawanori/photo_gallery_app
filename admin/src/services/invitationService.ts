@@ -187,8 +187,33 @@ export const deleteInvitation = async (id: string): Promise<void> => {
   await deleteDoc(doc(db, INVITATIONS_COLLECTION, id));
 };
 
+/** 開発機だけで許すホスト。ここ以外では推測でギャラリーの URL を組み立てない。 */
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1']);
+
+export const MISSING_WEB_URL_MESSAGE =
+  'NEXT_PUBLIC_WEB_URL が設定されていないため、ギャラリーの URL を作れません。Vercel の環境変数に本番のギャラリー URL を設定してください。';
+
+/**
+ * クライアントに渡すギャラリーの URL。
+ *
+ * `NEXT_PUBLIC_WEB_URL` が未設定のとき、以前は
+ * `window.location.origin.replace(':3001', ':3002')` に落としていた。
+ * 開発機では意図どおり動くが、**本番（Vercel）ではポートが無いので置換が効かず**、
+ * 管理画面のドメインを指す `https://<admin>/gallery/<token>` を黙って発行していた。
+ * クライアントには 404 のリンクが届く。
+ *
+ * localhost 以外で未設定なら例外にする。**間違った URL を配るより失敗させる。**
+ *
+ * @throws 未設定かつ localhost 以外の場合。呼び出し元は画面に出すこと。
+ */
 export const getGalleryUrl = (token: string): string => {
-  const baseUrl = process.env.NEXT_PUBLIC_WEB_URL
-    || (typeof window !== 'undefined' ? window.location.origin.replace(':3001', ':3002') : 'http://localhost:3002');
-  return `${baseUrl}/gallery/${token}`;
+  const configured = process.env.NEXT_PUBLIC_WEB_URL;
+  if (configured) return `${configured}/gallery/${token}`;
+
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  if (!LOCAL_HOSTNAMES.has(hostname)) {
+    throw new Error(MISSING_WEB_URL_MESSAGE);
+  }
+
+  return `${window.location.origin.replace(':3001', ':3002')}/gallery/${token}`;
 };

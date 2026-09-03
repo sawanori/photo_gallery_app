@@ -18,6 +18,7 @@ import {
   getImagesByProject,
   deleteImagesForProject,
   type DeleteProgress,
+  type DeleteImagesResult,
 } from './imageService';
 import { getInvitationsByProject } from './invitationService';
 import { createBatchWriter } from '../utils/batchWriter';
@@ -148,9 +149,10 @@ export const updateProject = async (
 };
 
 const INVITATIONS_COLLECTION = 'invitations';
+const SESSIONS_COLLECTION = 'sessions';
 
 /**
- * プロジェクトを削除する。画像・招待もまとめて消す。
+ * プロジェクトを削除する。画像・招待・セッションもまとめて消す。
  *
  * 順序を **招待 → 画像 → プロジェクト** に固定している。理由はそれぞれ違う。
  *
@@ -159,21 +161,38 @@ const INVITATIONS_COLLECTION = 'invitations';
  *   「写真が消えた」画面を見ることになる。
  * - **プロジェクトが最後**: 途中で失敗しても一覧に残り、再実行できるようにするため。
  *
+ * セッション（`sessions/{uid}`）は招待と同じバッチで消す。招待だけ消すと、
+ * 存在しない招待を指すセッションが残り、そのセッションを持つ端末は
+ * ルール上お気に入りの読み書きが通らない中途半端な状態になる。
+ *
  * 画像の削除は deleteImagesForProject にまとめている。1枚ずつ deleteImage を
  * 呼ぶと、枚数分の招待取得と imageCount 更新が発生する（招待は既に消えているので
  * どちらも無駄）。
+ *
+ * **Storage の削除に失敗した画像が1枚でもあればプロジェクトを消さない。**
+ * 消すと一覧から消えて再実行の入口が無くなり、ファイルだけが残る。
+ * 戻り値の `failed` を UI に出して再実行を促す。
  *
  * @throws 画像の削除に失敗した場合。プロジェクトのドキュメントは残す。
  */
 export const deleteProject = async (
   projectId: string,
   onProgress?: (progress: DeleteProgress) => void
-): Promise<void> => {
-  // 1. 招待を消す。アクセスを断つのが先。
+): Promise<DeleteImagesResult> => {
+  // 1. 招待とそのセッションを消す。アクセスを断つのが先。
   const invitations = await getInvitationsByProject(projectId);
   if (invitations.length > 0) {
     const writer = createBatchWriter(db);
     for (const invitation of invitations) {
+      const sessionSnapshot = await getDocs(
+        query(
+          collection(db, SESSIONS_COLLECTION),
+          where('invitationId', '==', invitation.id)
+        )
+      );
+      for (const sessionDoc of sessionSnapshot.docs) {
+        await writer.delete(doc(db, SESSIONS_COLLECTION, sessionDoc.id));
+      }
       await writer.delete(doc(db, INVITATIONS_COLLECTION, invitation.id));
     }
     await writer.flush();
@@ -181,10 +200,14 @@ export const deleteProject = async (
 
   // 2. 画像と、それに紐づく Storage のファイル・お気に入りを消す。
   const images = await getImagesByProject(projectId);
-  await deleteImagesForProject(projectId, images, onProgress);
+  const result = await deleteImagesForProject(projectId, images, onProgress);
 
-  // 3. プロジェクト本体。ここまで来て初めて消す。
-  await deleteDoc(doc(db, PROJECTS_COLLECTION, projectId));
+  // 3. プロジェクト本体。Storage に消し残しがあるなら残す。
+  if (result.failed.length === 0) {
+    await deleteDoc(doc(db, PROJECTS_COLLECTION, projectId));
+  }
+
+  return result;
 };
 
 export const PROJECT_LIFETIME_DAYS = 20;

@@ -1,7 +1,7 @@
 'use client';
 
 import 'antd/dist/reset.css';
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
 import { Layout, Menu, Button, Avatar, Tooltip } from 'antd';
@@ -35,6 +35,13 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const { isAuthenticated, isAdmin, isLoading, user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
+  // 遷移は副作用。レンダー中に router.replace を呼ぶと Strict Mode で二重に走り、
+  // React からも「レンダー中に別コンポーネントを更新した」と警告される。
+  const shouldRedirect = !isLoading && (!isAuthenticated || !isAdmin);
+  useEffect(() => {
+    if (shouldRedirect) router.replace('/');
+  }, [shouldRedirect, router]);
+
   if (isLoading) {
     return (
       <div style={{
@@ -57,8 +64,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     );
   }
 
+  // 遷移は上の useEffect が行う。ここでは中身を出さないだけ。
   if (!isAuthenticated || !isAdmin) {
-    router.replace('/');
     return null;
   }
 

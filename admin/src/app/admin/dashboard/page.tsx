@@ -2,9 +2,17 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Card, Button, Tag, Segmented, Spin, Empty, App, Alert } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
 import { getProjects, deleteProject, getProjectExpiryInfo, Project, ProjectStatus } from '@/services/projectService';
+import type { DeleteImagesResult } from '@/services/imageService';
+
+/**
+ * Storage の削除に消し残しがあったときの文言。
+ * 「削除しました」で終わらせると、課金され続けるファイルに誰も気付かない。
+ */
+const storageFailureMessage = (result: DeleteImagesResult): string =>
+  `Storage の削除に失敗した画像が ${result.failed.length} 件あります。再実行してください。`;
 
 const STATUS_LABELS: Record<ProjectStatus | 'all', string> = {
   all: 'すべて',
@@ -24,24 +32,46 @@ export default function DashboardPage() {
   const { modal, message } = App.useApp();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | 'all'>('all');
+  // 取り直しの合図。値そのものに意味は無く、effect を走らせるためだけに使う。
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const loadProjects = useCallback(async () => {
+  /**
+   * 取り直しを予約する。`setLoading(true)` は**イベント側で**行う。
+   * effect の中で同期的に呼ぶと描画が余分に走る（react-hooks/set-state-in-effect）。
+   */
+  const reload = useCallback(() => {
     setLoading(true);
-    try {
-      const status = statusFilter === 'all' ? undefined : statusFilter;
-      const result = await getProjects(status);
-      setProjects(result);
-    } catch (error) {
-      console.error('Failed to load projects:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [statusFilter]);
+    setLoadFailed(false);
+    setReloadKey((key) => key + 1);
+  }, []);
 
   useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const status = statusFilter === 'all' ? undefined : statusFilter;
+        const result = await getProjects(status);
+        if (cancelled) return;
+        setProjects(result);
+        setLoadFailed(false);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load projects:', error);
+        // 読み込み失敗を「0件」と混同させない。空状態は Alert とは別に出す。
+        setProjects([]);
+        setLoadFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [statusFilter, reloadKey]);
 
   const expiredProjects = useMemo(
     () => projects.filter((p) => getProjectExpiryInfo(p)?.level === 'expired'),
@@ -58,6 +88,7 @@ export default function DashboardPage() {
       onOk: async () => {
         const key = 'bulk-delete';
         try {
+          let failedImages = 0;
           // Promise.all で並べない。deleteProject の内部が既に並列で動くため、
           // ここで重ねるとプロジェクト数の分だけ同時実行数が膨らむ。
           for (let i = 0; i < expiredProjects.length; i += 1) {
@@ -67,17 +98,24 @@ export default function DashboardPage() {
               content: `削除しています… ${i + 1} / ${expiredProjects.length} 件目`,
               duration: 0,
             });
-            await deleteProject(expiredProjects[i].id);
+            const result = await deleteProject(expiredProjects[i].id);
+            failedImages += result.failed.length;
           }
           message.destroy(key);
-          message.success('期限切れプロジェクトを削除しました');
-          loadProjects();
+          if (failedImages > 0) {
+            message.warning(
+              `Storage の削除に失敗した画像が ${failedImages} 件あります。再実行してください。`
+            );
+          } else {
+            message.success('期限切れプロジェクトを削除しました');
+          }
+          reload();
         } catch (error) {
           message.destroy(key);
           console.error('Failed to bulk delete:', error);
           message.error('一括削除に失敗しました');
           // 途中まで消えているので一覧を取り直す
-          loadProjects();
+          reload();
         }
       },
     });
@@ -95,7 +133,7 @@ export default function DashboardPage() {
         const key = `delete-${project.id}`;
         try {
           message.open({ key, type: 'loading', content: '削除しています…', duration: 0 });
-          await deleteProject(project.id, ({ completed, total }) => {
+          const result = await deleteProject(project.id, ({ completed, total }) => {
             message.open({
               key,
               type: 'loading',
@@ -104,8 +142,12 @@ export default function DashboardPage() {
             });
           });
           message.destroy(key);
-          message.success('プロジェクトを削除しました');
-          loadProjects();
+          if (result.failed.length > 0) {
+            message.warning(storageFailureMessage(result));
+          } else {
+            message.success('プロジェクトを削除しました');
+          }
+          reload();
         } catch (error) {
           message.destroy(key);
           console.error('Failed to delete project:', error);
@@ -131,7 +173,12 @@ export default function DashboardPage() {
       <div style={{ marginBottom: 16 }}>
         <Segmented
           value={statusFilter}
-          onChange={(value) => setStatusFilter(value as ProjectStatus | 'all')}
+          onChange={(value) => {
+            // 絞り込みを変えたら取り直す。読み込み表示もここで立てる。
+            setStatusFilter(value as ProjectStatus | 'all');
+            setLoading(true);
+            setLoadFailed(false);
+          }}
           options={Object.entries(STATUS_LABELS).map(([value, label]) => ({
             label,
             value,
@@ -140,7 +187,22 @@ export default function DashboardPage() {
         />
       </div>
 
-      {!loading && expiredProjects.length > 0 && (
+      {!loading && loadFailed && (
+        <Alert
+          type="error"
+          showIcon
+          message="プロジェクトの読み込みに失敗しました"
+          description="通信状況を確認して再試行してください。"
+          action={
+            <Button size="small" icon={<ReloadOutlined />} onClick={reload}>
+              再試行
+            </Button>
+          }
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
+      {!loading && !loadFailed && expiredProjects.length > 0 && (
         <Alert
           type="error"
           showIcon
@@ -158,7 +220,7 @@ export default function DashboardPage() {
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Spin size="large" />
         </div>
-      ) : projects.length === 0 ? (
+      ) : loadFailed ? null : projects.length === 0 ? (
         <Empty description="プロジェクトがありません" />
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
