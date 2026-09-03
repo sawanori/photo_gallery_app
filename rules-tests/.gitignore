@@ -1,0 +1,5 @@
+node_modules/
+
+# エミュレータが吐くデバッグログ
+*-debug.log
+firebase-debug.*.log

@@ -16,11 +16,6 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isRegisteredUser() {
-      return isAuthenticated() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
     function hasValidSession() {
       return isAuthenticated() &&
         exists(/databases/$(database)/documents/sessions/$(request.auth.uid));
@@ -32,6 +27,45 @@ service cloud.firestore {
      */
     function sessionInvitationId() {
       return get(/databases/$(database)/documents/sessions/$(request.auth.uid)).data.invitationId;
+    }
+
+    function invitationData(invitationId) {
+      return get(/databases/$(database)/documents/invitations/$(invitationId)).data;
+    }
+
+    /**
+     * 招待が今この瞬間に使えるか。
+     *
+     * セッションは一度作られると消えないため、招待の無効化・期限切れを
+     * セッションの存在だけで代用すると、失効後も likes と likeCount が
+     * 書き換え続けられる（2026-09-02 の監査 S4-B2）。
+     * 招待の状態は書き込みのたびに読み直す。
+     *
+     * 閲覧期限（createdAt + viewingDays）はここでは見ない。ルールから
+     * 日数の加算ができないため、そこはクライアントと manifest API の判定に委ねる。
+     */
+    function usableInvitation(inv) {
+      return inv.isActive == true && inv.expiresAt > request.time;
+    }
+
+    function invitationUsable(invitationId) {
+      return usableInvitation(invitationData(invitationId));
+    }
+
+    function sessionInvitationUsable() {
+      return invitationUsable(sessionInvitationId());
+    }
+
+    /**
+     * imageId がこのセッションの招待の選定に含まれるか。
+     *
+     * 含まれない画像まで許すと、imageId を知っている第三者が他の案件の
+     * likeCount を動かせる（S4-B1）し、likes を捏造して管理画面の
+     * 「選定済み」一覧に混ぜられる（S4-B5）。
+     */
+    function imageInSessionInvitation(imageId) {
+      let inv = invitationData(sessionInvitationId());
+      return usableInvitation(inv) && imageId in inv.imageIds;
     }
 
     /** likeCount の変化が ±1 か。任意の値への書き換えを封じる。 */
@@ -56,18 +90,17 @@ service cloud.firestore {
       // だけを見るため、自分の users ドキュメントを role: 'admin' で作れると、
       // 匿名認証しただけの第三者がそのまま管理者になり、招待を全件列挙して
       // トークンを平文で収穫できる。2026-08-17 の list 制限が丸ごと無意味になる。
-      // 2026-08-22 のレビューで発覚し、ここで塞いだ。
+      // 2026-08-22 のレビューで発覚し、role の自己書き換えをここで塞いだ。
       //
-      // 昇格は管理者のみが行う（admin/src/services/userService.ts の updateUserRole）。
-      // クライアントから users を作る経路は現在存在しない（管理者は Firebase
-      // コンソールで作っている）が、将来の signUp のために create 自体は残す。
+      // create を全面的に閉じたのは 2026-09-02 の監査（S3）。role:'user' での
+      // 自己作成を許していたため、匿名認証しただけの第三者が users ドキュメントを
+      // 作って「登録ユーザー」になり、images を自由に作成・改変できていた。
+      // クライアントから users を作る経路は実際には存在しない
+      // （管理者は Firebase コンソールで作る。CLAUDE.md の「Creating Admin User」参照）。
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
-      allow create: if isAuthenticated() && request.auth.uid == userId &&
-        request.resource.data.role == 'user';
-      allow update: if isAdmin() ||
-        (isOwner(userId) &&
-         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']));
+      allow create: if false;
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 
@@ -81,20 +114,28 @@ service cloud.firestore {
       // 単体取得は許可し、列挙は管理者のみにする。
       // web は招待に含まれる imageId で1件ずつ取得しており、コレクションクエリは使わない
       // （web/src/services 配下に images への getDocs は無いことを確認済み）。
+      // web の Route Handler（/api/native/manifest）も匿名で単体取得する。
       // admin は projectId などで絞ったクエリを使うが、管理者として実行される。
       allow get: if isAuthenticated();
       allow list: if isAdmin();
-      allow create: if isRegisteredUser() &&
+      // 画像を作るのは管理画面のアップロードだけ（admin/src/services/imageService.ts）。
+      // 以前は「users ドキュメントを持つ人」なら作れたが、その users ドキュメントを
+      // 誰でも自己作成できたため実質誰でも作れた（S3）。
+      allow create: if isAdmin() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
       // likeCount だけは招待の閲覧者にも書かせる必要がある（お気に入り機能）。
-      // ただし以前は「likeCount だけの変更なら誰でも可」で、匿名認証しただけの
-      // 第三者が任意の値に書き換えられた。有効なセッションを持つことと、
-      // 変化量が ±1 であることを要求する。
+      // ただし以前は「有効なセッションがあれば任意の画像を ±1」で、招待に
+      // 含まれない画像の likeCount まで動かせた（S4-B1）。
+      // 招待が今も有効であることと、その招待の選定に含まれる画像であることを要求する。
+      // `resource.data.userId == request.auth.uid` の条項は削除した。userId は
+      // アップロードした管理者の uid であって、閲覧者とは無関係だった。
       allow update: if isAdmin() ||
-        (isAuthenticated() && resource.data.userId == request.auth.uid) ||
-        (hasValidSession() && onlyLikeCountChanged() && likeCountDeltaValid());
-      allow delete: if resource.data.userId == request.auth.uid || isAdmin();
+        (hasValidSession() &&
+         onlyLikeCountChanged() &&
+         likeCountDeltaValid() &&
+         imageInSessionInvitation(imageId));
+      allow delete: if isAdmin();
     }
 
     // Likes collection
@@ -106,20 +147,30 @@ service cloud.firestore {
       // 読み書きできるのは、そのセッションが開いている招待の分だけ。
       // 招待 ID は招待トークンそのものなので、これを知っている＝ギャラリーを
       // 開ける立場であり、その範囲を超えた情報は得られない。
+      //
+      // 2026-09-02: すべての条項に「招待が今も有効」を足した。セッションは
+      // 消えないので、これが無いと失効した招待でも選定を書き換えられる（S4-B2）。
       allow get: if isAuthenticated();
       allow list: if isAdmin() ||
-        (hasValidSession() && resource.data.invitationId == sessionInvitationId());
+        (hasValidSession() &&
+         resource.data.invitationId == sessionInvitationId() &&
+         sessionInvitationUsable());
+      // imageId が招待の選定に含まれることを要求する。含まれない like を作れると、
+      // 管理者の getLikedImageIdsByInvitation に身に覚えのない画像が混ざる（S4-B5）。
       allow create: if hasValidSession() &&
         request.resource.data.invitationId == sessionInvitationId() &&
         request.resource.data.imageId is string &&
-        likeId == request.resource.data.invitationId + '_' + request.resource.data.imageId;
+        likeId == request.resource.data.invitationId + '_' + request.resource.data.imageId &&
+        imageInSessionInvitation(request.resource.data.imageId);
       // 管理者にも削除を許す。画像を削除したとき、その画像に付いたお気に入りも
       // 一緒に消す必要があるため。2026-08-17 に read を get / list へ分けた際、
       // delete から isAdmin() が抜け落ちていた。その結果、管理画面からの画像削除で
       // お気に入りの削除だけが permission-denied で失敗し、try-catch に握り潰されて
       // 表に出ないまま孤児が溜まっていた。
       allow delete: if isAdmin() ||
-        (hasValidSession() && resource.data.invitationId == sessionInvitationId());
+        (hasValidSession() &&
+         resource.data.invitationId == sessionInvitationId() &&
+         sessionInvitationUsable());
     }
 
     // Invitations collection
@@ -138,30 +189,50 @@ service cloud.firestore {
       // Firestore の側でも拒否するため。web 側の validateInvitation だけに頼らない。
       // 拒否されたことと存在しないことは web 側で同じ結果に正規化している。
       allow get: if isAdmin() ||
-        (isAuthenticated() &&
-         resource.data.isActive == true &&
-         resource.data.expiresAt > request.time);
+        (isAuthenticated() && usableInvitation(resource.data));
       allow list: if isAdmin();
       allow create: if isAdmin() &&
         request.resource.data.projectId is string &&
         request.resource.data.projectId.size() > 0;
+      // 非管理者に許すのはアクセス計測 1 種類だけ。
+      // 以前は「認証済みなら accessCount / lastAccessedAt を任意の値に」だったため、
+      // 匿名認証しただけの第三者が失効済みを含む任意の招待のカウンタを
+      // 好きな値に書けた（S4-B4）。
+      // web は開くたびに increment(1) + serverTimestamp() を送る
+      // （web/src/hooks/useInvitation.ts）。ルールもちょうどそれだけを通す。
+      // serverTimestamp() はルール評価時に request.time と一致する。
+      // 自分自身のドキュメントなので invitationUsable() ではなく resource を直接見る
+      // （同じドキュメントを get し直さないため）。
       allow update: if isAdmin() ||
-        (isAuthenticated() &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accessCount', 'lastAccessedAt']));
+        (hasValidSession() &&
+         invitationId == sessionInvitationId() &&
+         usableInvitation(resource.data) &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['accessCount', 'lastAccessedAt']) &&
+         request.resource.data.accessCount == resource.data.accessCount + 1 &&
+         request.resource.data.lastAccessedAt == request.time);
       allow delete: if isAdmin();
     }
 
     // Sessions collection
     match /sessions/{sessionId} {
       allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == sessionId);
-      allow create: if isAuthenticated() && request.auth.uid == sessionId;
+      // 有効な招待を指すセッションしか作らせない。
+      // 任意の invitationId を書けると、失効した招待や転送されたリンクの
+      // 選定内容（likes）をそのまま読めてしまう（S4-B3）。
+      allow create: if isAuthenticated() && request.auth.uid == sessionId &&
+        request.resource.data.invitationId is string &&
+        invitationUsable(request.resource.data.invitationId);
       // invitationId の更新を許す。招待のドキュメント ID をトークンに移行したため、
       // 移行前に作られたセッションは古い ID を持っており、そのままだと
       // お気に入りの読み取りが自分の招待と一致しなくなる。
-      // create で任意の invitationId を書けるので、update を許しても強度は変わらない。
+      // 貼り替える場合だけ、新しい招待が有効であることを要求する。
+      // lastAccessedAt だけの更新（updateSessionAccess）は招待を読み直さない。
       allow update: if isAuthenticated() && request.auth.uid == sessionId &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['lastAccessedAt', 'invitationId']);
+          .hasOnly(['lastAccessedAt', 'invitationId']) &&
+        (request.resource.data.invitationId == resource.data.invitationId ||
+         invitationUsable(request.resource.data.invitationId));
       allow delete: if isAdmin();
     }
   }
