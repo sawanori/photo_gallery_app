@@ -1,3 +1,17 @@
+/**
+ * 管理者ユーザーを作るスクリプト（現在は動かない。参考として残している）。
+ *
+ * **現行の Firestore ルールでは、クライアント SDK からの users ドキュメント作成は
+ * 拒否される。** 匿名認証しただけの第三者が users/{uid} を自己作成して
+ * 「登録ユーザー」や管理者になれてしまうため、`users.create` を全面的に閉じた
+ * （firestore.rules の users ブロックのコメント、docs/audit-2026-09-02/findings.md S3）。
+ * このスクリプトを実行すると Auth のユーザーだけが増え、setDoc が
+ * permission-denied で失敗する。
+ *
+ * 管理者は Firebase コンソールで作ること。手順は CLAUDE.md の
+ * 「Creating Admin User」を参照。
+ */
+
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';

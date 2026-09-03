@@ -244,12 +244,21 @@ describe('projectService', () => {
   });
 
   describe('deleteProject（カスケード）', () => {
-    const setupDelete = (images: unknown[] = [], invitations: unknown[] = []) => {
+    const setupDelete = (
+      images: unknown[] = [],
+      invitations: unknown[] = [],
+      sessions: Array<{ id: string; data: Record<string, unknown> }> = []
+    ) => {
       mockGetImagesByProject.mockResolvedValue(images);
       mockGetInvitationsByProject.mockResolvedValue(invitations);
-      mockDeleteImagesForProject.mockResolvedValue(undefined);
+      mockDeleteImagesForProject.mockResolvedValue({
+        deletedCount: images.length,
+        failed: [],
+      });
       mockFirestore.doc.mockReturnValue('doc-ref');
       mockFirestore.deleteDoc.mockResolvedValue(undefined);
+      // 招待ごとに sessions を where('invitationId','==',id) で引く
+      mockFirestore.getDocs.mockResolvedValue(createMockQuerySnapshot(sessions));
     };
 
     it('getImagesByProjectで全画像を取得する', async () => {
@@ -335,6 +344,62 @@ describe('projectService', () => {
         expect.anything(),
         onProgress
       );
+    });
+
+    // 招待だけ消すと、存在しない招待を指すセッションが残る。
+    // そのセッションを持つ端末はルール上お気に入りの読み書きが通らない。
+    it('招待に紐づく sessions を同じバッチで削除する', async () => {
+      setupDelete(
+        [],
+        [{ id: 'invitation-1', ...sampleInvitation }],
+        [
+          { id: 'anon-uid-1', data: { invitationId: 'invitation-1' } },
+          { id: 'anon-uid-2', data: { invitationId: 'invitation-1' } },
+        ]
+      );
+
+      await projectService.deleteProject('project-1');
+
+      expect(mockFirestore.where).toHaveBeenCalledWith(
+        'invitationId',
+        '==',
+        'invitation-1'
+      );
+      // セッション2件 + 招待1件
+      expect(mockBatch.delete).toHaveBeenCalledTimes(3);
+      expect(mockBatch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('sessions が無ければ招待だけを削除する', async () => {
+      setupDelete([], [{ id: 'invitation-1', ...sampleInvitation }]);
+
+      await projectService.deleteProject('project-1');
+
+      expect(mockBatch.delete).toHaveBeenCalledTimes(1);
+    });
+
+    // Storage に消し残しがあるのにプロジェクトを消すと、一覧から消えて
+    // 再実行の入口が無くなり、課金され続けるファイルだけが残る。
+    it('Storage の削除に失敗した画像があればプロジェクトを消さず、結果を返す', async () => {
+      setupDelete([{ ...sampleImage, id: 'image-1' }]);
+      mockDeleteImagesForProject.mockResolvedValue({
+        deletedCount: 0,
+        failed: [{ imageId: 'image-1', paths: ['images/admin-uid/12345-abc'] }],
+      });
+
+      const result = await projectService.deleteProject('project-1');
+
+      expect(mockFirestore.deleteDoc).not.toHaveBeenCalled();
+      expect(result.failed).toHaveLength(1);
+    });
+
+    it('すべて成功したらプロジェクトを消し、failed は空で返す', async () => {
+      setupDelete([{ ...sampleImage, id: 'image-1' }]);
+
+      const result = await projectService.deleteProject('project-1');
+
+      expect(mockFirestore.deleteDoc).toHaveBeenCalledWith('doc-ref');
+      expect(result).toEqual({ deletedCount: 1, failed: [] });
     });
   });
 

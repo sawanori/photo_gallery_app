@@ -158,6 +158,12 @@ export function supportsFeature(feature: NativeFeature): boolean {
 /**
  * ネイティブへメッセージを送る。送れた場合のみ true。
  * ブラウザでは何もせず false を返す（例外は投げない）。
+ *
+ * **nonce が無ければ送らない。** UA マーカーだけでネイティブと判定できた場合
+ * （Android の injectedJavaScriptBeforeContentLoaded は experimental で確実には届かない）
+ * 能力オブジェクトの nonce は null になる。ネイティブ側（mobile/src/bridge/protocol.ts）は
+ * nonce が文字列でないメッセージを黙って捨てるため、送っても返事は永遠に来ない。
+ * ここで false を返せば、呼び出し側は既存のブラウザ挙動（ZIP・新規タブ）へ落ちる。
  */
 export function postToNative(message: OutgoingMessage): boolean {
   if (typeof window === 'undefined') return false;
@@ -167,6 +173,7 @@ export function postToNative(message: OutgoingMessage): boolean {
 
   const capabilities = detectNativeShell();
   if (!capabilities) return false;
+  if (typeof capabilities.nonce !== 'string' || capabilities.nonce.length === 0) return false;
 
   try {
     bridge.postMessage(

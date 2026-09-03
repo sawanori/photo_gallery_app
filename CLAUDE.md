@@ -19,10 +19,16 @@ Photo gallery application with Firebase backend:
 - **Console**: https://console.firebase.google.com/project/photo-gallery-app-20251204
 
 ### Firebase Services
-- **Authentication**: Email/Password authentication
-- **Firestore**: NoSQL database for users, images, likes
-- **Storage**: Image file storage
-- **Hosting**: Admin panel hosting (optional)
+- **Authentication**: two providers must be enabled. **Email/Password** for admins, and
+  **Anonymous** for gallery visitors — `/web` calls `signInAnonymously()` on every gallery open
+  (`web/src/services/authService.ts`), and `/web`'s Route Handlers sign in anonymously too
+  (`web/src/lib/firebaseServer.ts`). With Anonymous disabled the gallery cannot load at all.
+- **Firestore**: NoSQL database for projects, images, invitations, sessions, likes, users
+- **Storage**: original images and generated WebP thumbnails
+- **Hosting**: **not used.** `/admin` and `/web` are both deployed on Vercel, as two separate
+  Vercel projects: `admin/.vercel/project.json` links the admin panel, and the repo-root
+  `.vercel/project.json` links `/web`. Check which one you are in before running `vercel`.
+  Firebase is used for rules and indexes only.
 
 ## Development Commands
 
@@ -51,15 +57,37 @@ npx expo prebuild --platform android --clean   # Inspect the generated AndroidMa
 cd admin
 npm run dev                    # Development (port 3001)
 npm run build && npm start     # Production
-npm run lint                   # ESLint
+npm run lint                   # ESLint (`eslint .` — `next lint` no longer exists in Next 16)
+npx vitest run                 # Vitest
 ```
+
+### Security Rules Tests (`/rules-tests`)
+```bash
+cd rules-tests
+npm install
+npm run test:emu               # Boots auth/firestore/storage emulators, then runs vitest
+npm test                       # vitest only — requires emulators already running
+```
+`rules-tests` is a standalone package (`@firebase/rules-unit-testing` + Vitest) that pins the
+current `firestore.rules` / `storage.rules` behaviour for every client operation, on both the
+allowed and the denied side. Run it after **any** rules edit. It pins its own `firebase-tools`
+(14.x) as a devDependency because firebase-tools 15 refuses to start the emulators on JDK < 21.
 
 ### Firebase CLI
 ```bash
-firebase deploy --only firestore:rules    # Deploy Firestore rules
-firebase deploy --only storage:rules      # Deploy Storage rules
-firebase deploy --only hosting            # Deploy Admin panel
-firebase deploy                           # Deploy all
+firebase deploy --only firestore:rules              # Deploy Firestore rules
+firebase deploy --only storage:rules                # Deploy Storage rules
+firebase deploy --only firestore:indexes            # Deploy Firestore indexes
+firebase deploy --only firestore:rules,storage:rules,firestore:indexes
+```
+Rules and indexes are the **only** things deployed to Firebase. There is no `hosting` target —
+do not run `firebase deploy` without `--only`.
+
+Storage CORS (needed by the bulk-ZIP download and LINE sharing, which `fetch()` the image URLs
+from the browser). `cors.json` lives at the repo root; apply it with:
+```bash
+gsutil cors set cors.json gs://photo-gallery-app-20251204.firebasestorage.app
+gsutil cors get gs://photo-gallery-app-20251204.firebasestorage.app   # verify
 ```
 
 ## Architecture
@@ -71,23 +99,35 @@ firebase deploy                           # Deploy all
   - `storage.rules` - Storage security rules
   - `firestore.indexes.json` - Firestore indexes
 
-### Frontend (`/front`)
-- **Firebase Config**: `front/src/config/firebase.ts`
-- **Services**: `front/src/services/`
-  - `authService.ts` - Authentication (signIn, signUp, signOut)
-  - `imageService.ts` - Image CRUD operations
-  - `likeService.ts` - Like/unlike functionality
-- **Contexts**: `AuthContext` (Firebase Auth state)
-- **Screens**: `front/src/screens/` - Login, Images (masonry grid), LikedImages
+### Client Gallery (`/web`)
+- **Firebase Config**: `web/src/lib/firebase.ts` (browser), `web/src/lib/firebaseServer.ts`
+  (Route Handlers — a separate app instance so the server's anonymous sign-in never mixes with
+  the browser's auth state)
+- **Services**: `web/src/services/`
+  - `authService.ts` - anonymous sign-in only (no sign-up, no password)
+  - `invitationService.ts` - invitation lookup by token, session create/update, access counting
+  - `imageService.ts` - image documents fetched one by one by ID (never a collection query)
+  - `likeService.ts` - like/unlike, keyed by **invitation**, not by anonymous UID
+  - `manifestService.ts` - authorises the native app's save requests
+  - `downloadService.ts` - bulk ZIP download in the browser
+- **Contexts**: `AuthContext` (anonymous Firebase Auth), `GalleryContext` (invitation + images)
+- **Routes**: `/gallery/[token]`, `/liked`, `/privacy`, and two Route Handlers:
+  `/api/image` (sharp resize proxy) and `/api/native/manifest` (native save authorisation)
 
 ### Admin Panel (`/admin`)
 - **Firebase Config**: `admin/src/lib/firebase.ts`
 - **Services**: `admin/src/services/`
   - `authService.ts` - Admin authentication (admin role required)
-  - `imageService.ts` - Image management
+  - `projectService.ts` - Project CRUD and cascading delete
+  - `imageService.ts` - Upload (original + WebP thumbnails), listing, deletion
+  - `invitationService.ts` - Invitation issuing; the document ID **is** the token
+  - `likeService.ts` - Reads the client's selection back per invitation
   - `userService.ts` - User management
 - **Contexts**: `admin/src/contexts/AuthContext.tsx`
-- **Routes**: `/admin/dashboard`, `/admin/images`, `/admin/users`
+- **Routes**: `/` (login), `/admin/dashboard` (project list), `/admin/projects/new`,
+  `/admin/projects/[projectId]`, `/admin/projects/[projectId]/images/upload`,
+  `/admin/projects/[projectId]/invitations/create`,
+  `/admin/projects/[projectId]/invitations/[id]`, `/admin/users`
 - **UI**: Ant Design components
 
 ### Native Shell (`/mobile`)
@@ -117,77 +157,158 @@ without an app release.
 ## Firestore Schema
 
 ```
-users/{userId}
+users/{userId}                       # Admins only. Created by hand in the Console.
   - email: string
   - role: 'user' | 'admin'
   - createdAt: timestamp
   - updatedAt: timestamp
 
-images/{imageId}
-  - url: string
-  - storagePath: string
-  - title: string
-  - description: string
-  - userId: string
-  - likeCount: number
-  - createdAt: timestamp
-  - updatedAt: timestamp
+projects/{projectId}                 # One shoot / one client
+  - name, clientName, clientEmail: string
+  - shootingDate: timestamp
+  - shootingLocation, description: string
+  - status: 'active' | 'delivered' | 'archived'
+  - coverImageUrl: string
+  - imageCount: number
+  - createdBy: string                # admin uid
+  - createdAt, updatedAt: timestamp
 
-likes/{odUserId_imageId}
-  - userId: string
+images/{imageId}
+  - projectId: string
+  - url: string                      # getDownloadURL of the original (token-bearing)
+  - storagePath: string              # images/{adminUid}/{filename}
+  - title: string                    # original filename without extension
+  - description: string
+  - userId: string                   # uid of the admin who uploaded it
+  - likeCount: number
+  - size: number                     # bytes of the original
+  - thumbnails: { small: string, medium: string }   # WebP download URLs
+  - thumbnailPaths: string[]         # thumbnails/{adminUid}/{filename}_{width}.webp
+  - createdAt, updatedAt: timestamp
+
+invitations/{token}                  # The document ID IS the invitation token (nanoid, 21 chars)
+  - token: string                    # same value as the document ID
+  - projectId: string
+  - clientName, clientEmail: string
+  - createdBy: string                # admin uid
+  - imageIds: string[]               # the selection this client may see
+  - expiresAt: timestamp
+  - viewingDays: number              # viewing window from createdAt; default 7
+  - isActive: boolean
+  - accessCount: number
+  - lastAccessedAt: timestamp
+  - createdAt, updatedAt: timestamp
+
+sessions/{anonymousUid}              # One per browser/WebView, rewritten when another link opens
+  - invitationId: string             # which invitation this UID is currently viewing
+  - anonymousUid: string
+  - createdAt, lastAccessedAt: timestamp
+
+likes/{invitationId}_{imageId}       # Keyed by INVITATION, not by UID, so the browser and the
+  - invitationId: string             # native app share one selection for the same link
   - imageId: string
+  - userId: string                   # last anonymous UID to touch it; audit only
   - createdAt: timestamp
 ```
 
 ## Storage Structure
 
 ```
-/images/{userId}/{filename}    # User uploaded images
-/profiles/{userId}/{filename}  # Profile images
+/images/{adminUid}/{timestamp}-{random}                  # Originals, as uploaded
+/thumbnails/{adminUid}/{timestamp}-{random}_{width}.webp # 384px (small) and 640px (medium)
 ```
+
+The `{adminUid}` segment is the uid of the admin who uploaded the file, not the viewer's.
+Images are served through the `getDownloadURL` token in `images/{imageId}.url`, which bypasses
+Storage rules entirely — the `read` rule only governs SDK access.
 
 ## Quick Start
 
 1. Enable Firebase services in console:
    - https://console.firebase.google.com/project/photo-gallery-app-20251204/firestore (Create database, asia-northeast1)
    - https://console.firebase.google.com/project/photo-gallery-app-20251204/storage (Get started)
-   - https://console.firebase.google.com/project/photo-gallery-app-20251204/authentication (Enable Email/Password)
+   - https://console.firebase.google.com/project/photo-gallery-app-20251204/authentication
+     — enable **both** Email/Password (admins) and **Anonymous** (gallery visitors)
 
-2. Deploy rules:
+2. Deploy rules and indexes, and apply Storage CORS:
    ```bash
-   firebase deploy --only firestore:rules,storage:rules
+   firebase deploy --only firestore:rules,storage:rules,firestore:indexes
+   gsutil cors set cors.json gs://photo-gallery-app-20251204.firebasestorage.app
    ```
+   Storage uploads are admin-only, so after deploying, upload one image from the admin panel
+   to confirm the rules still let the admin through.
 
-3. Start development:
+3. Create the first admin (see "Creating Admin User" below) — there is no sign-up flow.
+
+4. Start development:
    ```bash
-   # Admin Panel
-   cd admin && npm install && npm run dev
-
-   # Mobile App
-   cd front && npm install && npm start
+   cd admin && npm install && npm run dev   # http://localhost:3001
+   cd web   && npm install && npm run dev   # http://localhost:3002
    ```
 
 ## Creating Admin User
 
-1. Create user via Firebase Console or app signup
-2. In Firestore, find user document in `users` collection
-3. Change `role` field from `'user'` to `'admin'`
+There is **no sign-up UI and no working script.** `users.create` is denied for every client
+(`firestore.rules`), because anyone can obtain an anonymous session and would otherwise be able
+to create their own `users/{uid}` document and promote themselves. `scripts/create-admin.mjs`
+is kept for reference only and fails on the `setDoc` step.
+
+Create admins by hand in the Firebase Console:
+
+1. **Authentication → Users → Add user**: enter the email and password. Copy the generated UID.
+2. **Firestore → Data → `users` collection → Add document**, with the copied UID as the
+   **document ID** and these fields:
+   - `email` (string) — the same address
+   - `role` (string) — `admin`
+   - `createdAt` (timestamp) — now
+3. Sign in at `/` on the admin panel. `AuthContext` reads `users/{uid}` and rejects anyone
+   whose `role` is not `admin`.
+
+Repeat the same two steps for every additional admin. `userService.updateUserRole` exists but is
+not wired to any screen — `/admin/users` only lists and deletes — so promotion is a Console edit
+too. Only admins may write `users`.
 
 ## Security Rules
 
+Every statement below is pinned by a test in `/rules-tests`. Change the rules and the tests
+together.
+
 ### Firestore Rules (`firestore.rules`)
-- Users can read all users, but only modify their own
-- Images are publicly readable, authenticated users can create
-- Only image owner or admin can update/delete
-- Likes require authentication, users can only manage their own
+- **users**: `get` own or admin; `list` admin only; `create` denied outright; `update`/`delete`
+  admin only.
+- **projects**: admin only, all operations.
+- **images**: `get` any authenticated user (the gallery fetches by ID); `list` admin only;
+  `create`/`delete` admin only. `update` is admin, or a visitor changing **only** `likeCount`
+  by exactly ±1 on an image that belongs to their session's still-valid invitation.
+- **invitations**: `get` admin, or any authenticated user when `isActive` **and** not past
+  `expiresAt`; `list` admin only (this is what keeps tokens from being harvested);
+  `create`/`delete` admin only. Non-admin `update` may only bump `accessCount` by +1 and set
+  `lastAccessedAt` to the server timestamp, on the invitation their own session points at.
+- **sessions**: read/write own document only. `create` and any change of `invitationId` require
+  the target invitation to be active and unexpired. `delete` admin only.
+- **likes**: `get` any authenticated user; `list`/`create`/`delete` are scoped to the still-valid
+  invitation the caller's session points at, and `create` additionally requires the `imageId` to
+  be in that invitation's `imageIds` and the document ID to be `{invitationId}_{imageId}`.
+  Admins may `list` and `delete` across invitations.
+- The viewing window (`createdAt + viewingDays`) is **not** enforced by the rules — rules cannot
+  add days to a timestamp. It is enforced by `web/src/utils/viewingWindow.ts` and by
+  `/api/native/manifest`. `expiresAt` is the hard, server-enforced limit.
 
 ### Storage Rules (`storage.rules`)
-- Images are publicly readable
-- Only authenticated users can upload to their own folder
-- Max file size: 10MB for images, 5MB for profiles
+- `read` on `/images` and `/thumbnails` requires authentication. Real delivery uses the
+  `getDownloadURL` token in the image document, which does not go through these rules.
+- `create` requires **admin** (`firestore.get()` on `users/{uid}.role`, a cross-service lookup),
+  the path's uid segment to match the caller, an `image/*` content type, and < 50MB.
+- `delete` requires admin — any admin, not just the uploader, so that deleting someone else's
+  project does not orphan Storage files.
+- There are no other paths. Anything outside `/images` and `/thumbnails` is denied.
 
 ## Authentication Flow
 
-- **Mobile**: Firebase Auth with AsyncStorage persistence
-- **Admin**: Firebase Auth, requires `role: 'admin'` in Firestore user document
-- **Session**: Managed by Firebase SDK (auto token refresh)
+- **Client Gallery (`/web`)**: anonymous Firebase Auth, started on gallery open. The invitation
+  token in the URL is the real credential; the anonymous UID only keys the `sessions` document.
+- **Native Shell (`/mobile`)**: **no Firebase Auth at all.** It is a WebView around `/web`, so
+  the web page holds the session. The app only receives image URLs (via
+  `/api/native/manifest`) and writes them to the photo library.
+- **Admin**: Firebase Auth (email/password), requires `role: 'admin'` in `users/{uid}`.
+- **Session**: managed by the Firebase SDK (auto token refresh).

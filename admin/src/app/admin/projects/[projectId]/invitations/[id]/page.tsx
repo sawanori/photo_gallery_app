@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   Card,
   Tag,
   Empty,
@@ -55,6 +56,9 @@ export default function InvitationDetailPage() {
 
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  // 取り直しの合図。値そのものに意味は無く、effect を走らせるためだけに使う。
+  const [reloadKey, setReloadKey] = useState(0);
   const [toggling, setToggling] = useState(false);
 
   // 閲覧日数の編集。招待を作り直さずに延長できるようにする。
@@ -67,28 +71,7 @@ export default function InvitationDetailPage() {
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectionFailed, setSelectionFailed] = useState(false);
 
-  useEffect(() => {
-    if (invitationId) {
-      loadInvitation();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invitationId]);
-
-  const loadInvitation = async () => {
-    try {
-      setLoading(true);
-      const inv = await getInvitation(invitationId);
-      setInvitation(inv);
-      if (inv) setDaysDraft(normalizeViewingDays(inv.viewingDays));
-      if (inv) void loadSelection(inv.id);
-    } catch (error) {
-      console.error('Failed to load invitation:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadSelection = async (id: string) => {
+  const loadSelection = useCallback(async (id: string) => {
     try {
       setSelectionLoading(true);
       setSelectionFailed(false);
@@ -106,7 +89,47 @@ export default function InvitationDetailPage() {
     } finally {
       setSelectionLoading(false);
     }
-  };
+  }, []);
+
+  /**
+   * 取り直しを予約する。`setLoading(true)` は**イベント側で**行う。
+   * effect の中で同期的に呼ぶと描画が余分に走る（react-hooks/set-state-in-effect）。
+   */
+  const reload = useCallback(() => {
+    setLoading(true);
+    setLoadFailed(false);
+    setReloadKey((key) => key + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!invitationId) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const inv = await getInvitation(invitationId);
+        if (cancelled) return;
+        setInvitation(inv);
+        setLoadFailed(false);
+        if (inv) {
+          setDaysDraft(normalizeViewingDays(inv.viewingDays));
+          void loadSelection(inv.id);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load invitation:', error);
+        // 読み込み失敗を「見つかりません」と混同させない。別の表示にする。
+        setLoadFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [invitationId, reloadKey, loadSelection]);
 
   const handleCopyFileNames = async () => {
     if (!selected || selected.length === 0) return;
@@ -150,11 +173,16 @@ export default function InvitationDetailPage() {
     }
   };
 
-  const handleCopyUrl = () => {
-    if (!invitation) return;
-    const url = getGalleryUrl(invitation.token);
-    navigator.clipboard.writeText(url);
-    message.success('URLをコピーしました');
+  // コピーは await して失敗を拾う。以前は投げっぱなしで、権限が無くても
+  // 「コピーしました」と出していた。
+  const handleCopyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      message.success('URLをコピーしました');
+    } catch (error) {
+      console.error('Failed to copy gallery url:', error);
+      message.error('コピーできませんでした');
+    }
   };
 
   if (loading) {
@@ -162,6 +190,22 @@ export default function InvitationDetailPage() {
       <div className="admin-spinner">
         <Spin size="large" />
       </div>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <Alert
+        type="error"
+        showIcon
+        message="招待の読み込みに失敗しました"
+        description="通信状況を確認して再試行してください。"
+        action={
+          <Button size="small" icon={<ReloadOutlined />} onClick={reload}>
+            再試行
+          </Button>
+        }
+      />
     );
   }
 
@@ -193,7 +237,17 @@ export default function InvitationDetailPage() {
   };
 
   const status = getStatus();
-  const galleryUrl = getGalleryUrl(invitation.token);
+
+  // NEXT_PUBLIC_WEB_URL が未設定なら getGalleryUrl は例外を投げる。
+  // 以前は管理画面のドメインを指す 404 のリンクを黙って出していた。
+  let galleryUrl = '';
+  let galleryUrlError: string | null = null;
+  try {
+    galleryUrl = getGalleryUrl(invitation.token);
+  } catch (error) {
+    galleryUrlError =
+      error instanceof Error ? error.message : 'ギャラリーの URL を作れません。';
+  }
 
   return (
     <div>
@@ -324,35 +378,39 @@ export default function InvitationDetailPage() {
           </span>
         }
       >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            background: 'var(--color-bg-secondary, #f5f5f5)',
-            padding: '8px 12px',
-            borderRadius: 6,
-          }}
-        >
-          <span
+        {galleryUrlError ? (
+          <Alert type="error" showIcon message={galleryUrlError} />
+        ) : (
+          <div
             style={{
-              flex: 1,
-              fontSize: 13,
-              wordBreak: 'break-all',
-              color: 'var(--color-ink-secondary, #595959)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              background: 'var(--color-bg-secondary, #f5f5f5)',
+              padding: '8px 12px',
+              borderRadius: 6,
             }}
           >
-            {galleryUrl}
-          </span>
-          <Button
-            type="text"
-            icon={<CopyOutlined />}
-            onClick={handleCopyUrl}
-            size="small"
-          >
-            コピー
-          </Button>
-        </div>
+            <span
+              style={{
+                flex: 1,
+                fontSize: 13,
+                wordBreak: 'break-all',
+                color: 'var(--color-ink-secondary, #595959)',
+              }}
+            >
+              {galleryUrl}
+            </span>
+            <Button
+              type="text"
+              icon={<CopyOutlined />}
+              onClick={() => handleCopyUrl(galleryUrl)}
+              size="small"
+            >
+              コピー
+            </Button>
+          </div>
+        )}
       </Card>
 
       {/* 選定結果 */}
@@ -403,8 +461,9 @@ export default function InvitationDetailPage() {
             <Row gutter={[8, 8]}>
               {selected.map((image) => (
                 <Col key={image.id} xs={12} sm={8} md={6}>
+                  {/* 一覧に原本（3〜4MB）を並べない。384px の WebP サムネイルを使う。 */}
                   <AntImage
-                    src={image.url}
+                    src={image.thumbnails?.small ?? image.url}
                     alt={selectionFileName(image)}
                     style={{ borderRadius: 6, objectFit: 'cover', aspectRatio: '1 / 1' }}
                     width="100%"

@@ -1,25 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { useIsNativeShell } from '@/hooks/useIsNativeShell';
+import { useDismissibleGuide } from '@/hooks/useDismissibleGuide';
 
 const STORAGE_KEY = 'welcome_guide_dismissed';
 
 export default function WelcomeGuide() {
-  const [show, setShow] = useState(false);
   const { isNative } = useIsNativeShell();
-
-  useEffect(() => {
-    const dismissed = localStorage.getItem(STORAGE_KEY);
-    if (!dismissed) {
-      setShow(true);
-    }
-  }, []);
-
-  const handleDismiss = () => {
-    localStorage.setItem(STORAGE_KEY, '1');
-    setShow(false);
-  };
+  const { show, dismiss: handleDismiss } = useDismissibleGuide(STORAGE_KEY);
 
   if (!show) return null;
 
@@ -27,7 +15,7 @@ export default function WelcomeGuide() {
     {
       num: 1,
       title: '閲覧',
-      desc: '写真をタップして拡大表示。左右スワイプで切り替えできます。',
+      desc: '写真をタップして拡大表示。左右の矢印ボタンで切り替えできます。',
     },
     {
       num: 2,

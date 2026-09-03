@@ -1,7 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING } from './galleryUrl';
 
 test('Verify spinner loading and fade-in on production', async ({ page }) => {
-  const url = 'https://web-kappa-neon-94.vercel.app/gallery/UR0ht6dvnku-SpUuMnQmo';
+  test.skip(!E2E_GALLERY_URL, E2E_GALLERY_URL_MISSING);
+
+  const url = E2E_GALLERY_URL;
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 

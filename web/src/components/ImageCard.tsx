@@ -12,6 +12,22 @@ function thumbnailSrc(image: ImageWithLikeStatus, width: 384 | 640): string {
   return optimizedImageUrl(image.url, width, 70);
 }
 
+/**
+ * ホバーで出る要素の見え方。
+ *
+ * Tailwind 4 の `hover:` は `@media (hover: hover)` に閉じるため、**スマホでは
+ * 一生 opacity-0 のまま**である。それでもボタン自体は生きていたので、
+ * サムネの右上をタップすると「見えていないのに」お気に入りが反転したり
+ * 新規タブが開いたりしていた（監査 F4）。
+ *
+ *   - `pointer-events-none` を既定にして、見えない間は押せないようにする
+ *   - `pointer-coarse:`（＝タッチ端末）では常時表示・常時操作可にする
+ */
+const REVEAL_ON_HOVER =
+  'opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity duration-300';
+const INTERACTIVE_ON_REVEAL =
+  'pointer-events-none group-hover:pointer-events-auto pointer-coarse:pointer-events-auto';
+
 interface ImageCardProps {
   image: ImageWithLikeStatus;
   index: number;
@@ -28,20 +44,28 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageC
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } }}
       className="
-        break-inside-avoid mb-4 group cursor-pointer relative
+        break-inside-avoid mb-4 group relative
         rounded-lg overflow-hidden
         border border-border/60 shadow-[0_1px_3px_rgba(0,0,0,0.04)]
         transition-shadow duration-500
         hover:shadow-[0_8px_30px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.04)]
-        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none
       "
-      onClick={handleClick}
     >
-      <div className="bg-surface relative">
+      {/*
+        拡大表示を開くのは本物の <button>。以前は role="button" の div の中に
+        お気に入り／保存の <button> を入れ子にしており、対話要素の入れ子という
+        不正な構造だった（監査 F13）。ボタンにすれば Enter / Space の処理も不要になる。
+      */}
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-label={image.title ? `${image.title} を拡大表示` : '写真を拡大表示'}
+        className="
+          block w-full bg-surface relative cursor-pointer
+          focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none
+        "
+      >
         {/* Background shimmer visible until image loads */}
         {!isLoaded && (
           <div className="absolute inset-0 animate-shimmer rounded-lg" />
@@ -58,11 +82,15 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageC
           onLoad={handleLoaded}
           onError={handleLoaded}
         />
-      </div>
+      </button>
 
-      {/* Hover overlay */}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-        {/* Bottom info */}
+      {/*
+        情報のオーバーレイ。**常に pointer-events-none。**
+        写真の上に重なるので、押せる状態にすると拡大表示のボタンを覆ってしまう。
+      */}
+      <div
+        className={`absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-transparent pointer-events-none ${REVEAL_ON_HOVER}`}
+      >
         <div className="absolute bottom-0 left-0 right-0 p-3">
           {image.title && (
             <p className="text-white text-sm font-medium truncate mb-2">
@@ -78,17 +106,15 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageC
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Action buttons */}
-        <div className="absolute top-3 right-3 flex gap-2 animate-scale-in">
-          <LikeButton
-            imageId={image.id}
-            isLiked={image.isLiked}
-            likeCount={image.likeCount}
-            size="sm"
-          />
-          <DownloadButton image={image} size="sm" />
-        </div>
+      {/* Action buttons: 見えているときだけ押せる */}
+      <div
+        data-testid="image-card-actions"
+        className={`absolute top-3 right-3 flex gap-2 ${REVEAL_ON_HOVER} ${INTERACTIVE_ON_REVEAL}`}
+      >
+        <LikeButton imageId={image.id} isLiked={image.isLiked} size="sm" />
+        <DownloadButton image={image} size="sm" />
       </div>
     </div>
   );

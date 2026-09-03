@@ -1,5 +1,3 @@
-import type { ThumbnailResult } from './thumbnailGenerator';
-
 /**
  * アップロード前の画像処理をまとめて行う。
  *
@@ -7,22 +5,30 @@ import type { ThumbnailResult } from './thumbnailGenerator';
  * 4MB を超える画像は `createImageBitmap` が2回走っていた。
  * このモジュールはデコードを1回に統一する。
  *
- * 出力仕様は `imageCompression.ts` と `thumbnailGenerator.ts` と**完全に一致させる**こと。
- * 速くするのが目的であって、保存される画像を変えるのが目的ではない。
+ * かつては `imageCompression.ts` / `thumbnailGenerator.ts` に同じ処理があり、
+ * 「出力を一致させること」という約束で二重に保守していた。どちらも呼ばれなくなった
+ * ため 2026-09-02 に削除し、ここを唯一の実装にした。
  */
 
-// --- imageCompression.ts と同じ定数 ---
+// --- 圧縮の定数 ---
 const MAX_DIMENSION = 3840;
 const COMPRESS_QUALITY = 0.85;
 const COMPRESS_FALLBACK_QUALITY = 0.7;
 const MAX_FILE_SIZE = 4 * 1024 * 1024;
 
-// --- thumbnailGenerator.ts と同じ定数 ---
+// --- サムネイルの定数 ---
 const THUMBNAIL_SIZES = [
   { name: 'small', width: 384 },
   { name: 'medium', width: 640 },
 ] as const;
 const THUMBNAIL_QUALITY = 0.7;
+
+/** 生成したサムネイル1枚。`imageService.uploadImageFile` がそのまま受け取る。 */
+export interface ThumbnailResult {
+  name: 'small' | 'medium';
+  blob: Blob;
+  width: number;
+}
 
 export interface PreparedUpload {
   /** Storage に置く元画像。圧縮不要なら渡されたファイルそのもの。 */
@@ -72,7 +78,7 @@ export async function prepareUpload(file: File): Promise<PreparedUpload> {
   }
 }
 
-/** `imageCompression.ts` の compressImage と同じ結果を、既存のビットマップから作る。 */
+/** 4MB を超える画像を、既存のビットマップから圧縮して作り直す。 */
 async function compressFromBitmap(bitmap: ImageBitmap, original: File): Promise<File> {
   const { width, height } = bitmap;
 
@@ -111,7 +117,7 @@ async function compressFromBitmap(bitmap: ImageBitmap, original: File): Promise<
   return new File([blob], newName, { type: outputType });
 }
 
-/** `thumbnailGenerator.ts` の generateThumbnails と同じ結果を、既存のビットマップから作る。 */
+/** 既存のビットマップから WebP サムネイルを作る。拡大はしない。 */
 async function thumbnailsFromBitmap(bitmap: ImageBitmap): Promise<ThumbnailResult[]> {
   const { width: origW, height: origH } = bitmap;
   const results: ThumbnailResult[] = [];

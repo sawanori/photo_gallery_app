@@ -1,3 +1,4 @@
+import { getRandomBytes } from 'expo-crypto';
 import { Platform } from 'react-native';
 
 import {
@@ -6,13 +7,17 @@ import {
   type OutboundMessage,
 } from './protocol';
 
-/** 起動ごとの nonce。web からのメッセージはこれを持っていないと無視する。 */
+/**
+ * 起動ごとの nonce。web からのメッセージはこれを持っていないと無視する。
+ *
+ * Math.random は使わない。Android の WebView では注入したブリッジが全フレームから
+ * 見えるため、nonce が唯一の防壁になる。予測可能な乱数だと第三者の iframe から
+ * 保存要求を偽装される余地が残る。expo-crypto はネイティブの CSPRNG を呼ぶ。
+ */
 export function createNonce(): string {
-  const bytes = new Uint8Array(16);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Math.floor(Math.random() * 256);
-  }
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return Array.from(getRandomBytes(16), (b) =>
+    b.toString(16).padStart(2, '0')
+  ).join('');
 }
 
 /**

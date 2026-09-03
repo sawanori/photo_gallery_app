@@ -5,8 +5,6 @@ import {
   getDocs,
   updateDoc,
   deleteDoc,
-  query,
-  orderBy,
   serverTimestamp,
   getCountFromServer,
 } from 'firebase/firestore';
@@ -16,8 +14,12 @@ export interface User {
   id: string;
   email: string;
   role: 'user' | 'admin';
-  createdAt: Date;
-  updatedAt: Date;
+  /**
+   * Console で手作りした管理者のドキュメントには無いことがある。
+   * 型を必須にしていたため、無い場合に `undefined` が入るのを見落としていた。
+   */
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 const USERS_COLLECTION = 'users';
@@ -44,17 +46,34 @@ export const getUsersCount = async (): Promise<number> => {
   return snapshot.data().count;
 };
 
-// Get all users
-export const getUsers = async (): Promise<User[]> => {
-  const q = query(
-    collection(db, USERS_COLLECTION),
-    orderBy('createdAt', 'desc')
-  );
+/** 並べ替えに使う createdAt。持たないドキュメントは null。 */
+const createdAtTime = (user: User): number | null => {
+  const time = user.createdAt?.getTime();
+  return typeof time === 'number' && Number.isFinite(time) ? time : null;
+};
 
-  const snapshot = await getDocs(q);
-  return snapshot.docs
+/**
+ * 全ユーザーを新しい順で取得する。
+ *
+ * **`orderBy('createdAt')` は使わない。** Firestore はその項目を持たない
+ * ドキュメントを結果から丸ごと落とすため、Console で手作りした管理者
+ * （createdAt を書き忘れたもの）が一覧に出てこなかった。
+ * 並べ替えはクライアント側で行い、createdAt が無いものは末尾に置く。
+ */
+export const getUsers = async (): Promise<User[]> => {
+  const snapshot = await getDocs(collection(db, USERS_COLLECTION));
+  const users = snapshot.docs
     .map((doc) => docToUser(doc))
     .filter((user): user is User => user !== null);
+
+  return users.sort((a, b) => {
+    const aTime = createdAtTime(a);
+    const bTime = createdAtTime(b);
+    if (aTime === null && bTime === null) return 0;
+    if (aTime === null) return 1;
+    if (bTime === null) return -1;
+    return bTime - aTime;
+  });
 };
 
 // Get single user

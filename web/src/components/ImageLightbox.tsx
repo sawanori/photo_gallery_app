@@ -18,28 +18,56 @@ interface ImageLightboxProps {
   loadMore?: () => void;
 }
 
+/** ダイアログ内でフォーカスを回す対象。 */
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+
 export default function ImageLightbox({ images, currentIndex, onClose, onNavigate, totalCount, hasMore, loadMore }: ImageLightboxProps) {
   const image = images[currentIndex];
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
-  const [loadedUrl, setLoadedUrl] = useState('');
 
-  useEffect(() => {
-    if (image?.url && image.url !== loadedUrl) {
-      setIsLoading(true);
-      setLoadError(false);
-    }
-  }, [image?.url, loadedUrl]);
+  /**
+   * 読み込み状態は「どの URL まで終わったか」から**描画時に導く**。
+   *
+   * 以前は URL が変わるたびに effect の中で setState して読み込み中へ戻していた。
+   * effect 内の同期 setState は再レンダーを重ねるうえ（react-hooks/set-state-in-effect）、
+   * 状態が 3 つに散らばって整合を取るのが難しかった。
+   */
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [erroredUrl, setErroredUrl] = useState<string | null>(null);
+
+  const currentUrl = image?.url ?? null;
+  const loadError = currentUrl !== null && erroredUrl === currentUrl;
+  const isLoading = currentUrl !== null && !loadError && loadedUrl !== currentUrl;
 
   const handleImageLoad = useCallback(() => {
-    setLoadedUrl(image?.url);
-    setIsLoading(false);
-    setLoadError(false);
-  }, [image?.url]);
+    if (!currentUrl) return;
+    setLoadedUrl(currentUrl);
+    setErroredUrl((previous) => (previous === currentUrl ? null : previous));
+  }, [currentUrl]);
 
   const handleImageError = useCallback(() => {
-    setIsLoading(false);
-    setLoadError(true);
+    if (!currentUrl) return;
+    setErroredUrl(currentUrl);
+  }, [currentUrl]);
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  /**
+   * 開いたら閉じるボタンへフォーカスを移し、閉じたら発火元へ戻す。
+   *
+   * `role="dialog" aria-modal="true"` を名乗っている以上、フォーカスが背後の
+   * グリッドに残っているのは嘘になる。キーボードと読み上げの利用者は
+   * 「開いたはずのものが操作できない」状態になる（監査 F13）。
+   * 実装は NativeSaveNotice と同じ方式。
+   */
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    return () => {
+      previouslyFocused.current?.focus();
+    };
   }, []);
 
   // Preload adjacent images with cleanup
@@ -82,11 +110,37 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
   }, [currentIndex, onNavigate]);
 
   useEffect(() => {
+    // Tab をダイアログの中で回す。外へ出すと背後のグリッドを操作できてしまう。
+    const trapTab = (e: KeyboardEvent) => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      const outside = !dialog.contains(active);
+
+      if (e.shiftKey) {
+        if (outside || active === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (outside || active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape': onClose(); break;
         case 'ArrowRight': goNext(); break;
         case 'ArrowLeft': goPrev(); break;
+        case 'Tab': trapTab(e); break;
       }
     };
 
@@ -102,8 +156,14 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
   // Image not yet loaded (past the loaded range)
   if (!image) {
     return (
-      <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" role="dialog" aria-modal="true">
+      <div
+        ref={dialogRef}
+        className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+        role="dialog"
+        aria-modal="true"
+      >
         <button
+          ref={closeRef}
           onClick={onClose}
           aria-label="閉じる"
           className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/10 border border-white/20 hover:bg-white/20 flex items-center justify-center text-white transition-colors duration-200 cursor-pointer"
@@ -121,9 +181,15 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" role="dialog" aria-modal="true">
+    <div
+      ref={dialogRef}
+      className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+      role="dialog"
+      aria-modal="true"
+    >
       {/* Close button */}
       <button
+        ref={closeRef}
         onClick={onClose}
         aria-label="閉じる"
         className="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-white/10 border border-white/20 hover:bg-white/20 flex items-center justify-center text-white transition-colors duration-200 cursor-pointer"
@@ -198,11 +264,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <LikeButton
-              imageId={image.id}
-              isLiked={image.isLiked}
-              likeCount={image.likeCount}
-            />
+            <LikeButton imageId={image.id} isLiked={image.isLiked} />
             <LineImageShareButton image={image} />
             <ShareButton image={image} />
             <DownloadButton image={image} />

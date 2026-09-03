@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mockFirestore } from '../../test/mocks/firebase';
 import { createMockDocSnapshot, createMockQuerySnapshot, sampleInvitation } from '../../test/fixtures';
 
@@ -231,6 +231,68 @@ describe('invitationService（projectId対応）', () => {
       expect(mockFirestore.where).toHaveBeenCalledWith('projectId', '==', 'project-1');
       expect(mockFirestore.where).toHaveBeenCalledWith('isActive', '==', true);
       expect(result).toHaveLength(1);
+    });
+  });
+
+  /**
+   * 未設定時に `window.location.origin.replace(':3001', ':3002')` へ落としていたため、
+   * ポートを持たない本番（Vercel）では置換が効かず、管理画面のドメインを指す
+   * 404 のリンクを黙って発行していた。
+   */
+  describe('getGalleryUrl', () => {
+    const originalLocation = window.location;
+
+    const setLocation = (href: string) => {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        writable: true,
+        value: new URL(href),
+      });
+    };
+
+    afterEach(() => {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        writable: true,
+        value: originalLocation,
+      });
+      vi.unstubAllEnvs();
+    });
+
+    it('NEXT_PUBLIC_WEB_URL があればそれを使う', () => {
+      vi.stubEnv('NEXT_PUBLIC_WEB_URL', 'https://gallery.example.com');
+      setLocation('https://admin.example.com/admin');
+
+      expect(invitationService.getGalleryUrl('token-1')).toBe(
+        'https://gallery.example.com/gallery/token-1'
+      );
+    });
+
+    it('未設定でも localhost なら 3002 番に読み替える', () => {
+      vi.stubEnv('NEXT_PUBLIC_WEB_URL', '');
+      setLocation('http://localhost:3001/admin');
+
+      expect(invitationService.getGalleryUrl('token-1')).toBe(
+        'http://localhost:3002/gallery/token-1'
+      );
+    });
+
+    it('未設定で localhost 以外なら例外を投げる', () => {
+      vi.stubEnv('NEXT_PUBLIC_WEB_URL', '');
+      setLocation('https://admin.example.com/admin');
+
+      expect(() => invitationService.getGalleryUrl('token-1')).toThrow(
+        /NEXT_PUBLIC_WEB_URL/
+      );
+    });
+
+    it('127.0.0.1 も開発機として扱う', () => {
+      vi.stubEnv('NEXT_PUBLIC_WEB_URL', '');
+      setLocation('http://127.0.0.1:3001/admin');
+
+      expect(invitationService.getGalleryUrl('token-1')).toBe(
+        'http://127.0.0.1:3002/gallery/token-1'
+      );
     });
   });
 

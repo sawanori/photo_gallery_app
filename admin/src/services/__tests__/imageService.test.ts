@@ -161,6 +161,77 @@ describe('imageService（projectId対応）', () => {
       expect(result.projectId).toBe('project-1');
       expect(result.url).toBe('https://example.com/image.jpg');
     });
+
+    // mobile の一括保存が「1枚 5MB」と推定して 410 枚で誤って弾いていた。
+    // 実測値を保存し、web の manifest が bytes として載せる。
+    it('原本の bytes を size として保存する', async () => {
+      const mockFile = new File(['0123456789'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+
+      const result = await imageService.uploadImageFile(
+        'project-1', 'admin-uid', mockFile, [], 'テスト'
+      );
+
+      expect(mockFirestore.setDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ size: mockFile.size })
+      );
+      expect(result.size).toBe(mockFile.size);
+    });
+  });
+
+  // --- アップロード途中失敗時の後始末 ---
+  // 原本を上げたあとの工程で失敗すると、どの画像ドキュメントからも参照されない
+  // ファイルが Storage に残る。画面には「N枚失敗」としか出ないので誰も気付かない。
+  describe('uploadImageFile の後始末', () => {
+    it('サムネイルのアップロードに失敗したら原本を削除して元の例外を投げ直す', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+      mockStorage.ref.mockImplementation((_storage: unknown, path: string) => `ref:${path}`);
+      mockStorage.uploadBytes.mockImplementation(async (ref: string) =>
+        ref.startsWith('ref:thumbnails/')
+          ? Promise.reject(new Error('thumb upload failed'))
+          : {}
+      );
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+
+      await expect(
+        imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト')
+      ).rejects.toThrow('thumb upload failed');
+
+      // 原本だけが上がっている状態なので、消すのも原本だけ
+      expect(mockStorage.deleteObject).toHaveBeenCalledTimes(1);
+      expect(mockStorage.deleteObject).toHaveBeenCalledWith(
+        expect.stringContaining('ref:images/admin-uid/')
+      );
+      expect(mockFirestore.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('setDoc に失敗したら原本とサムネイルを削除して元の例外を投げ直す', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+      mockStorage.ref.mockImplementation((_storage: unknown, path: string) => `ref:${path}`);
+      mockFirestore.setDoc.mockRejectedValue(new Error('permission-denied'));
+      mockStorage.deleteObject.mockResolvedValue(undefined);
+
+      await expect(
+        imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト')
+      ).rejects.toThrow('permission-denied');
+
+      // 原本 + サムネイル2枚
+      expect(mockStorage.deleteObject).toHaveBeenCalledTimes(3);
+    });
+
+    it('後始末に失敗しても元の例外を隠さない', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+      mockFirestore.setDoc.mockRejectedValue(new Error('permission-denied'));
+      mockStorage.deleteObject.mockRejectedValue(new Error('cleanup failed'));
+
+      await expect(
+        imageService.uploadImageFile('project-1', 'admin-uid', mockFile, [], 'テスト')
+      ).rejects.toThrow('permission-denied');
+    });
   });
 
   describe('assertProjectExists', () => {
@@ -365,6 +436,15 @@ describe('imageService（projectId対応）', () => {
       expect(mockFirestore.deleteDoc).toHaveBeenCalledTimes(2);
     });
 
+    it('成功したら deletedCount 1 を返す', async () => {
+      setupDelete();
+
+      await expect(imageService.deleteImage('image-1')).resolves.toEqual({
+        deletedCount: 1,
+        failed: [],
+      });
+    });
+
     it('お気に入りの削除に失敗したら例外を投げる', async () => {
       // 2026-08-17 から 2026-08-22 まで、ルールの権限漏れでこれが
       // permission-denied になっていたのに try-catch で握り潰されていた。
@@ -395,15 +475,32 @@ describe('imageService（projectId対応）', () => {
       await expect(imageService.deleteImage('nonexistent')).rejects.toThrow();
     });
 
-    it('Storage削除失敗でもFirestore削除は実行する', async () => {
-      // Storage に残ったファイルは後から掃除できるが、ここで止めると
-      // Firestore 側が消せなくなり削除そのものが進まなくなる。
-      setupDelete();
+    it('Storage削除に失敗したら画像ドキュメントを残し、失敗を戻り値で返す', async () => {
+      // ドキュメントを消すと storagePath を失い、そのファイルは二度と回収できない。
+      // 以前は警告を出すだけで消していたため、孤児が溜まり続けていた。
+      setupDelete({
+        ...sampleImage,
+        storagePath: 'images/admin-uid/12345-abc',
+        thumbnailPaths: ['thumbnails/admin-uid/12345-abc_384.webp'],
+      });
       mockStorage.deleteObject.mockRejectedValue(new Error('Storage delete failed'));
 
-      await imageService.deleteImage('image-1');
+      const result = await imageService.deleteImage('image-1');
 
-      expect(mockTransaction.delete).toHaveBeenCalled();
+      expect(result).toEqual({
+        deletedCount: 0,
+        failed: [
+          {
+            imageId: 'image-1',
+            paths: [
+              'images/admin-uid/12345-abc',
+              'thumbnails/admin-uid/12345-abc_384.webp',
+            ],
+          },
+        ],
+      });
+      expect(mockTransaction.delete).not.toHaveBeenCalled();
+      expect(mockFirestore.deleteDoc).not.toHaveBeenCalled();
     });
   });
 
@@ -567,13 +664,49 @@ describe('imageService（projectId対応）', () => {
       expect(mockStorage.deleteObject).not.toHaveBeenCalled();
     });
 
-    it('Storageの削除に失敗してもFirestoreの削除は続ける', async () => {
+    it('Storageの削除に失敗した画像はドキュメントを残す', async () => {
+      // 消すと storagePath ごと失われ、ファイルは永久に孤児になる。
       setupBulk();
       mockStorage.deleteObject.mockRejectedValue(new Error('Storage delete failed'));
 
-      await imageService.deleteImagesForProject('project-1', makeImages(3));
+      const result = await imageService.deleteImagesForProject('project-1', makeImages(3));
 
-      expect(mockBatch.delete).toHaveBeenCalledTimes(3);
+      expect(mockBatch.delete).not.toHaveBeenCalled();
+      expect(mockBatch.commit).not.toHaveBeenCalled();
+      expect(result.deletedCount).toBe(0);
+      expect(result.failed).toEqual([
+        { imageId: 'image-0', paths: ['images/admin-uid/file-0'] },
+        { imageId: 'image-1', paths: ['images/admin-uid/file-1'] },
+        { imageId: 'image-2', paths: ['images/admin-uid/file-2'] },
+      ]);
+    });
+
+    it('Storageの削除に成功した画像だけを消し、失敗分は失敗として返す', async () => {
+      setupBulk();
+      mockStorage.ref.mockImplementation((_storage: unknown, path: string) => path);
+      mockStorage.deleteObject.mockImplementation(async (path: string) =>
+        path === 'images/admin-uid/file-1'
+          ? Promise.reject(new Error('Storage delete failed'))
+          : undefined
+      );
+
+      const result = await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      // 3枚のうち成功した2枚だけ消える
+      expect(mockBatch.delete).toHaveBeenCalledTimes(2);
+      expect(mockFirestore.increment).toHaveBeenCalledWith(-2);
+      expect(result.deletedCount).toBe(2);
+      expect(result.failed).toEqual([
+        { imageId: 'image-1', paths: ['images/admin-uid/file-1'] },
+      ]);
+    });
+
+    it('すべて成功したら failed は空', async () => {
+      setupBulk();
+
+      const result = await imageService.deleteImagesForProject('project-1', makeImages(3));
+
+      expect(result).toEqual({ deletedCount: 3, failed: [] });
     });
 
     it('進捗を通知する', async () => {

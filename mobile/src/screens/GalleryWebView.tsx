@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Linking, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, Linking, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewNavigation } from 'react-native-webview';
 import Constants from 'expo-constants';
@@ -29,6 +29,13 @@ export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props
   const webViewRef = useRef<WebView>(null);
   const [hasError, setHasError] = useState(false);
   const restartCount = useRef(0);
+  /**
+   * WebView の履歴を戻れるか。
+   *
+   * state ではなく ref に置く。state にすると遷移のたびに BackHandler を
+   * 登録し直すことになり、その隙間に押された戻るキーが取りこぼされる。
+   */
+  const canGoBack = useRef(false);
 
   const appVersion = Constants.expoConfig?.version ?? '0.0.0';
   const nonce = useMemo(() => createNonce(), []);
@@ -61,6 +68,25 @@ export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props
     },
     []
   );
+
+  /**
+   * Android の戻るキー。
+   *
+   * 既定では戻るキーでアプリごと終了する。ライトボックスや /liked から
+   * 一覧へ戻れないと、利用者にはアプリが落ちたようにしか見えない。
+   * iOS には物理的な戻るキーが無く（スワイプは allowsBackForwardNavigationGestures が
+   * 担当する）、BackHandler も Android 専用なので登録しない。
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!canGoBack.current) return false; // 履歴が無ければ既定動作（アプリ終了）
+      webViewRef.current?.goBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, []);
 
   const reload = useCallback(() => {
     setHasError(false);
@@ -110,6 +136,9 @@ export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props
           originWhitelist={['https://*', 'http://*']}
           applicationNameForUserAgent={userAgentSuffix(appVersion)}
           onShouldStartLoadWithRequest={handleShouldStartLoad}
+          onNavigationStateChange={(navState) => {
+            canGoBack.current = navState.canGoBack;
+          }}
           injectedJavaScriptBeforeContentLoaded={injectedScript}
           // Android では上記が確実に届かないため、読み込み後にも冪等に注入する
           injectedJavaScript={injectedScript}

@@ -58,11 +58,27 @@ export function decideNavigation(
   return isOpenableExternally(request.url) ? 'external' : 'block';
 }
 
-/** 外部ブラウザで開いてよい URL か（http/https のみ許可）。 */
+/**
+ * OS に渡してよい URL のスキーム。
+ *
+ * mailto / tel はプライバシーポリシーの問い合わせ先リンクで使う。
+ * これが無いと審査員がタップしても無反応になる。
+ * 一方 `javascript:` `data:` `intent:` `file:` `blob:` は渡さない。
+ * `intent:` は Android で任意のアプリ・任意の extras を起動でき、
+ * `file:` は端末内のファイルを外部アプリに開かせられる。
+ */
+const EXTERNAL_SCHEMES: readonly string[] = [
+  'https:',
+  'http:',
+  'mailto:',
+  'tel:',
+];
+
+/** 外部（既定ブラウザ・メールアプリ・電話アプリ）で開いてよい URL か。 */
 export function isOpenableExternally(rawUrl: string): boolean {
   try {
     const parsed = new URL(rawUrl);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    return EXTERNAL_SCHEMES.includes(parsed.protocol);
   } catch {
     return false;
   }

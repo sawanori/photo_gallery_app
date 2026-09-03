@@ -3,8 +3,9 @@ import { prepareUpload } from './prepareUpload';
 
 /**
  * prepareUpload は「速くするだけで、出力は従来と同じ」であることが要件。
- * 圧縮の閾値・寸法・品質・形式と、サムネイルの幅・形式が
- * imageCompression.ts / thumbnailGenerator.ts と一致していることを固定する。
+ * 圧縮の閾値・寸法・品質・形式と、サムネイルの幅・形式をここで固定する。
+ * （比較対象だった imageCompression.ts / thumbnailGenerator.ts は
+ *   どこからも呼ばれなくなったため 2026-09-02 に削除した。）
  */
 
 const MB = 1024 * 1024;

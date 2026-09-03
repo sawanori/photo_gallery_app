@@ -27,7 +27,7 @@ import {
   deleteObject,
 } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
-import type { ThumbnailResult } from '../utils/thumbnailGenerator';
+import type { ThumbnailResult } from '../utils/prepareUpload';
 import { createBatchWriter, MAX_BATCH_OPERATIONS } from '../utils/batchWriter';
 import { runWithConcurrency } from '../utils/uploadQueue';
 import {
@@ -44,6 +44,14 @@ export interface Image {
   description?: string;
   userId: string;
   likeCount: number;
+  /**
+   * Storage に置いた**原本の** bytes。
+   *
+   * mobile の一括保存が「1枚 5MB」と推定して 410 枚で誤って弾いていたため、
+   * アップロード時に実測値を保存する。web の manifest が `bytes` として載せる。
+   * 2026-09-02 より前にアップロードされた画像には無い。
+   */
+  size?: number;
   thumbnails?: {
     small: string;
     medium: string;
@@ -79,6 +87,7 @@ const docToImage = (docSnap: DocumentSnapshot): Image | null => {
     description: data.description,
     userId: data.userId,
     likeCount: data.likeCount || 0,
+    size: typeof data.size === 'number' ? data.size : undefined,
     thumbnails: data.thumbnails,
     thumbnailPaths: data.thumbnailPaths,
     createdAt: data.createdAt?.toDate(),
@@ -278,6 +287,10 @@ export const finalizeUploadBatch = async (
  *
  * サムネイルは呼び出し元（prepareUpload）が生成済みのものを受け取る。
  * 関数内で生成すると画像を2回デコードすることになる。
+ *
+ * **原本を上げたあとの工程が失敗したら、上げ済みのファイルを消してから投げ直す。**
+ * 以前は原本だけが Storage に残り、どの画像ドキュメントからも参照されない孤児になっていた。
+ * 画面には「N枚失敗」としか出ないため、誰も気付かないまま容量だけが増える。
  */
 export const uploadImageFile = async (
   projectId: string,
@@ -300,70 +313,90 @@ export const uploadImageFile = async (
 
   await uploadBytes(storageRef, file, metadata);
 
-  // Upload thumbnails + get original URL in parallel
-  const thumbnailUploads = thumbnailResults.map(async (thumb) => {
-    const thumbPath = `thumbnails/${userId}/${filename}_${thumb.width}.webp`;
-    const thumbRef = ref(storage, thumbPath);
-    await uploadBytes(thumbRef, thumb.blob, webpMeta);
-    const thumbUrl = await getDownloadURL(thumbRef);
-    return { name: thumb.name, url: thumbUrl, path: thumbPath };
-  });
+  // ここから先で失敗したときに消すパス。**アップロードが成功した時点で足す。**
+  // 先に足すと、上がっていないパスを消しにいって余計なエラーを増やす。
+  const uploadedPaths: string[] = [storagePath];
 
-  const [url, ...thumbResults] = await Promise.all([
-    getDownloadURL(storageRef),
-    ...thumbnailUploads,
-  ]);
+  try {
+    // Upload thumbnails + get original URL in parallel
+    const thumbnailUploads = thumbnailResults.map(async (thumb) => {
+      const thumbPath = `thumbnails/${userId}/${filename}_${thumb.width}.webp`;
+      const thumbRef = ref(storage, thumbPath);
+      await uploadBytes(thumbRef, thumb.blob, webpMeta);
+      uploadedPaths.push(thumbPath);
+      const thumbUrl = await getDownloadURL(thumbRef);
+      return { name: thumb.name, url: thumbUrl, path: thumbPath };
+    });
 
-  if (thumbResults.length > 0) {
-    thumbnailData = { small: '', medium: '' };
-    thumbnailPaths = [];
-    for (const t of thumbResults) {
-      thumbnailData[t.name] = t.url;
-      thumbnailPaths.push(t.path);
+    const [url, ...thumbResults] = await Promise.all([
+      getDownloadURL(storageRef),
+      ...thumbnailUploads,
+    ]);
+
+    if (thumbResults.length > 0) {
+      thumbnailData = { small: '', medium: '' };
+      thumbnailPaths = [];
+      for (const t of thumbResults) {
+        thumbnailData[t.name] = t.url;
+        thumbnailPaths.push(t.path);
+      }
     }
+
+    // 新規ドキュメントへの書き込みなので競合しない。トランザクションは不要。
+    // プロジェクトの存在確認は assertProjectExists がバッチ開始時に済ませている。
+    const imageDocRef = doc(collection(db, IMAGES_COLLECTION));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const imageData: Record<string, any> = {
+      projectId,
+      url,
+      storagePath,
+      title,
+      description: description || '',
+      userId,
+      likeCount: 0,
+      // 原本の bytes。mobile の一括保存が推定値で誤判定しないようにする。
+      size: file.size,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+    if (thumbnailData) {
+      imageData.thumbnails = thumbnailData;
+      imageData.thumbnailPaths = thumbnailPaths;
+    }
+
+    await setDoc(imageDocRef, imageData);
+
+    // 書いたばかりのドキュメントを読み直さず、手元のデータから組み立てる。
+    // Firestore 上の createdAt / updatedAt はサーバー時刻のままで、
+    // クライアント時刻になるのはこの戻り値だけ（呼び出し元は件数にしか使っていない）。
+    const now = new Date();
+    return {
+      id: imageDocRef.id,
+      projectId,
+      url,
+      storagePath,
+      title,
+      description: description || '',
+      userId,
+      likeCount: 0,
+      size: file.size,
+      thumbnails: thumbnailData,
+      thumbnailPaths,
+      createdAt: now,
+      updatedAt: now,
+    };
+  } catch (error) {
+    // 掃除の失敗で元の原因を隠さない。投げ直すのは必ず元の例外。
+    await Promise.all(
+      uploadedPaths.map((path) =>
+        deleteObject(ref(storage, path)).catch((cleanupError) =>
+          console.warn(`Failed to clean up orphaned upload: ${path}`, cleanupError)
+        )
+      )
+    );
+    throw error;
   }
-
-  // 新規ドキュメントへの書き込みなので競合しない。トランザクションは不要。
-  // プロジェクトの存在確認は assertProjectExists がバッチ開始時に済ませている。
-  const imageDocRef = doc(collection(db, IMAGES_COLLECTION));
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const imageData: Record<string, any> = {
-    projectId,
-    url,
-    storagePath,
-    title,
-    description: description || '',
-    userId,
-    likeCount: 0,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
-  if (thumbnailData) {
-    imageData.thumbnails = thumbnailData;
-    imageData.thumbnailPaths = thumbnailPaths;
-  }
-
-  await setDoc(imageDocRef, imageData);
-
-  // 書いたばかりのドキュメントを読み直さず、手元のデータから組み立てる。
-  // Firestore 上の createdAt / updatedAt はサーバー時刻のままで、
-  // クライアント時刻になるのはこの戻り値だけ（呼び出し元は件数にしか使っていない）。
-  const now = new Date();
-  return {
-    id: imageDocRef.id,
-    projectId,
-    url,
-    storagePath,
-    title,
-    description: description || '',
-    userId,
-    likeCount: 0,
-    thumbnails: thumbnailData,
-    thumbnailPaths,
-    createdAt: now,
-    updatedAt: now,
-  };
 };
 
 // Update image
@@ -397,27 +430,56 @@ const IN_QUERY_CHUNK = 30;
  * 失い、この削除に失敗したファイルは永久に孤児として残る。先に消しておけば
  * 画像ドキュメントが手元に残るので、再実行で回収できる。
  *
- * 失敗しても例外にはしないが、**どのパスが失敗したかは必ず残す**。
- * ここで止めると Firestore 側を消せなくなり、削除そのものが進まなくなる。
+ * 例外にはしないが、**消せなかったパスを戻り値で返す**。呼び出し元はこれを見て
+ * 「その画像の Firestore ドキュメントを残す」判断をする。以前はここが警告を
+ * 出すだけで結果を捨てており、ドキュメントだけが消えてファイルが孤児になっていた。
  */
 const deleteImageFiles = async (
   storagePath: string | undefined,
   thumbnailPaths: string[] = []
-): Promise<void> => {
+): Promise<string[]> => {
   const paths = [storagePath, ...thumbnailPaths].filter(
     (p): p is string => typeof p === 'string' && p.length > 0
   );
 
-  await Promise.all(
+  const outcomes = await Promise.all(
     paths.map(async (path) => {
       try {
         await deleteObject(ref(storage, path));
+        return null;
       } catch (error) {
         console.warn(`Failed to delete file from storage: ${path}`, error);
+        return path;
       }
     })
   );
+
+  return outcomes.filter((path): path is string => path !== null);
 };
+
+/** Storage の削除に失敗し、Firestore ドキュメントを残した画像。 */
+export interface FailedImageDelete {
+  imageId: string;
+  /** 消せなかった Storage のパス。再実行の手掛かりになる。 */
+  paths: string[];
+}
+
+/**
+ * 画像削除の結果。
+ *
+ * `failed` が空でなければ、その画像の Firestore ドキュメントは**残っている**。
+ * 呼び出し元（UI）は件数を利用者に見せて再実行を促す。黙って成功にしない。
+ */
+export interface DeleteImagesResult {
+  deletedCount: number;
+  failed: FailedImageDelete[];
+}
+
+/** 画像1枚に紐づく Storage のパス一覧。 */
+const storagePathsOf = (image: Pick<Image, 'storagePath' | 'thumbnailPaths'>): string[] =>
+  [image.storagePath, ...(image.thumbnailPaths ?? [])].filter(
+    (p): p is string => typeof p === 'string' && p.length > 0
+  );
 
 /**
  * 画像1枚に付いたお気に入りを削除する。
@@ -503,21 +565,37 @@ export interface DeleteProgress {
  * `imageCount` はバッチごとに減らす。省くと、途中で失敗したときに
  * 「700枚」と表示されたまま中身が空、という戻せない状態になる。
  *
- * @throws Firestore の削除に失敗した場合。Storage の失敗だけは警告に留める。
+ * **Storage の削除に失敗した画像は Firestore ドキュメントを消さない。**
+ * 消すと storagePath ごと失われ、そのファイルは二度と回収できない。
+ * 戻り値の `failed` に積んで呼び出し元へ返す（UI が再実行を促す）。
+ *
+ * @throws Firestore の削除に失敗した場合。
  */
 export const deleteImagesForProject = async (
   projectId: string,
   images: Image[],
   onProgress?: (progress: DeleteProgress) => void
-): Promise<void> => {
-  if (images.length === 0) return;
+): Promise<DeleteImagesResult> => {
+  if (images.length === 0) return { deletedCount: 0, failed: [] };
 
   const likeIdsByImage = await findLikeIdsForImages(images.map((img) => img.id));
 
-  // 1. Storage を先に消す。失敗しても止めない（あとから掃除できる）。
-  await runWithConcurrency(images, DELETE_CONCURRENCY, (image) =>
+  // 1. Storage を先に消す。失敗しても止めないが、どの画像が失敗したかは覚えておく。
+  const storageOutcomes = await runWithConcurrency(images, DELETE_CONCURRENCY, (image) =>
     deleteImageFiles(image.storagePath, image.thumbnailPaths)
   );
+
+  const failed: FailedImageDelete[] = [];
+  const deletable: Image[] = [];
+  images.forEach((image, index) => {
+    const outcome = storageOutcomes[index];
+    const failedPaths = outcome.ok ? outcome.value : storagePathsOf(image);
+    if (failedPaths.length > 0) {
+      failed.push({ imageId: image.id, paths: failedPaths });
+      return;
+    }
+    deletable.push(image);
+  });
 
   // 2. Firestore はバッチで消す。commit が失敗すればそのまま例外になる。
   const writer = createBatchWriter(db);
@@ -537,7 +615,7 @@ export const deleteImagesForProject = async (
     onProgress?.({ completed, total: images.length });
   };
 
-  for (const image of images) {
+  for (const image of deletable) {
     const likeIds = likeIdsByImage.get(image.id) ?? [];
     // この画像の分（画像1 + お気に入り + プロジェクト更新1）が収まらなければ先に確定させる。
     // 収まらないまま積むと BatchWriter が画像の途中で分割し、imageCount の減算が
@@ -553,6 +631,8 @@ export const deleteImagesForProject = async (
   }
 
   await commitGroup();
+
+  return { deletedCount: completed, failed };
 };
 
 /**
@@ -563,8 +643,12 @@ export const deleteImagesForProject = async (
  * 行っていた。トランザクションは競合すると**丸ごと再実行される**ため、
  * 中に外部への副作用を置くと Storage の削除が何度も走る。
  * トランザクションに残すのは、画像ドキュメントの削除と imageCount の更新だけ。
+ *
+ * **Storage の削除に失敗したらドキュメントを消さずに戻る。**
+ * 消すと storagePath を失い、ファイルが永久に孤児になる。
+ * 呼び出し元は戻り値の `failed` を見て利用者に再実行を促す。
  */
-export const deleteImage = async (imageId: string): Promise<void> => {
+export const deleteImage = async (imageId: string): Promise<DeleteImagesResult> => {
   const imageDocRef = doc(db, IMAGES_COLLECTION, imageId);
 
   const imageSnap = await getDoc(imageDocRef);
@@ -575,7 +659,14 @@ export const deleteImage = async (imageId: string): Promise<void> => {
   const imageData = imageSnap.data();
   const projectId: string | undefined = imageData?.projectId;
 
-  await deleteImageFiles(imageData?.storagePath, imageData?.thumbnailPaths);
+  const failedPaths = await deleteImageFiles(
+    imageData?.storagePath,
+    imageData?.thumbnailPaths
+  );
+  if (failedPaths.length > 0) {
+    return { deletedCount: 0, failed: [{ imageId, paths: failedPaths }] };
+  }
+
   await deleteLikesForImage(imageId);
 
   await runTransaction(db, async (transaction) => {
@@ -598,9 +689,18 @@ export const deleteImage = async (imageId: string): Promise<void> => {
   if (projectId) {
     await syncInvitationsOnImageDelete(projectId, imageId);
   }
+
+  return { deletedCount: 1, failed: [] };
 };
 
 // Delete multiple images
-export const deleteImages = async (imageIds: string[]): Promise<void> => {
-  await Promise.all(imageIds.map((id) => deleteImage(id)));
+export const deleteImages = async (imageIds: string[]): Promise<DeleteImagesResult> => {
+  const results = await Promise.all(imageIds.map((id) => deleteImage(id)));
+  return results.reduce<DeleteImagesResult>(
+    (acc, result) => ({
+      deletedCount: acc.deletedCount + result.deletedCount,
+      failed: [...acc.failed, ...result.failed],
+    }),
+    { deletedCount: 0, failed: [] }
+  );
 };

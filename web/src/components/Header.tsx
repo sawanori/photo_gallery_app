@@ -1,10 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useGallery } from '@/contexts/GalleryContext';
 import BulkDownloadButton from './BulkDownloadButton';
 import LineShareButton from './LineShareButton';
-import { viewingDeadline } from '@/utils/viewingWindow';
+import { effectiveDeadline } from '@/utils/viewingWindow';
 
 interface HeaderProps {
   showLikedLink?: boolean;
@@ -16,14 +17,27 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
   const { invitation, likedIds, totalCount } = useGallery();
   const token = invitation?.token || '';
 
+  /**
+   * 「あと何日」の基準時刻。
+   *
+   * レンダー中に `Date.now()` を直接呼ぶと React のピュア性の規則に反する
+   * （同じ入力で描画のたびに違う結果になる）。マウント時に一度だけ取って固定する。
+   * ここは残り 2 日を切ったかの色分けにしか使わないので、開いている間に
+   * 日付が変わっても実害は無い。
+   */
+  const [mountedAt] = useState(() => Date.now());
+
   // 表示する期限と実際の判定を必ず同じ計算にする。
-  // 以前はここに 7 日が直書きされており、判定側と別々に持っていた。
-  const expiryDate = invitation?.createdAt
-    ? viewingDeadline(invitation.createdAt, invitation.viewingDays)
-    : null;
+  // 閲覧期限だけを出していたため、expiresAt のほうが先に来る招待では
+  // 実際より遅い日付を表示していた（監査 F6）。早いほうを出す。
+  const expiryDate = effectiveDeadline(
+    invitation?.createdAt,
+    invitation?.viewingDays,
+    invitation?.expiresAt
+  );
 
   const isExpiringSoon = expiryDate
-    ? expiryDate.getTime() - Date.now() < 2 * 24 * 60 * 60 * 1000
+    ? expiryDate.getTime() - mountedAt < 2 * 24 * 60 * 60 * 1000
     : false;
 
   return (

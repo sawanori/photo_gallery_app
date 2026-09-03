@@ -31,10 +31,36 @@ const FINALIZE_CHUNK = 50;
 
 const SYSTEM_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.gitkeep']);
 
+/**
+ * 受け入れる MIME。**`image/*` では通らない形式が混ざる。**
+ *
+ * iPhone の HEIC は `image/heic` として渡ってくるが、Chrome / Windows / Android の
+ * `createImageBitmap` が復号できない。4MB を超えると prepareUpload が例外になり、
+ * 4MB 以下だとサムネイル無しの HEIC 原本がそのまま上がって、web 側で表示できない。
+ * `type` が空のファイル（拡張子だけのもの）も同じ経路で黙って落ちていた。
+ *
+ * 変換はここではしない。**弾いてファイル名を伝える**。
+ */
+const ACCEPTED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+const ACCEPTED_MIME_SET = new Set<string>(ACCEPTED_MIME_TYPES);
+/** メッセージに並べるファイル名の上限。全部並べると画面から溢れる。 */
+const MAX_REJECTED_NAMES = 3;
+
 type UploadMode = 'file' | 'folder';
 
-function isImageFile(file: File): boolean {
-  return file.type.startsWith('image/');
+function isAcceptedImage(file: File): boolean {
+  return ACCEPTED_MIME_SET.has(file.type);
+}
+
+/**
+ * 弾いたファイルを利用者に伝える文言。何が落ちたか分からないのが一番まずい。
+ * page.tsx から named export すると Next がルートの設定値と誤解するため、ここに置く。
+ */
+function rejectedFilesMessage(names: string[]): string {
+  const shown = names.slice(0, MAX_REJECTED_NAMES).join('、');
+  const rest = names.length - MAX_REJECTED_NAMES;
+  const suffix = rest > 0 ? ` ほか${rest}件` : '';
+  return `JPEG / PNG / WebP 以外は取り込めません: ${shown}${suffix}`;
 }
 
 function isSystemFile(name: string): boolean {
@@ -78,13 +104,23 @@ export default function ProjectImageUploadPage() {
   };
 
   const handleBeforeUpload = (_file: File, newFileList: File[]) => {
-    const filtered = newFileList.filter((f) => {
+    // システムファイルは黙って落とす（利用者が選んだつもりのものではない）。
+    // 画像として選ばれたのに形式が合わないものだけ、名前を挙げて知らせる。
+    const candidates = newFileList.filter((f) => {
       if (uploadMode === 'folder') {
         const rp = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
         if (isSystemFile(rp)) return false;
       }
-      return isImageFile(f);
+      return true;
     });
+
+    const filtered = candidates.filter(isAcceptedImage);
+    const rejected = candidates.filter((f) => !isAcceptedImage(f));
+    // beforeUpload は選んだファイル1つにつき1回呼ばれ、毎回**同じ一覧**が渡ってくる。
+    // 先頭のファイルのときだけ知らせる。毎回出すと同じ文言が枚数分並ぶ。
+    if (rejected.length > 0 && _file === newFileList[0]) {
+      message.warning(rejectedFilesMessage(rejected.map((f) => f.name)));
+    }
 
     const newFiles: UploadFile[] = filtered.map((f) => {
       const rp = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
@@ -260,7 +296,7 @@ export default function ProjectImageUploadPage() {
             onRemove={(file) => {
               setFileList((prev) => prev.filter((f) => f.uid !== file.uid));
             }}
-            accept="image/*"
+            accept={ACCEPTED_MIME_TYPES.join(',')}
             showUploadList
             style={{ marginBottom: 24 }}
           >
@@ -284,7 +320,7 @@ export default function ProjectImageUploadPage() {
             onRemove={(file) => {
               setFileList((prev) => prev.filter((f) => f.uid !== file.uid));
             }}
-            accept="image/*"
+            accept={ACCEPTED_MIME_TYPES.join(',')}
             showUploadList
             style={{ marginBottom: 24 }}
           >
@@ -295,7 +331,7 @@ export default function ProjectImageUploadPage() {
               クリックしてフォルダーを選択
             </p>
             <p className="ant-upload-hint">
-              フォルダー内の画像をファイル名順にアップロードします（最大{MAX_FILES}枚）
+              フォルダー内の画像をファイル名順にアップロードします（JPG, PNG, WebP・最大{MAX_FILES}枚）
             </p>
           </Dragger>
         )}

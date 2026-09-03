@@ -122,6 +122,40 @@ describe('validateSaveItem / ファイル名', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.safeFilename).toBe('結婚式_001.jpg');
   });
+
+  describe('長すぎる名前の切り詰め', () => {
+    it('末尾 120 コードポイントを残す', () => {
+      const long = `${'a'.repeat(200)}.jpg`;
+      const result = validateSaveItem({ url: OK_URL, filename: long });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(Array.from(result.value.safeFilename)).toHaveLength(120);
+      expect(result.value.safeFilename.endsWith('.jpg')).toBe(true);
+    });
+
+    // UTF-16 単位で切るとサロゲートペアが割れ、壊れた半分（U+D83C 等）が残る。
+    it('サロゲートペアを分断しない', () => {
+      const long = `${'🎈'.repeat(200)}.jpg`;
+      const result = validateSaveItem({ url: OK_URL, filename: long });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const name = result.value.safeFilename;
+      expect(Array.from(name)).toHaveLength(120);
+      // 対になっていないサロゲート（割れた絵文字の片割れ）が残っていないこと
+      const loneSurrogate =
+        /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+      expect(loneSurrogate.test(name)).toBe(false);
+      expect(name.endsWith('.jpg')).toBe(true);
+    });
+
+    it('120 コードポイント以下はそのまま通す', () => {
+      const name = `${'🎈'.repeat(100)}.jpg`;
+      const result = validateSaveItem({ url: OK_URL, filename: name });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.safeFilename).toBe(name);
+    });
+  });
 });
 
 describe('validateSaveItem / bytes', () => {

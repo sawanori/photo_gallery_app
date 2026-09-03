@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Table, Button, Tag, message, Popconfirm, Spin } from 'antd';
 import { DeleteOutlined, UserOutlined, ReloadOutlined } from '@ant-design/icons';
 import { getUsers, deleteUser as deleteUserService, User } from '@/services/userService';
@@ -14,23 +14,38 @@ dayjs.locale('ja');
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  // 取り直しの合図。値そのものに意味は無く、effect を走らせるためだけに使う。
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      const data = await getUsers();
-      setUsers(data);
-    } catch (error) {
-      message.error('ユーザー一覧の取得に失敗しました');
-      console.error('Error fetching users:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  /**
+   * 取り直しを予約する。`setLoading(true)` は**イベント側で**行う。
+   * effect の中で同期的に呼ぶと描画が余分に走る（react-hooks/set-state-in-effect）。
+   */
+  const fetchUsers = useCallback(() => {
+    setLoading(true);
+    setReloadKey((key) => key + 1);
+  }, []);
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const data = await getUsers();
+        if (!cancelled) setUsers(data);
+      } catch (error) {
+        if (cancelled) return;
+        message.error('ユーザー一覧の取得に失敗しました');
+        console.error('Error fetching users:', error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -88,7 +103,7 @@ export default function UsersPage() {
       dataIndex: 'createdAt',
       key: 'createdAt',
       width: 180,
-      render: (date: Date) => (
+      render: (date: Date | undefined) => (
         <span style={{ color: 'var(--color-ink-muted)', fontSize: 13 }}>
           {date ? dayjs(date).format('YYYY/MM/DD HH:mm') : '-'}
         </span>

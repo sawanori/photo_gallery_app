@@ -1,13 +1,4 @@
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  query,
-  where,
-  type Firestore,
-} from 'firebase/firestore';
+import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import { isWithinViewingWindow } from '@/utils/viewingWindow';
 
 /**
@@ -32,6 +23,15 @@ export interface ManifestItem {
   imageId: string;
   url: string;
   filename: string;
+  /**
+   * 原本のバイト数。**分かるものだけ載せる。**
+   *
+   * ネイティブ側は合計サイズから空き容量を判定する。ここが無いと 1 枚 5MB と
+   * 推定するしかなく、410 枚のギャラリーで推定合計が 2GB を超えて
+   * 実際には保存できるのに拒否されていた（監査 F2）。
+   * 2026-09 以前にアップロードした画像には `size` が無いので任意項目のままにする。
+   */
+  bytes?: number;
 }
 
 export type ManifestFailure =
@@ -56,10 +56,11 @@ interface InvitationRecord {
 /**
  * 招待をトークンで引く。
  *
- * 別計画 `docs/implementation-plan.md` の task_002 で招待のドキュメント ID が
- * トークンそのものになる予定なので、まず単一ドキュメント取得を試し、
- * 見つからなければ現行のコレクションクエリにフォールバックする。
- * これで移行の前後どちらでも動く。
+ * **単一ドキュメント取得（get）だけを使う。** 招待のドキュメント ID はトークンそのもの。
+ * `where('token','==',token)` のフォールバックを持っていたが、`invitations` の list は
+ * 管理者限定なので必ず permission-denied になり、失敗するたびに無駄な往復をしていた。
+ * 復活させると list の許可が要り、匿名認証しただけの第三者が招待を全件列挙して
+ * トークンを収穫できる状態に戻る。
  */
 async function findInvitation(
   db: Firestore,
@@ -67,23 +68,10 @@ async function findInvitation(
 ): Promise<InvitationRecord | null> {
   try {
     const direct = await getDoc(doc(db, INVITATIONS_COLLECTION, token));
-    if (direct.exists()) return toInvitation(direct.id, direct.data());
+    if (!direct.exists()) return null;
+    return toInvitation(direct.id, direct.data());
   } catch {
     // 権限拒否は「見つからない」と同じに正規化する（存在の有無を漏らさない）
-  }
-
-  try {
-    const snapshot = await getDocs(
-      query(
-        collection(db, INVITATIONS_COLLECTION),
-        where('token', '==', token),
-        limit(1)
-      )
-    );
-    if (snapshot.empty) return null;
-    const found = snapshot.docs[0];
-    return toInvitation(found.id, found.data());
-  } catch {
     return null;
   }
 }
@@ -228,6 +216,9 @@ export async function resolveManifest(
       imageId: snapshot.id,
       url: data.url,
       filename: filenameFor(data.storagePath, data.url, snapshot.id, data.title),
+      ...(typeof data.size === 'number' && Number.isFinite(data.size) && data.size > 0
+        ? { bytes: data.size }
+        : {}),
     });
   }
 

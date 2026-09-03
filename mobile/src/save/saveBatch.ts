@@ -1,9 +1,13 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { AppState, type AppStateStatus } from 'react-native';
 
-import { DOWNLOAD_CONCURRENCY, MAX_BATCH_ITEMS, MAX_TOTAL_BYTES } from '../config';
+import {
+  CANCEL_POLL_INTERVAL_MS,
+  DOWNLOAD_CONCURRENCY,
+  MAX_BATCH_ITEMS,
+  MAX_TOTAL_BYTES,
+} from '../config';
 import type { ErrorCode } from '../bridge/protocol';
-import { checkFreeSpace, estimateRequiredBytes } from './storage';
+import { checkFreeSpace, knownBytesTotal } from './storage';
 import {
   classifyError,
   discardCached,
@@ -30,8 +34,6 @@ export interface BatchResult {
   failedCount: number;
   errorCode?: ErrorCode;
   requiredBytes?: number;
-  /** 処理中にアプリがバックグラウンドへ回った場合 true（中断の可能性を web に伝える）。 */
-  interrupted?: boolean;
 }
 
 export interface BatchOptions {
@@ -53,9 +55,9 @@ function createMutex() {
 /**
  * 一括保存。
  *
- * - ダウンロードは DOWNLOAD_CONCURRENCY 並列。
+ * - ダウンロードは DOWNLOAD_CONCURRENCY 並列。項目ごとに DOWNLOAD_TIMEOUT_MS で打ち切る。
  * - フォトライブラリへの書き込みはミューテックスで直列化する（同時書き込みの競合を避ける）。
- * - 上限超過分は無言で切り捨てず、失敗として計上する。
+ * - 件数上限を超えたら無言で切り捨てず too_many_items で全体を断る。
  * - 1件失敗しても残りを続行する。
  * - どの経路でも結果を1回だけ返す。
  */
@@ -72,20 +74,28 @@ export async function saveMany(
     else failedCount += 1;
   }
 
-  let accepted = deduplicateFilenames(validated);
-  if (accepted.length > MAX_BATCH_ITEMS) {
-    failedCount += accepted.length - MAX_BATCH_ITEMS;
-    accepted = accepted.slice(0, MAX_BATCH_ITEMS);
-  }
+  const accepted = deduplicateFilenames(validated);
 
-  const estimated = estimateRequiredBytes(accepted);
-  if (estimated > MAX_TOTAL_BYTES) {
+  // 件数がこの一括保存で唯一の「多すぎる」判定。
+  if (accepted.length > MAX_BATCH_ITEMS) {
     return {
       ok: false,
       savedCount: 0,
       failedCount: failedCount + accepted.length,
       errorCode: 'too_many_items',
-      requiredBytes: estimated,
+    };
+  }
+
+  // 合計バイト数の上限は、サーバーが実サイズを返した分だけで判定する。
+  // 推定値（1枚5MB）を足し込むと、実際には収まる枚数を誤って拒否する。
+  const knownBytes = knownBytesTotal(accepted);
+  if (knownBytes > MAX_TOTAL_BYTES) {
+    return {
+      ok: false,
+      savedCount: 0,
+      failedCount: failedCount + accepted.length,
+      errorCode: 'too_many_items',
+      requiredBytes: knownBytes,
     };
   }
 
@@ -130,16 +140,21 @@ async function runBatch(
   let failedCount = initialFailures;
   let processed = 0;
   let cancelled = false;
-  let wentBackground = false;
   let lastReportedAt = 0;
   let nextIndex = 0;
 
-  const appStateSub = AppState.addEventListener(
-    'change',
-    (state: AppStateStatus) => {
-      if (state !== 'active') wentBackground = true;
-    }
-  );
+  // ダウンロード中の項目を止めるための signal。項目の切れ目でしか
+  // isCancelled() を見ないと、通信中の1件はキャンセル後も走り続ける。
+  const cancelController = new AbortController();
+  const markCancelled = () => {
+    if (cancelled) return;
+    cancelled = true;
+    cancelController.abort();
+  };
+
+  const cancelPoll = setInterval(() => {
+    if (options.isCancelled()) markCancelled();
+  }, CANCEL_POLL_INTERVAL_MS);
 
   try {
     await activateKeepAwakeAsync(KEEP_AWAKE_TAG);
@@ -158,7 +173,7 @@ async function runBatch(
   const worker = async (): Promise<void> => {
     for (;;) {
       if (cancelled || options.isCancelled()) {
-        cancelled = true;
+        markCancelled();
         return;
       }
 
@@ -170,10 +185,12 @@ async function runBatch(
       let downloaded = null as Awaited<ReturnType<typeof downloadToCache>> | null;
 
       try {
-        downloaded = await downloadToCache(item);
+        downloaded = await downloadToCache(item, {
+          signal: cancelController.signal,
+        });
 
         if (cancelled || options.isCancelled()) {
-          cancelled = true;
+          markCancelled();
           return;
         }
 
@@ -182,6 +199,13 @@ async function runBatch(
         await runExclusive(() => saveCachedFile(file));
         savedCount += 1;
       } catch (error) {
+        // キャンセルで abort した分は失敗として数えない（利用者が止めたもの）。
+        // finally の discardCached は return しても走るので一時ファイルは片付く。
+        if (cancelled || options.isCancelled()) {
+          markCancelled();
+          return;
+        }
+        // タイムアウトした項目も失敗として数え、残りは続行する。
         console.warn('[saveBatch] item failed', classifyError(error), error);
         failedCount += 1;
       } finally {
@@ -200,7 +224,7 @@ async function runBatch(
       )
     );
   } finally {
-    appStateSub.remove();
+    clearInterval(cancelPoll);
     try {
       deactivateKeepAwake(KEEP_AWAKE_TAG);
     } catch {
@@ -209,19 +233,8 @@ async function runBatch(
   }
 
   if (cancelled) {
-    return {
-      ok: false,
-      savedCount,
-      failedCount,
-      errorCode: 'cancelled',
-      interrupted: wentBackground,
-    };
+    return { ok: false, savedCount, failedCount, errorCode: 'cancelled' };
   }
 
-  return {
-    ok: failedCount === 0,
-    savedCount,
-    failedCount,
-    interrupted: wentBackground,
-  };
+  return { ok: failedCount === 0, savedCount, failedCount };
 }

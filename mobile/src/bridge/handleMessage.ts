@@ -6,6 +6,7 @@ import {
   type InboundMessage,
   type OutboundMessage,
 } from './protocol';
+import { MAX_BATCH_ITEMS } from '../config';
 import { fetchManifest } from '../save/manifest';
 import { saveMany } from '../save/saveBatch';
 import { saveOne } from '../save/saveToLibrary';
@@ -112,6 +113,23 @@ export function createMessageHandler(
       case 'saveImages': {
         if (running.has(message.requestId)) return;
         running.add(message.requestId);
+
+        // 件数上限はマニフェストを引く前に見る。saveMany でも同じ判定をするが、
+        // そこまで進めると 500 枚超のギャラリーで捨てるだけの往復が発生する
+        // （マニフェスト API はサーバー上限ごとに分割して送るため 2 回になる）。
+        if (message.imageIds.length > MAX_BATCH_ITEMS) {
+          send({
+            v: BRIDGE_VERSION,
+            type: 'saveResult',
+            requestId: message.requestId,
+            ok: false,
+            savedCount: 0,
+            failedCount: message.imageIds.length,
+            errorCode: 'too_many_items',
+          });
+          finish(message.requestId);
+          return;
+        }
 
         const manifest = await fetchManifest(message.token, message.imageIds);
         if (!manifest.ok) {

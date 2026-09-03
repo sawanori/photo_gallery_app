@@ -84,6 +84,13 @@ function extractFilename(storagePath) {
   return storagePath.split('/').pop();
 }
 
+/**
+ * 注意: サムネイルは元画像の `userId`（アップロードした管理者の uid）配下に置く。
+ * storage.rules の create は `isAdmin() && request.auth.uid == userId` なので、
+ * **元のアップロード者と同じ管理者アカウントでログインしないと拒否される**。
+ * 別の管理者で走らせる場合は、そのアカウントで上げ直すか、
+ * ルールのパス条件を緩める判断が要る。
+ */
 async function generateAndUpload(imageBuffer, userId, filename) {
   const thumbnailData = { small: '', medium: '' };
   const thumbnailPaths = [];

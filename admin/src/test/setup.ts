@@ -1,5 +1,9 @@
 import { vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
+// アプリは src/app/layout.tsx でこれを読み込んでいる。テストでも同じにしないと
+// antd の静的 message / notification が React 19 で描画されず、
+// 「画面に出ているはずのもの」を確かめられない。
+import '@ant-design/v5-patch-for-react-19';
 import React from 'react';
 
 // --- Ant Design が jsdom で必要とするポリフィル ---

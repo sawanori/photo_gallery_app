@@ -51,7 +51,6 @@ test('Check images on mobile viewport', async ({ page }) => {
 
   for (let i = 0; i < imageCount; i++) {
     const img = images.nth(i);
-    const src = await img.getAttribute('src') || '';
     const alt = await img.getAttribute('alt') || '';
     const naturalWidth = await img.evaluate((el: HTMLImageElement) => el.naturalWidth);
     const complete = await img.evaluate((el: HTMLImageElement) => el.complete);

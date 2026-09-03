@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { ConfigProvider, App } from 'antd';
@@ -259,6 +259,93 @@ describe('DashboardPage（プロジェクト一覧）', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/期限切れプロジェクトを削除しますか/)).toBeInTheDocument();
+      });
+    });
+  });
+
+  /**
+   * 「プロジェクトがありません」は削除済み・0件を意味する。読み込み失敗を
+   * それと同じ表示にすると、通信が切れているだけなのに「消えた」と読める。
+   */
+  describe('読み込み失敗', () => {
+    it('取得に失敗したら Alert と再試行ボタンを出し、空状態は出さない', async () => {
+      mockGetProjects.mockRejectedValue(new Error('network'));
+
+      renderWithProviders(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('プロジェクトの読み込みに失敗しました')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /再試行/ })).toBeInTheDocument();
+      expect(screen.queryByText(/プロジェクトがありません/)).not.toBeInTheDocument();
+    });
+
+    it('再試行ボタンで取り直す', async () => {
+      mockGetProjects.mockRejectedValueOnce(new Error('network'));
+
+      const user = userEvent.setup();
+      renderWithProviders(<DashboardPage />);
+
+      const retry = await screen.findByRole('button', { name: /再試行/ });
+      mockGetProjects.mockResolvedValue(sampleProjects);
+      await user.click(retry);
+
+      await waitFor(() => {
+        expect(screen.getByText('田中様 結婚式')).toBeInTheDocument();
+      });
+      expect(
+        screen.queryByText('プロジェクトの読み込みに失敗しました')
+      ).not.toBeInTheDocument();
+    });
+
+    it('0件のときは空状態を出す（失敗とは別扱い）', async () => {
+      mockGetProjects.mockResolvedValue([]);
+
+      renderWithProviders(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/プロジェクトがありません/)).toBeInTheDocument();
+      });
+      expect(
+        screen.queryByText('プロジェクトの読み込みに失敗しました')
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  // Storage の削除に失敗した画像はドキュメントを残している。
+  // 「削除しました」で終わらせると、課金され続けるファイルに誰も気付かない。
+  describe('Storage 削除の失敗', () => {
+    it('消し残しがあれば件数を知らせる', async () => {
+      mockGetProjects.mockResolvedValue([sampleProjects[0]]);
+      mockGetProjectExpiryInfo.mockReturnValue(null);
+      mockDeleteProject.mockResolvedValue({
+        deletedCount: 4,
+        failed: [
+          { imageId: 'image-1', paths: ['images/admin-uid/1'] },
+          { imageId: 'image-2', paths: ['images/admin-uid/2'] },
+        ],
+      });
+
+      const user = userEvent.setup();
+      renderWithProviders(<DashboardPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('田中様 結婚式')).toBeInTheDocument();
+      });
+
+      const deleteButton = screen
+        .getAllByRole('button')
+        .find((b) => b.querySelector('.anticon-delete'));
+      await user.click(deleteButton as HTMLElement);
+
+      // antd は日本語2文字のラベルに空白を挟む（「削 除」）
+      const dialog = await screen.findByRole('dialog');
+      await user.click(within(dialog).getByRole('button', { name: /削\s*除/ }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Storage の削除に失敗した画像が 2 件あります。再実行してください。')
+        ).toBeInTheDocument();
       });
     });
   });

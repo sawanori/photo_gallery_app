@@ -8,16 +8,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 const getDoc = vi.fn();
-const getDocs = vi.fn();
 
 vi.mock('firebase/firestore', () => ({
-  collection: (...args: unknown[]) => ({ __collection: args }),
   doc: (_db: unknown, path: string, id: string) => ({ __doc: `${path}/${id}` }),
   getDoc: (...args: unknown[]) => getDoc(...args),
-  getDocs: (...args: unknown[]) => getDocs(...args),
-  limit: (n: number) => ({ __limit: n }),
-  query: (...args: unknown[]) => ({ __query: args }),
-  where: (...args: unknown[]) => ({ __where: args }),
 }));
 
 import { filenameFor, resolveManifest } from './manifestService';
@@ -42,7 +36,7 @@ function invitationDoc(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function imageDoc(id: string) {
+function imageDoc(id: string, overrides: Record<string, unknown> = {}) {
   return {
     exists: () => true,
     id,
@@ -50,6 +44,7 @@ function imageDoc(id: string) {
       url: `https://firebasestorage.googleapis.com/v0/b/photo-gallery-app-20251204.firebasestorage.app/o/images%2Fuid%2F${id}.jpg?alt=media`,
       storagePath: `images/uid/${id}.jpg`,
       title: `DSC_${id}`,
+      ...overrides,
     }),
   };
 }
@@ -58,7 +53,6 @@ const missingDoc = { exists: () => false, id: 'x', data: () => undefined };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getDocs.mockResolvedValue({ empty: true, docs: [] });
 });
 
 describe('resolveManifest / 入力検証', () => {
@@ -148,13 +142,14 @@ describe('resolveManifest / 認可', () => {
     });
   });
 
-  it('ドキュメントIDで見つからなければ token フィールドで引き直す', async () => {
-    getDoc.mockResolvedValueOnce(missingDoc).mockResolvedValueOnce(imageDoc('img1'));
-    getDocs.mockResolvedValue({ empty: false, docs: [invitationDoc()] });
+  // `where('token','==')` のフォールバックは invitations の list が管理者限定である以上
+  // 必ず permission-denied になる。復活させると list の許可が要り、匿名の第三者が
+  // 招待を全件列挙できる状態に戻る。
+  it('ドキュメントIDで見つからなければ即 404（コレクションクエリに落ちない）', async () => {
+    getDoc.mockResolvedValueOnce(missingDoc);
 
-    const result = await resolveManifest(db, 'tok', ['img1'], NOW);
-    expect(result.ok).toBe(true);
-    expect(getDocs).toHaveBeenCalledTimes(1);
+    expect(await resolveManifest(db, 'tok', ['img1'], NOW)).toMatchObject({ status: 404 });
+    expect(getDoc).toHaveBeenCalledTimes(1);
   });
 
   it('画像ドキュメントが消えていても他は返す', async () => {
@@ -176,6 +171,50 @@ describe('resolveManifest / 認可', () => {
     const result = await resolveManifest(db, 'tok', ['img1', 'img1'], NOW);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.items).toHaveLength(1);
+  });
+});
+
+/**
+ * 画像のバイト数。
+ *
+ * ネイティブ側は合計サイズで空き容量を判定する。ここが無いと 1 枚 5MB と推定するしかなく、
+ * 410 枚のギャラリーで推定合計が 2GB を超えて拒否されていた（監査 F2）。
+ * 旧いドキュメントには `size` が無いので、**あるときだけ**載せる。
+ */
+describe('resolveManifest / bytes', () => {
+  it('画像ドキュメントに size があれば bytes として載せる', async () => {
+    getDoc
+      .mockResolvedValueOnce(invitationDoc())
+      .mockResolvedValueOnce(imageDoc('img1', { size: 4_193_120 }));
+
+    const result = await resolveManifest(db, 'tok', ['img1'], NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.items[0].bytes).toBe(4_193_120);
+  });
+
+  it('size が無ければ bytes を付けない', async () => {
+    getDoc
+      .mockResolvedValueOnce(invitationDoc())
+      .mockResolvedValueOnce(imageDoc('img1'));
+
+    const result = await resolveManifest(db, 'tok', ['img1'], NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.items[0]).not.toHaveProperty('bytes');
+  });
+
+  it('size が数値でない・0 以下なら bytes を付けない', async () => {
+    getDoc
+      .mockResolvedValueOnce(invitationDoc())
+      .mockResolvedValueOnce(imageDoc('img1', { size: '4MB' }))
+      .mockResolvedValueOnce(imageDoc('img2', { size: 0 }));
+
+    const result = await resolveManifest(db, 'tok', ['img1', 'img2'], NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.items[0]).not.toHaveProperty('bytes');
+    expect(result.items[1]).not.toHaveProperty('bytes');
   });
 });
 

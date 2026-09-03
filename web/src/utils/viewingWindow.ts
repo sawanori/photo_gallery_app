@@ -52,3 +52,23 @@ export function isWithinViewingWindow(
 ): boolean {
   return now <= viewingDeadline(createdAt, viewingDays);
 }
+
+/**
+ * クライアントが実際に見られなくなる時刻。
+ *
+ * 閲覧期限（作成から N 日）と `expiresAt` の**早いほう**。
+ * 片方だけ見せると必ず誤解を生む。ヘッダーは閲覧期限だけを出していたため、
+ * `expiresAt` のほうが先に来る招待では**実際より遅い日付**を表示していた（監査 F6）。
+ *
+ * `admin/src/utils/viewingWindow.ts` に同じ関数がある。**片方だけ変えないこと。**
+ */
+export function effectiveDeadline(
+  createdAt: Date | undefined,
+  viewingDays: unknown,
+  expiresAt: Date | undefined
+): Date | null {
+  const viewing = createdAt ? viewingDeadline(createdAt, viewingDays) : null;
+  if (!viewing) return expiresAt ?? null;
+  if (!expiresAt) return viewing;
+  return viewing < expiresAt ? viewing : expiresAt;
+}
