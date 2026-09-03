@@ -6,12 +6,22 @@ import {
 } from '../config';
 import type { ValidatedItem } from './validate';
 
-/** 保存に必要なバイト数を見積もる。サイズ不明の画像は既定値で数える。 */
+/**
+ * 保存に必要なバイト数を見積もる。サイズ不明の画像は既定値で数える。
+ *
+ * これは**空き容量の判定にだけ**使う。推定値混じりの合計を件数上限の代わりにすると、
+ * サーバーがサイズを返さない環境で実際には収まる枚数まで拒否してしまう。
+ */
 export function estimateRequiredBytes(items: ValidatedItem[]): number {
   return items.reduce(
     (sum, item) => sum + (item.bytes ?? ESTIMATED_BYTES_PER_IMAGE),
     0
   );
+}
+
+/** サーバーが実サイズを返した項目だけの合計。推定は含めない。 */
+export function knownBytesTotal(items: ValidatedItem[]): number {
+  return items.reduce((sum, item) => sum + (item.bytes ?? 0), 0);
 }
 
 export interface StorageCheck {

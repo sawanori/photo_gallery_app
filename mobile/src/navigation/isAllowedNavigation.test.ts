@@ -69,15 +69,26 @@ describe('isAllowedNavigation', () => {
 });
 
 describe('isOpenableExternally', () => {
-  it('http と https のみ外部ブラウザへ回す', () => {
+  it('http と https を外部ブラウザへ回す', () => {
     expect(isOpenableExternally('https://line.me/x')).toBe(true);
     expect(isOpenableExternally('http://example.com')).toBe(true);
+  });
+
+  // プライバシーポリシーの問い合わせ先。無反応だと審査で問題になる。
+  it('mailto と tel を OS のアプリへ回す', () => {
+    expect(isOpenableExternally('mailto:info@non-turn.com')).toBe(true);
+    expect(
+      isOpenableExternally('mailto:info@non-turn.com?subject=%E3%81%8A%E5%95%8F%E5%90%88%E3%81%9B')
+    ).toBe(true);
+    expect(isOpenableExternally('tel:+81-3-0000-0000')).toBe(true);
   });
 
   it('危険なスキームは外部にも回さない', () => {
     expect(isOpenableExternally('javascript:alert(1)')).toBe(false);
     expect(isOpenableExternally('data:text/html,x')).toBe(false);
     expect(isOpenableExternally('intent://x')).toBe(false);
+    expect(isOpenableExternally('file:///etc/passwd')).toBe(false);
+    expect(isOpenableExternally('blob:https://example.com/x')).toBe(false);
     expect(isOpenableExternally('not a url')).toBe(false);
   });
 });
@@ -111,8 +122,19 @@ describe('decideNavigation', () => {
     expect(decideNavigation(top('https://example.com/'), ORIGIN)).toBe('external');
   });
 
-  it('http/https 以外は最上位でも開かない', () => {
+  it('危険なスキームは最上位でも開かない', () => {
     expect(decideNavigation(top('javascript:alert(1)'), ORIGIN)).toBe('block');
     expect(decideNavigation(top('intent://evil'), ORIGIN)).toBe('block');
+    expect(decideNavigation(top('file:///etc/passwd'), ORIGIN)).toBe('block');
+  });
+
+  it('最上位の mailto / tel は外部アプリへ回す', () => {
+    expect(decideNavigation(top('mailto:info@non-turn.com'), ORIGIN)).toBe('external');
+    expect(decideNavigation(top('tel:0312345678'), ORIGIN)).toBe('external');
+  });
+
+  // iframe から mailto を投げてメールアプリを勝手に開かせる経路を塞ぐ。
+  it('iframe からの mailto は外部へ回さない', () => {
+    expect(decideNavigation(frame('mailto:evil@example.com'), ORIGIN)).toBe('block');
   });
 });

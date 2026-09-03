@@ -138,18 +138,7 @@ export interface SaveResultMessage {
   requiredBytes?: number;
 }
 
-/** 従量課金通信での確認要求。web が続行を選んだら同じ requestId で再送する。 */
-export interface MeteredConfirmMessage {
-  v: number;
-  type: 'meteredConfirm';
-  requestId: string;
-  estimatedBytes: number;
-}
-
-export type OutboundMessage =
-  | SaveProgressMessage
-  | SaveResultMessage
-  | MeteredConfirmMessage;
+export type OutboundMessage = SaveProgressMessage | SaveResultMessage;
 
 /** web から届いた文字列を検証してメッセージに変換する。不正なら null。 */
 export function parseInboundMessage(

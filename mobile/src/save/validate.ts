@@ -28,6 +28,9 @@ const fail: ValidationFailure = { ok: false, reason: 'invalid_url' };
 /** NUL・制御文字・パス区切り。ファイル名に含まれていたら拒否する。 */
 const UNSAFE_NAME_CHARS = new RegExp('[\\u0000-\\u001f\\u007f/\\\\]');
 
+/** ファイル名に許すコードポイント数。 */
+const MAX_BASE_NAME_POINTS = 120;
+
 /** URL のオリジンが許可リストに完全一致するか。 */
 function isAllowedOrigin(parsed: URL): boolean {
   return ALLOWED_IMAGE_ORIGINS.includes(parsed.origin);
@@ -45,8 +48,13 @@ function sanitizeBaseName(raw: string): string | null {
   if (raw === '.' || raw.startsWith('..')) return null;
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
-  // 長すぎる名前はファイルシステムで問題になるため末尾を残して切る
-  return trimmed.length > 120 ? trimmed.slice(trimmed.length - 120) : trimmed;
+  // 長すぎる名前はファイルシステムで問題になるため末尾（拡張子側）を残して切る。
+  // slice は UTF-16 単位で切るためサロゲートペアを割り、絵文字などが
+  // 壊れた半分だけ残る。Array.from はコードポイント単位に分解する。
+  const points = Array.from(trimmed);
+  return points.length > MAX_BASE_NAME_POINTS
+    ? points.slice(points.length - MAX_BASE_NAME_POINTS).join('')
+    : trimmed;
 }
 
 function extensionOf(name: string): string | null {
