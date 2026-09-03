@@ -74,8 +74,8 @@ export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props
    *
    * 既定では戻るキーでアプリごと終了する。ライトボックスや /liked から
    * 一覧へ戻れないと、利用者にはアプリが落ちたようにしか見えない。
-   * iOS には物理的な戻るキーが無く（スワイプは allowsBackForwardNavigationGestures が
-   * 担当する）、BackHandler も Android 専用なので登録しない。
+   * iOS には物理的な戻るキーが無く、BackHandler も Android 専用なので登録しない。
+   * iOS の戻るは画面内の導線（お気に入り一覧のヘッダーにある戻るボタン）で完結する。
    */
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -152,7 +152,15 @@ export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props
           onContentProcessDidTerminate={handleRendererGone}
           onRenderProcessGone={handleRendererGone}
           pullToRefreshEnabled
-          allowsBackForwardNavigationGestures
+          /*
+            iOS の画面端スワイプによる「戻る」は無効にする。
+            ライトボックスは左右スワイプで写真を送るため、前の写真へ戻そうとして
+            左端から払うと、OS の端ジェスチャが先に反応してギャラリー自体から
+            出てしまう。web は履歴を積まないので、戻った先は写真一覧ですらない。
+            画面内の移動はギャラリーとお気に入り一覧の2つだけで、
+            お気に入り一覧のヘッダーには戻るボタンがある。失うものは無い。
+          */
+          allowsBackForwardNavigationGestures={false}
           setSupportMultipleWindows={false}
           javaScriptEnabled
           domStorageEnabled
