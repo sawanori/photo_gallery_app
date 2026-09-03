@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { Image as ImageType } from '@/types';
-import { isAndroid } from '@/utils/device';
 import { useIsNativeShell } from '@/hooks/useIsNativeShell';
 
 interface ShareButtonProps {
@@ -18,16 +17,25 @@ export default function ShareButton({ image, size = 'md' }: ShareButtonProps) {
     e.stopPropagation();
     if (isSharing) return;
 
-    // Web Share API not supported — fall back to download
-    if (!navigator.share) return;
+    if (typeof navigator.canShare !== 'function') return;
 
     setIsSharing(true);
     try {
       const response = await fetch(image.url);
+      if (!response.ok) {
+        throw new Error(`画像を取得できませんでした (${response.status})`);
+      }
       const blob = await response.blob();
       const extension = blob.type.split('/')[1] || 'jpg';
       const filename = `${image.title || image.id}.${extension}`;
       const file = new File([blob], filename, { type: blob.type });
+
+      // share() に渡す直前に、この端末がファイル共有を扱えるか確かめる。
+      // canShare が存在しても files に対応しない実装があり、その場合 share() は
+      // 例外を投げる。ここで弾いてダウンロードボタンに任せる。
+      if (!navigator.canShare({ files: [file] })) {
+        throw new Error('この端末は画像の共有に対応していません');
+      }
 
       await navigator.share({
         files: [file],
@@ -42,11 +50,15 @@ export default function ShareButton({ image, size = 'md' }: ShareButtonProps) {
     }
   };
 
-  // Hide on browsers that don't support sharing files
-  // On Android, DownloadButton opens image in new tab, so share is redundant
   // ネイティブシェル内では保存ボタンが主導線になるため共有は重複する
   if (isNative) return null;
-  if (typeof navigator !== 'undefined' && (!navigator.share || isAndroid())) {
+  // ファイル共有に対応しないブラウザでは出さない。判定に navigator.share ではなく
+  // canShare を使うのは、share があっても files を扱えない実装があるため。
+  //
+  // 以前は Android を一律で除外していた（ダウンロードボタンと重複するという理由）。
+  // だが LINE などのアプリへ「画像そのもの」を渡せるのはこの共有シートだけで、
+  // Android Chrome はファイル共有に対応している。重複ではなく別の導線なので出す。
+  if (typeof navigator !== 'undefined' && typeof navigator.canShare !== 'function') {
     return null;
   }
 

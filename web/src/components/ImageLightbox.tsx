@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import LikeButton from './LikeButton';
 import DownloadButton from './DownloadButton';
 import ShareButton from './ShareButton';
-import LineImageShareButton from './LineImageShareButton';
 import { ImageWithLikeStatus } from '@/hooks/useGalleryImages';
 import { optimizedImageUrl } from '@/utils/optimizedImage';
 
@@ -265,7 +264,6 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
           </div>
           <div className="flex items-center gap-3">
             <LikeButton imageId={image.id} isLiked={image.isLiked} />
-            <LineImageShareButton image={image} />
             <ShareButton image={image} />
             <DownloadButton image={image} />
           </div>
