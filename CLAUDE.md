@@ -83,6 +83,23 @@ firebase deploy --only firestore:rules,storage:rules,firestore:indexes
 Rules and indexes are the **only** things deployed to Firebase. There is no `hosting` target —
 do not run `firebase deploy` without `--only`.
 
+**`storage.rules` reads Firestore cross-service, and that needs an IAM role in production.** The
+admin check calls `firestore.get()` on `users/{uid}`, which only works if the Cloud Storage service
+agent holds `roles/firebaserules.firestoreServiceAgent`. Without it every admin upload fails with
+`storage/unauthorized`. The emulators have no IAM layer, so `rules-tests` passes either way — a
+green test run is **not** evidence that production works. `firebase deploy` normally offers to grant
+the role, but skips the prompt silently in a non-TTY shell (CI, or an agent running the command),
+which is how production upload broke on 2026-09-03. Grant it by hand and verify:
+```bash
+gcloud projects add-iam-policy-binding photo-gallery-app-20251204 \
+  --member=serviceAccount:service-270044733802@gcp-sa-firebasestorage.iam.gserviceaccount.com \
+  --role=roles/firebaserules.firestoreServiceAgent
+gcloud projects get-iam-policy photo-gallery-app-20251204 --flatten="bindings[].members" \
+  --filter="bindings.role:roles/firebaserules.firestoreServiceAgent" --format="value(bindings.members)"
+```
+IAM changes are eventually consistent, usually within about two minutes. After any rules change,
+verify against production as a real admin rather than trusting the emulator run.
+
 Storage CORS (needed by the bulk-ZIP download and LINE sharing, which `fetch()` the image URLs
 from the browser). `cors.json` lives at the repo root; apply it with:
 ```bash

@@ -17,6 +17,23 @@ service firebase.storage {
      *
      * 制約: 参照できるのは既定データベースのみ、1 回の評価につき最大 2 ドキュメント。
      * ここでは 1 ドキュメントしか読まない。
+     *
+     * **本番では IAM の付与が必須。** クロスサービス参照は、Storage の
+     * サービスエージェント service-<プロジェクト番号>@gcp-sa-firebasestorage
+     * .iam.gserviceaccount.com が roles/firebaserules.firestoreServiceAgent を
+     * 持っていないと評価時の Firestore 読み取りに失敗し、この関数は常に false に
+     * なる（= 管理者のアップロードが全て storage/unauthorized で落ちる）。
+     *
+     * エミュレータには IAM 層が無いので rules-tests は付与の有無に関わらず通る。
+     * **テストが通ったことを本番で動く根拠にしないこと。**
+     *
+     * firebase deploy は storage.rules に firestore.get を見つけると本来
+     * 付与するか尋ねてくるが、非対話シェル（CI・エージェント経由）では無言で
+     * スキップする。2026-09-03 にこれで本番のアップロードが停止した。
+     * 手で付与する:
+     *   gcloud projects add-iam-policy-binding <プロジェクトID> \
+     *     --member=serviceAccount:service-<番号>@gcp-sa-firebasestorage.iam.gserviceaccount.com \
+     *     --role=roles/firebaserules.firestoreServiceAgent
      */
     function isAdmin() {
       return isAuthenticated() &&
