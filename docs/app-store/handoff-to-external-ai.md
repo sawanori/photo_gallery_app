@@ -646,7 +646,9 @@ photography studio. There is no sign-up: access is granted by an invitation
 link that the photographer sends to each client.
 
 HOW TO REVIEW
-1. Launch the app. The "Open your gallery" screen appears.
+1. Launch the app for the first time. The "Open your gallery" screen appears.
+   (The app remembers the gallery you open, so on later launches it goes
+   straight to that gallery. To return to this screen, reinstall the app.)
 2. Paste the following invitation link into the input field and tap "Open":
 
    https://gallery.non-turn.com/gallery/<DEMO_TOKEN>
