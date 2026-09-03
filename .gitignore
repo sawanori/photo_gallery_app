@@ -25,3 +25,9 @@ playwright-report/
 # Claude Code のローカル作業ファイル（エージェント定義など）。
 # このプロジェクトのソースではないため追跡しない。
 .claude/
+
+# App Store 申請用に生成した実ファイル。**招待トークンが入っているので追跡しない。**
+# このリポジトリは公開されており、トークンはギャラリーを開く鍵そのもの。
+# 生成し直す手順は docs/app-store/handoff-to-external-ai.md の §6.7 にある。
+docs/app-store/申請手順書.txt
+docs/app-store/審査メモ.txt
