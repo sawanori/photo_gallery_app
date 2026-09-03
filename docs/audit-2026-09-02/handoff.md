@@ -138,11 +138,25 @@ git status --short
 - 旧ドキュメントに `accessCount` / `likeCount` が無い場合、±1 のルールで拒否される。本番データは未確認。
 - `findings.md` §4 の機能向上（I2 ストリーミング ZIP、I3 スワイプ、I4 高さ考慮 masonry、I13 セッション ID、I14 署名 URL など）は未着手。
 
-### ユーザーの判断待ち（再掲）
+### 適用状況（2026-09-03 更新）
 
-1. 変更内容の確認と commit。
-2. `firebase deploy --only firestore:rules,storage:rules,firestore:indexes` の実行と、デプロイ後の管理画面からのアップロード 1 枚確認（Storage `create` が管理者限定になる）。
-3. Vercel admin プロジェクトの `NEXT_PUBLIC_WEB_URL` 設定確認。
-4. mobile の EAS 再ビルド（`expo-crypto` 追加）と実機確認（Android 戻るキー、保存中キャンセル、`mailto:`）。
-5. `cors.json` の適用状況確認。
-6. JDK 21 の導入（firebase-tools 15 でエミュレータを回す場合）。
+**完了済み**
+
+1. **commit と master への取り込み**: ブランチ `audit-2026-09-02-fixes` に 5 コミット、`--no-ff` で master へマージし push 済み（`19e3a5e..4d7c600`）。
+2. **ルールのデプロイ**: `firebase deploy --only firestore:rules,storage:rules` を実行。公開リポジトリへ push する**前**に実行し、穴を塞いでから所見を公開した。
+   デプロイ後、匿名認証で以下 7 つを本番に対して実際に試し、すべて拒否されることを確認した（Firestore・Storage には何も書かれていない）。
+   Storage への匿名アップロード / `users` の自己作成 / `users` を `role: 'admin'` で自己作成 / `invitations` の列挙 / `users` の列挙 / `images` の列挙 / 存在しない招待でのセッション作成。
+3. **インデックスのデプロイ**: `firebase deploy --only firestore:indexes --force` で未使用 5 本を削除し、本番は 4 本になった。
+   静的解析だけに頼らず、管理者としてログインしてコード上の全 13 クエリを**削除前と削除後の両方**で本番に実行し、どちらも全件成功することを確認した
+   （`images` の projectId+orderBy は 143 件、`invitations` の projectId+isActive+orderBy は 1 件など、実データが返る条件で確認）。
+   削除した 5 本が未使用である根拠: `likes` と `sessions` のクエリはいずれも `orderBy` を持たない単一項目の等値条件で自動インデックスに収まり、
+   `invitations` の `isActive` 単独クエリも同様。`likes.userId` は書き込むだけでクエリに使われていない。
+
+**残り**
+
+4. **管理画面からのアップロード 1 枚確認**。Storage の `create` が管理者限定になったため。管理者の資格情報が要るので未実施。
+5. **Vercel の再デプロイ**（web と admin）。コード修正は再デプロイまで本番に反映されない。
+6. **Vercel admin プロジェクトの `NEXT_PUBLIC_WEB_URL` 設定確認**。ローカルの `admin/.env.local` には設定されているが、Vercel 側は未確認。
+7. **mobile の EAS 再ビルド**（`expo-crypto` 追加）と実機確認（Android 戻るキー、保存中キャンセル、`mailto:`）。
+8. **`cors.json` の適用状況確認**。
+9. **JDK 21 の導入**（firebase-tools 15 でエミュレータを回す場合。現状は `rules-tests` が 14 系を pin）。
