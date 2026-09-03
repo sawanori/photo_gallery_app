@@ -21,6 +21,14 @@ interface ImageLightboxProps {
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
+/**
+ * スワイプと認めるまでの横移動量（px）。
+ *
+ * これより小さいものはタップの手ぶれとみなす。小さくしすぎると、
+ * 拡大表示を閉じようとしたタップで写真が勝手に送られる。
+ */
+const SWIPE_THRESHOLD_PX = 50;
+
 export default function ImageLightbox({ images, currentIndex, onClose, onNavigate, totalCount, hasMore, loadMore }: ImageLightboxProps) {
   const image = images[currentIndex];
 
@@ -108,6 +116,63 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
     if (currentIndex > 0) onNavigate(currentIndex - 1);
   }, [currentIndex, onNavigate]);
 
+  /**
+   * 左右スワイプで前後の写真へ移る。
+   *
+   * 納品ギャラリーを見るのはほぼ携帯で、矢印ボタンだけでは操作が重い。
+   * ポインタイベントで書いているのでタッチでもマウスでも同じ経路を通る。
+   *
+   * 判定は「離した位置」との差だけを見る。途中の追従はしない。
+   * 端（最初・最後）では goPrev / goNext が何もしないので、そのまま無反応になる。
+   */
+  const swipeStart = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    // 2本目以降の指が置かれたら、進行中のスワイプを捨てる。
+    // ピンチで拡大しようとしただけなのに、どちらの指が先に離れるかで
+    // 写真が送られたり送られなかったりする（レビューで再現を確認）。
+    if (!e.isPrimary) {
+      swipeStart.current = null;
+      return;
+    }
+    // ボタンの上から始まった操作はスワイプにしない。
+    // お気に入りや保存を押すつもりの指が少し流れるのはふつうにあり、
+    // それで写真が送られると誤操作にしか見えない。
+    // アイコンの svg から押されることが多いので closest で親まで辿る。
+    if ((e.target as Element).closest('button')) {
+      swipeStart.current = null;
+      return;
+    }
+    swipeStart.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+  }, []);
+
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const start = swipeStart.current;
+      swipeStart.current = null;
+      if (!start || start.pointerId !== e.pointerId) return;
+
+      // ブラウザのピンチで拡大している間は、指の動きは写真の中を見て回る操作。
+      // ここで送ると拡大したまま別の写真へ飛んでしまう。
+      if ((window.visualViewport?.scale ?? 1) > 1) return;
+
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+
+      // 縦のほうが大きい動きはスワイプとみなさない。斜めに滑った指で送らないため。
+      if (Math.abs(dx) < SWIPE_THRESHOLD_PX || Math.abs(dx) <= Math.abs(dy)) return;
+
+      // 左へ払ったら次、右へ払ったら前。紙をめくる向きに合わせる。
+      if (dx < 0) goNext();
+      else goPrev();
+    },
+    [goNext, goPrev]
+  );
+
+  const handlePointerCancel = useCallback(() => {
+    swipeStart.current = null;
+  }, []);
+
   useEffect(() => {
     // Tab をダイアログの中で回す。外へ出すと背後のグリッドを操作できてしまう。
     const trapTab = (e: KeyboardEvent) => {
@@ -160,6 +225,12 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
         className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
         role="dialog"
         aria-modal="true"
+        // 読み込み中でも前の写真へは戻れる。ここだけ無反応だと
+        // 「スワイプが効かなくなった」と受け取られる。
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
+        style={{ touchAction: 'pan-y pinch-zoom' }}
       >
         <button
           ref={closeRef}
@@ -185,6 +256,17 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
       className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
       role="dialog"
       aria-modal="true"
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
+      // 横方向のジェスチャはこちらで扱うとブラウザに宣言する。
+      // pinch-zoom を残すのは、写真を拡大して細部を見るのは納品ギャラリーの
+      // 基本操作だから。pan-y だけにすると、これまでできていたピンチ拡大が
+      // 黙って効かなくなる。
+      //
+      // なお端末の画面端からの戻るジェスチャ（iOS の edge swipe、Android の
+      // 戻る操作）は OS 側の認識器で、touch-action では抑えられない。
+      style={{ touchAction: 'pan-y pinch-zoom' }}
     >
       {/* Close button */}
       <button
@@ -245,6 +327,9 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
           key={image.url}
           src={optimizedImageUrl(image.url, 1920, 80)}
           alt={image.title || ''}
+          // 画像のネイティブドラッグを止める。放置すると、マウスで写真を
+          // 払ったときだけ pointercancel になり、背景を払ったときと挙動が食い違う。
+          draggable={false}
           className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading || loadError ? 'opacity-0' : 'opacity-100'}`}
           onLoad={handleImageLoad}
           onError={handleImageError}

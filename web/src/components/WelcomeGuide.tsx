@@ -15,7 +15,7 @@ export default function WelcomeGuide() {
     {
       num: 1,
       title: '閲覧',
-      desc: '写真をタップして拡大表示。左右の矢印ボタンで切り替えできます。',
+      desc: '写真をタップして拡大表示。左右にスワイプ、または矢印ボタンで切り替えできます。',
     },
     {
       num: 2,
