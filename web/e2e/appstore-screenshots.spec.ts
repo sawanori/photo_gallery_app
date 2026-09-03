@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { mkdirSync } from 'fs';
 
 /**
@@ -103,17 +103,41 @@ test('App Store 用のスクリーンショットを撮る', async ({ page }) =>
     await page.waitForTimeout(700);
   }
   await closeDialogs(page);
+  await page.mouse.move(0, 0); // ハートを押した直後のカードが浮いたまま写らないように
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${OUT_DIR}/02-favourites.png` });
   console.log(`02-favourites.png（${Math.min(3, heartCount)} 枚にハートを付けた）`);
 
   // --- 3. 写真を1枚開いた状態 ---
+  //
+  // **拡大画像の読み込み完了を待つ。時間で待たない。**
+  // 以前は click のあと 2.5 秒待つだけだった。ライトボックスは 1920px の
+  // 画像を取り直すため間に合わないことがあり、スピナーと「読み込み中」が
+  // 出たままの暗い画面が撮れて、そのまま App Store に出しかけた。
   await closeDialogs(page);
   const firstImage = page.locator('img').first();
   await firstImage.click();
-  await page.waitForTimeout(2500);
+
+  const dialog = page.getByRole('dialog');
+  await dialog.waitFor({ state: 'visible', timeout: 30_000 });
+  // 「読み込み中」も「読み込めませんでした」も消えていること。
+  await expect(dialog).not.toContainText('読み込み中', { timeout: 60_000 });
+  await expect(dialog).not.toContainText('読み込めませんでした', { timeout: 5_000 });
+  // 実際に画素が来ていること。src が付いただけの img を弾く。
+  await page.waitForFunction(
+    () => {
+      const d = document.querySelector('[role="dialog"]');
+      const img = d?.querySelector('img');
+      return !!img && img.naturalWidth > 0 && getComputedStyle(img).opacity === '1';
+    },
+    { timeout: 60_000 }
+  );
+  // カーソルを画面外へ逃がす。カードの上に置いたままだと、そのカードの
+  // お気に入り／保存ボタンが暗転した背景越しに透けて、閉じるボタンと重なる。
+  await page.mouse.move(0, 0);
+  await page.waitForTimeout(700); // フェードインとホバー解除を終わらせる
   await page.screenshot({ path: `${OUT_DIR}/03-lightbox.png` });
-  console.log('03-lightbox.png');
+  console.log('03-lightbox.png（拡大画像の読み込み完了を確認済み）');
 
   await closeDialogs(page);
 
