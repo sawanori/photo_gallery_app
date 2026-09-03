@@ -152,11 +152,32 @@ git status --short
    削除した 5 本が未使用である根拠: `likes` と `sessions` のクエリはいずれも `orderBy` を持たない単一項目の等値条件で自動インデックスに収まり、
    `invitations` の `isActive` 単独クエリも同様。`likes.userId` は書き込むだけでクエリに使われていない。
 
-**残り**
+4. **管理者アップロードの本番確認と、その過程で見つかった障害の修復**。
+   ルールのデプロイ直後、**管理画面からのアップロードは本番で全て失敗していた**。Storage ルールの
+   `firestore.get()`（クロスサービス参照）は、Storage のサービスエージェントが
+   `roles/firebaserules.firestoreServiceAgent` を持っていないと評価時の読み取りに失敗し、
+   `isAdmin()` が常に false になる。`firebase deploy` は `firestore.get` を検出すると本来
+   ロール付与を尋ねるが、**非 TTY のシェルでは無言でスキップする**（`rulesDeploy.js` の
+   `nonInteractive` 分岐）。エージェント経由で実行したためロールが付かなかった。
+   エミュレータには IAM 層が無く `rules-tests` は 58 件通っていたので、テストでは検出できない。
+   `gcloud projects add-iam-policy-binding` で付与し、約 2 分の伝播後に復旧。
+   復旧後、実際の管理者アカウントで本番に対し、原本アップロード・`getDownloadURL`・
+   サムネイルアップロード・images ドキュメントの作成と更新・3 件の削除まで通ることを確認した。
+   併せて、匿名 7 パターンと**公開サインアップで作った非管理者アカウント**からのアップロードが
+   拒否されることも確認済み（このプロジェクトは公開サインアップが有効なので、
+   `sign_in_provider == 'password'` は管理者判定に使えない）。
+   経緯と再発防止は `storage.rules` と `CLAUDE.md` に記載した。
+5. **Vercel の再デプロイ**: 不要だった。web・admin とも GitHub 連携済みで、master への push で
+   Production デプロイが自動実行されていた。両方とも最新コミット `ebc69d2` で READY。
+   web は機能で確認（`/api/image` が他バケットの URL を 400 で拒否）、admin は本番の JS チャンクに
+   新コード固有の文字列（MIME 許可リスト、B2・B6 のメッセージ）が含まれることで確認した。
+6. **`NEXT_PUBLIC_WEB_URL`**: 設定済み。admin 本番のバンドルに `gallery.non-turn.com` が
+   埋め込まれていることを確認した。
+   なお `admin/.vercel/project.json` は古く、存在しない Project ID / team ID を指している。
+   正しくは `prj_tUtQiA7QAfBqSWjRyheoJIObilCw` / `team_g0GuhaYdxY6YHAPc5Xr8okrO`（両プロジェクトとも
+   `sawanoris-projects` 配下）。このファイルを信用するとデプロイ先を誤る。
 
-4. **管理画面からのアップロード 1 枚確認**。Storage の `create` が管理者限定になったため。管理者の資格情報が要るので未実施。
-5. **Vercel の再デプロイ**（web と admin）。コード修正は再デプロイまで本番に反映されない。
-6. **Vercel admin プロジェクトの `NEXT_PUBLIC_WEB_URL` 設定確認**。ローカルの `admin/.env.local` には設定されているが、Vercel 側は未確認。
+**残り**
 7. **mobile の EAS 再ビルド**（`expo-crypto` 追加）と実機確認（Android 戻るキー、保存中キャンセル、`mailto:`）。
 8. **`cors.json` の適用状況確認**。
 9. **JDK 21 の導入**（firebase-tools 15 でエミュレータを回す場合。現状は `rules-tests` が 14 系を pin）。
