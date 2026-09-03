@@ -85,11 +85,21 @@ test('App Store 用のスクリーンショットを撮る', async ({ page }) =>
 
   // --- 2. お気に入りを付けた状態 ---
   // ハートが付いていることが分かる絵にする。閲覧者の選定機能の説明になる。
-  const hearts = page.getByRole('button', { name: 'いいね' });
-  const heartCount = await hearts.count();
-  for (let i = 0; i < Math.min(3, heartCount); i += 1) {
+  /**
+   * カードのボタンは**カードをホバーするまで押せない**。
+   * 見えていないボタンがタップを受けてしまう問題（監査 F4）を塞いだとき、
+   * `pointer-events-none` を既定にしたため。ボタンだけを狙って click すると
+   * 「見えているのに押せない」状態で待ち続けてタイムアウトする。
+   * 実利用では desktop はホバーで、タッチ端末は常時操作可になる。
+   */
+  const cards = page.locator('[data-image-id]');
+  const cardCount = await cards.count();
+  const heartCount = Math.min(3, cardCount);
+  for (let i = 0; i < heartCount; i += 1) {
     await closeDialogs(page);
-    await hearts.nth(i).click();
+    const card = cards.nth(i);
+    await card.hover();
+    await card.getByRole('button', { name: 'いいね' }).click();
     await page.waitForTimeout(700);
   }
   await closeDialogs(page);
