@@ -475,6 +475,18 @@ const deleteImageFiles = async (
         await deleteObject(ref(storage, path));
         return null;
       } catch (error) {
+        /**
+         * **既に無いのは成功と同じ。**
+         *
+         * ここを失敗として扱うと、Storage のファイルだけが先に失われた画像を
+         * 二度と消せなくなる。呼び出し元は「消せなかったファイルがあるなら
+         * Firestore ドキュメントを残す」ので、管理画面には毎回
+         * 「削除に失敗しました。再実行してください」が出続け、再実行しても
+         * 同じ結果になる。実際に 2026-09-06 にそういうドキュメントが 1 件見つかった。
+         */
+        if ((error as { code?: string })?.code === 'storage/object-not-found') {
+          return null;
+        }
         console.warn(`Failed to delete file from storage: ${path}`, error);
         return path;
       }

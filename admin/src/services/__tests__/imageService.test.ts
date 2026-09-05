@@ -533,6 +533,26 @@ describe('imageService（projectId対応）', () => {
       await expect(imageService.deleteImage('nonexistent')).rejects.toThrow();
     });
 
+    /**
+     * Storage のファイルだけ先に失われた画像を、管理画面から消せるようにする。
+     * ここを失敗として扱うと「削除に失敗しました。再実行してください」が
+     * 永久に出続け、再実行しても同じ結果になる（2026-09-06 に実例を確認）。
+     */
+    it('Storage に既にファイルが無い場合は成功として扱い、ドキュメントを消す', async () => {
+      setupDelete({
+        ...sampleImage,
+        storagePath: 'images/admin-uid/12345-abc',
+        thumbnailPaths: ['thumbnails/admin-uid/12345-abc_384.webp'],
+      });
+      mockStorage.deleteObject.mockRejectedValue(
+        Object.assign(new Error('Object not found'), { code: 'storage/object-not-found' })
+      );
+
+      const result = await imageService.deleteImage('image-1');
+
+      expect(result).toEqual({ deletedCount: 1, failed: [] });
+    });
+
     it('Storage削除に失敗したら画像ドキュメントを残し、失敗を戻り値で返す', async () => {
       // ドキュメントを消すと storagePath を失い、そのファイルは二度と回収できない。
       // 以前は警告を出すだけで消していたため、孤児が溜まり続けていた。
