@@ -124,10 +124,15 @@ test('App Store 用のスクリーンショットを撮る', async ({ page }) =>
   await expect(dialog).not.toContainText('読み込み中', { timeout: 60_000 });
   await expect(dialog).not.toContainText('読み込めませんでした', { timeout: 5_000 });
   // 実際に画素が来ていること。src が付いただけの img を弾く。
+  //
+  // **`img` だけで引かないこと。** ライトボックスは原寸が届くまでのつなぎに
+  // 640px のサムネイルを重ねており、それがダイアログ内の最初の img になる。
+  // つなぎは原寸が出た時点で opacity-0 に落ちるので、そちらを見ていると
+  // この条件は永久に成立しない。`aria-hidden` が付いていないほうが本画像。
   await page.waitForFunction(
     () => {
       const d = document.querySelector('[role="dialog"]');
-      const img = d?.querySelector('img');
+      const img = d?.querySelector<HTMLImageElement>('img:not([aria-hidden])');
       return !!img && img.naturalWidth > 0 && getComputedStyle(img).opacity === '1';
     },
     { timeout: 60_000 }
