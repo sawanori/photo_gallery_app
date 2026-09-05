@@ -5,16 +5,17 @@ import sharp from 'sharp';
 export const runtime = 'nodejs';
 
 /**
- * 東京で実行する。
+ * 実行リージョンは `web/vercel.json` の `regions` で東京（hnd1）にしている。
  *
  * Storage のバケットは ASIA1（東京・大阪の二重リージョン）にある。既定のままだと
  * バージニア（iad1）の関数が日本にある原本を取りに行き、変換して日本へ返す。
  * 本番で実測したところ、CDN が冷えている 1 枚目で 4.5 秒かかっていた
  * （同じ原本を Storage から直接取ると 0.35 秒）。
  *
- * 写真を最初に見るのは納品先のクライアントなので、**全員が必ずこの 1 枚目を踏む。**
+ * **ここに `export const preferredRegion` を書いても効かない。** 2026-09-06 に
+ * 実際にデプロイして確かめたが、応答の `x-vercel-id` は `iad1` のままだった。
+ * Node ランタイムの関数のリージョンは `vercel.json` 側で決まる。
  */
-export const preferredRegion = 'hnd1';
 
 const ALLOWED_WIDTHS = [256, 384, 640, 828, 1080, 1200, 1920];
 const DEFAULT_WIDTH = 640;
