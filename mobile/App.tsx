@@ -98,6 +98,32 @@ export default function App() {
     }
   }, []);
 
+  /**
+   * 利用者が自分の意思でギャラリーを離れたときの処理。
+   *
+   * **直前の招待には戻さない。** 無効通知（handleInvitationInvalid）は
+   * 「開こうとしたものが壊れていた」ので元へ戻すのが親切だが、こちらは
+   * 「別のギャラリーを開きたい」という意思表示なので、入口画面まで戻す。
+   *
+   * 案内も出さない。利用者が自分で押した結果であって、異常ではない。
+   */
+  const handleLeaveGallery = useCallback(async (token: string) => {
+    if (currentToken.current !== token) return;
+
+    currentToken.current = null;
+    previousToken.current = null;
+
+    try {
+      await SecureStore.deleteItemAsync(TOKEN_KEY);
+    } catch {
+      // 端末側の削除に失敗しても、この起動中は入口画面に戻す
+    }
+
+    if (!mounted.current) return;
+    setNotice(null);
+    setSourceUrl(null);
+  }, []);
+
   useEffect(() => {
     mounted.current = true;
 
@@ -143,6 +169,7 @@ export default function App() {
           key={sourceUrl}
           sourceUrl={sourceUrl}
           onInvitationInvalid={handleInvitationInvalid}
+          onLeaveGallery={handleLeaveGallery}
         />
       ) : (
         <OpenByLinkScreen onOpen={applyLink} notice={notice} />

@@ -14,7 +14,8 @@ export type NativeFeature =
   | 'saveImage'
   | 'saveImages'
   | 'cancelSave'
-  | 'openSettings';
+  | 'openSettings'
+  | 'leaveGallery';
 
 export interface NativeCapabilities {
   bridgeVersion: number;
@@ -70,7 +71,8 @@ type OutgoingMessage =
   | { type: 'saveImages'; requestId: string; token: string; imageIds: string[] }
   | { type: 'cancelSave'; requestId: string }
   | { type: 'openSettings' }
-  | { type: 'invitationInvalid'; token: string };
+  | { type: 'invitationInvalid'; token: string }
+  | { type: 'leaveGallery'; token: string };
 
 interface ReactNativeWebViewBridge {
   postMessage: (message: string) => void;
@@ -85,7 +87,15 @@ declare global {
 
 const USER_AGENT_MARKER = 'PhotoGalleryApp/';
 
-/** 注入が届かなかった場合に使う既定値。 */
+/**
+ * 注入が届かなかった場合に使う既定値。
+ *
+ * **`leaveGallery` は入れない。** ここに挙げた機能は「対応しているつもりで
+ * 押させて、駄目ならブラウザの挙動へ落とす」ためのもので、保存にはその逃げ道がある。
+ * ギャラリーを離れる操作にはブラウザ側の代替が無く、注入が届いていなければ
+ * nonce も無いので postToNative は必ず false を返す。ここに足すと、押しても
+ * 何も起きないボタンを見せることになる。
+ */
 const FALLBACK_FEATURES: NativeFeature[] = [
   'saveImage',
   'saveImages',
@@ -242,6 +252,24 @@ export function notifyInvitationInvalid(token: string): void {
     unsubscribe();
     send();
   });
+}
+
+/**
+ * 「このギャラリーから出たい」とネイティブへ伝える。送れたら true。
+ *
+ * アプリは一度開いたギャラリーのトークンを覚えていて、起動のたびにそこへ直行する。
+ * 出口が無いため、別の案件のリンクを持っていない利用者は入口画面へ戻れない。
+ * トークンはキーチェーンにあり、アプリを削除しても消えない。
+ *
+ * **UI は web に置き、ネイティブは記憶の破棄だけを担う。** アプリ側に画面を作ると、
+ * 「UI は web に一本化する」という前提が崩れ、文言の修正に審査が要るようになる。
+ *
+ * ブラウザでは何もせず false を返す。ブラウザには「出る」という状態が無く、
+ * URL を開き直せば済むため、呼び出し側はボタン自体を出さない。
+ */
+export function requestLeaveGallery(token: string): boolean {
+  if (!supportsFeature('leaveGallery')) return false;
+  return postToNative({ type: 'leaveGallery', token });
 }
 
 function extractAppVersion(ua: string): string | null {

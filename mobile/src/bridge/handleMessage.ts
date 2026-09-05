@@ -16,6 +16,9 @@ export type SendToWeb = (message: OutboundMessage) => void;
 /** web が「この招待は確かに無効だ」と通知してきたときに呼ばれる。 */
 export type OnInvitationInvalid = (token: string) => void;
 
+/** 利用者が自分の意思でギャラリーを離れたときに呼ばれる。 */
+export type OnLeaveGallery = (token: string) => void;
+
 /**
  * web から届いたメッセージを捌く。
  *
@@ -25,7 +28,8 @@ export type OnInvitationInvalid = (token: string) => void;
 export function createMessageHandler(
   nonce: string,
   send: SendToWeb,
-  onInvitationInvalid?: OnInvitationInvalid
+  onInvitationInvalid?: OnInvitationInvalid,
+  onLeaveGallery?: OnLeaveGallery
 ) {
   const cancelled = new Set<string>();
   const running = new Set<string>();
@@ -73,6 +77,11 @@ export function createMessageHandler(
         // 判断は上位（App）に委ねる。ここでは伝えるだけ。
         // どのトークンが無効かを渡し、上位が表示中・保存中のものと照合する。
         onInvitationInvalid?.(message.token);
+        return;
+
+      case 'leaveGallery':
+        // 同上。照合と記憶の破棄は上位が行う。
+        onLeaveGallery?.(message.token);
         return;
 
       case 'saveImage': {

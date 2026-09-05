@@ -13,6 +13,7 @@ export const SUPPORTED_FEATURES = [
   'saveImages',
   'cancelSave',
   'openSettings',
+  'leaveGallery',
 ] as const;
 
 export type Feature = (typeof SUPPORTED_FEATURES)[number];
@@ -109,12 +110,32 @@ export interface InvitationInvalidMessage extends BaseInbound {
   token: string;
 }
 
+/**
+ * 利用者が自分の意思でギャラリーを離れるときの通知。
+ *
+ * アプリは一度トークンを覚えると、起動のたびにそのギャラリーへ直行する。
+ * 出口が無いため、別の案件のリンクを持っていない状態では**入口画面に戻れない**。
+ * トークンは iOS のキーチェーンにあり、アプリを削除しても残るので、
+ * 利用者の手には回復手段が無かった。
+ *
+ * UI は web 側に置く（アプリは UI を持たない方針）。ネイティブはこの通知を受けて
+ * 記憶しているトークンを捨て、入口画面へ戻すだけ。
+ *
+ * `token` は表示中の招待と照合するために必須。`invitationInvalid` と同じく、
+ * 「いま開いている招待」以外を消せないようにしている。
+ */
+export interface LeaveGalleryMessage extends BaseInbound {
+  type: 'leaveGallery';
+  token: string;
+}
+
 export type InboundMessage =
   | SaveImageMessage
   | SaveImagesMessage
   | CancelSaveMessage
   | OpenSettingsMessage
-  | InvitationInvalidMessage;
+  | InvitationInvalidMessage
+  | LeaveGalleryMessage;
 
 /* ---------- native → web ---------- */
 
@@ -185,6 +206,10 @@ export function parseInboundMessage(
     case 'invitationInvalid':
       if (typeof msg.token !== 'string' || msg.token.length === 0) return null;
       return msg as unknown as InvitationInvalidMessage;
+
+    case 'leaveGallery':
+      if (typeof msg.token !== 'string' || msg.token.length === 0) return null;
+      return msg as unknown as LeaveGalleryMessage;
 
     default:
       // 未知の type は黙って無視する。将来の web が新しい type を送ってきても落ちない。

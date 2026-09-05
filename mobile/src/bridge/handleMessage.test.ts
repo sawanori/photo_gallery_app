@@ -52,12 +52,14 @@ function raw(message: Record<string, unknown>): string {
 function setup() {
   const sent: OutboundMessage[] = [];
   const invalidated: string[] = [];
+  const left: string[] = [];
   const handler = createMessageHandler(
     NONCE,
     (message) => sent.push(message),
-    (token) => invalidated.push(token)
+    (token) => invalidated.push(token),
+    (token) => left.push(token)
   );
-  return { handler, sent, invalidated };
+  return { handler, sent, invalidated, left };
 }
 
 /** saveResult だけを取り出す。 */
@@ -504,5 +506,52 @@ describe('createMessageHandler / 想定外の例外', () => {
 
     expect(results(sent)).toHaveLength(2);
     expect(results(sent)[1]).toMatchObject({ ok: true });
+  });
+});
+
+/**
+ * ギャラリーから出る要求。
+ *
+ * アプリは開いたトークンをキーチェーンに残し、起動のたびにそこへ直行する。
+ * 出口が無いと、別のリンクを持たない利用者は入口画面へ戻れない。
+ * ここでは受け取って上位へ渡すだけで、照合と破棄は App が行う。
+ */
+describe('leaveGallery', () => {
+  it('token をそのまま上位へ渡す', async () => {
+    const { handler, left } = setup();
+
+    await handler.handle(raw({ type: 'leaveGallery', token: 'tok-123' }));
+
+    expect(left).toEqual(['tok-123']);
+  });
+
+  it('保存は開始しないし、web へ結果も返さない', async () => {
+    const { handler, sent } = setup();
+
+    await handler.handle(raw({ type: 'leaveGallery', token: 'tok-123' }));
+
+    expect(saveOneMock).not.toHaveBeenCalled();
+    expect(saveManyMock).not.toHaveBeenCalled();
+    expect(manifestMock).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
+  });
+
+  it('nonce が違えば上位へ渡さない', async () => {
+    const { handler, left } = setup();
+
+    await handler.handle(
+      JSON.stringify({ v: BRIDGE_VERSION, nonce: 'other', type: 'leaveGallery', token: 'tok' })
+    );
+
+    expect(left).toEqual([]);
+  });
+
+  // 受け口を用意していない古い呼び出し側でも落ちないこと
+  it('受け口が無くても例外にならない', async () => {
+    const handler = createMessageHandler(NONCE, () => {});
+
+    await expect(
+      handler.handle(raw({ type: 'leaveGallery', token: 'tok' }))
+    ).resolves.toBeUndefined();
   });
 });

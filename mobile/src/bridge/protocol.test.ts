@@ -72,6 +72,37 @@ describe('parseInboundMessage', () => {
     });
   });
 
+  /**
+   * 利用者が自分の意思でギャラリーを離れるときの通知。
+   * 記憶しているトークンを捨てて入口画面へ戻すため、対象の特定が要る。
+   */
+  describe('leaveGallery', () => {
+    it('token を伴うものを受け付ける', () => {
+      const parsed = parseInboundMessage(
+        msg({ type: 'leaveGallery', token: 'tok-123' }),
+        NONCE
+      );
+      expect(parsed).toMatchObject({ type: 'leaveGallery', token: 'tok-123' });
+    });
+
+    // token が無いと、いま表示している招待に対する要求か判別できない。
+    it('token が無いものを捨てる', () => {
+      expect(parseInboundMessage(msg({ type: 'leaveGallery' }), NONCE)).toBeNull();
+      expect(
+        parseInboundMessage(msg({ type: 'leaveGallery', token: '' }), NONCE)
+      ).toBeNull();
+      expect(
+        parseInboundMessage(msg({ type: 'leaveGallery', token: 123 }), NONCE)
+      ).toBeNull();
+    });
+
+    it('nonce が一致しなければ捨てる', () => {
+      expect(
+        parseInboundMessage(msg({ type: 'leaveGallery', token: 'tok' }), 'other')
+      ).toBeNull();
+    });
+  });
+
   describe('既存のメッセージ（回帰）', () => {
     it('saveImage を受け付ける', () => {
       const parsed = parseInboundMessage(
