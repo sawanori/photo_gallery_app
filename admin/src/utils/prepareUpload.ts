@@ -18,16 +18,34 @@ const MAX_FILE_SIZE = 4 * 1024 * 1024;
 
 // --- サムネイルの定数 ---
 const THUMBNAIL_SIZES = [
-  { name: 'small', width: 384 },
-  { name: 'medium', width: 640 },
+  { name: 'small', width: 384, quality: 0.7 },
+  { name: 'medium', width: 640, quality: 0.7 },
+  /**
+   * ライトボックスで実際に見せる 1 枚。
+   *
+   * これが無かった頃、ライトボックスは原本を `/api/image?w=1920` に通していた。
+   * CDN が冷えていると Storage から原本を丸ごと落として sharp で変換するため、
+   * 本番の実測で 1 枚目に 4.5 秒かかっていた（同じ原本を Storage から直接取れば
+   * 0.35 秒）。写真を最初に開くのは納品先のクライアントなので、全員がその 1 枚目を踏む。
+   *
+   * 品質を small / medium より上げてあるのは、これが「拡大して見る画」だからである。
+   */
+  { name: 'large', width: 1920, quality: 0.82 },
 ] as const;
-const THUMBNAIL_QUALITY = 0.7;
 
 /** 生成したサムネイル1枚。`imageService.uploadImageFile` がそのまま受け取る。 */
 export interface ThumbnailResult {
-  name: 'small' | 'medium';
+  name: 'small' | 'medium' | 'large';
   blob: Blob;
+  /** 実際に書き出した画素幅。元画像が小さければ縮む。 */
   width: number;
+  /**
+   * Storage のパスに使う呼称としての幅。
+   *
+   * パスを実寸で作ると、元画像が 640px 以下のときに medium と large が
+   * 同じパスに書かれ、品質の違う 2 枚が互いを上書きする。呼称で分ければ衝突しない。
+   */
+  nominalWidth: number;
 }
 
 export interface PreparedUpload {
@@ -135,10 +153,15 @@ async function thumbnailsFromBitmap(bitmap: ImageBitmap): Promise<ThumbnailResul
     ctx.drawImage(bitmap, 0, 0, targetW, targetH);
     const blob = await canvas.convertToBlob({
       type: 'image/webp',
-      quality: THUMBNAIL_QUALITY,
+      quality: size.quality,
     });
 
-    results.push({ name: size.name, blob, width: targetW });
+    results.push({
+      name: size.name,
+      blob,
+      width: targetW,
+      nominalWidth: size.width,
+    });
   }
 
   return results;

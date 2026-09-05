@@ -15,6 +15,12 @@ export interface Image {
   thumbnails?: {
     small: string;
     medium: string;
+    /**
+     * ライトボックスで見せる 1920px の WebP。
+     * 2026-09-06 より前にアップロードした画像には無いため任意項目。
+     * 無い場合は `/api/image` のリサイズに落ちる。
+     */
+    large?: string;
   };
   createdAt: Date;
   updatedAt: Date;

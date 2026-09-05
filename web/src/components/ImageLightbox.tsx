@@ -29,6 +29,29 @@ const FOCUSABLE_SELECTOR =
  */
 const SWIPE_THRESHOLD_PX = 50;
 
+/**
+ * 拡大表示に出す 1 枚の URL。
+ *
+ * アップロード時に作った 1920px の WebP があれば Storage から直接読む。
+ * 無い場合（2026-09-06 より前にアップロードした画像）だけ、原本を
+ * `/api/image` に通してその場でリサイズする。後者は CDN が冷えていると
+ * 本番実測で 4.5 秒かかるため、あくまで移行期間のための逃げ道である。
+ */
+function displaySrc(image: ImageWithLikeStatus): string {
+  return image.thumbnails?.large ?? optimizedImageUrl(image.url, 1920, 80);
+}
+
+/**
+ * 原寸が届くまでのつなぎに出す 1 枚。
+ *
+ * グリッドが既に読み込んでいる 640px をそのまま使うので、多くの場合
+ * ブラウザのキャッシュに載っていて即座に出る。スピナーを見せるより、
+ * 粗くても写真が出ているほうが「開いた」ことが伝わる。
+ */
+function placeholderSrc(image: ImageWithLikeStatus): string | null {
+  return image.thumbnails?.medium ?? null;
+}
+
 export default function ImageLightbox({ images, currentIndex, onClose, onNavigate, totalCount, hasMore, loadMore }: ImageLightboxProps) {
   const image = images[currentIndex];
 
@@ -45,6 +68,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
   const currentUrl = image?.url ?? null;
   const loadError = currentUrl !== null && erroredUrl === currentUrl;
   const isLoading = currentUrl !== null && !loadError && loadedUrl !== currentUrl;
+  const placeholder = image ? placeholderSrc(image) : null;
 
   const handleImageLoad = useCallback(() => {
     if (!currentUrl) return;
@@ -88,7 +112,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
     preloadIndexes.forEach((i) => {
       if (i >= 0 && i < images.length) {
         const img = new window.Image();
-        img.src = optimizedImageUrl(images[i].url, 1920, 80);
+        img.src = displaySrc(images[i]);
         preloadRefs.current.push(img);
       }
     });
@@ -308,7 +332,8 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
 
       {/* Image */}
       <div className="relative max-w-[90vw] max-h-[85vh] min-w-[200px] min-h-[200px] flex items-center justify-center">
-        {isLoading && (
+        {/* つなぎの 1 枚が出せるなら、スピナーではなく写真を見せる */}
+        {isLoading && !placeholder && (
           <div className="absolute inset-0 flex flex-col items-center justify-center z-10 gap-3">
             <div className="w-10 h-10 border-2 border-white/20 border-t-white/80 rounded-full animate-spin" />
             <p className="text-white/40 text-xs font-light">読み込み中</p>
@@ -322,15 +347,31 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
             <p className="text-white/40 text-xs font-light">画像を読み込めませんでした</p>
           </div>
         )}
+        {/*
+          つなぎの 1 枚。これが表示領域の大きさを決めるので、原寸は上に重ねる。
+          読み込みが終わったら消すが、要素は残したままにする。外すと原寸が
+          absolute のまま行き場を失って表示が崩れる。
+        */}
+        {placeholder && !loadError && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={`placeholder-${image.url}`}
+            src={placeholder}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading ? 'opacity-100' : 'opacity-0'}`}
+          />
+        )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           key={image.url}
-          src={optimizedImageUrl(image.url, 1920, 80)}
+          src={displaySrc(image)}
           alt={image.title || ''}
           // 画像のネイティブドラッグを止める。放置すると、マウスで写真を
           // 払ったときだけ pointercancel になり、背景を払ったときと挙動が食い違う。
           draggable={false}
-          className={`max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading || loadError ? 'opacity-0' : 'opacity-100'}`}
+          className={`${placeholder && !loadError ? 'absolute inset-0 w-full h-full' : ''} max-w-full max-h-[85vh] object-contain transition-opacity duration-300 ${isLoading || loadError ? 'opacity-0' : 'opacity-100'}`}
           onLoad={handleImageLoad}
           onError={handleImageError}
         />
@@ -344,7 +385,7 @@ export default function ImageLightbox({ images, currentIndex, onClose, onNavigat
               <p className="text-white font-serif text-lg">{image.title}</p>
             )}
             <p className="text-white/50 text-sm font-light">
-              {currentIndex + 1} of {totalCount || images.length}
+              {currentIndex + 1} / {totalCount || images.length}
             </p>
           </div>
           <div className="flex items-center gap-3">

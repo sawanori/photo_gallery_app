@@ -345,3 +345,119 @@ describe('ImageLightbox / スワイプ', () => {
     expect(onNavigate).toHaveBeenCalledWith(images.length - 1);
   });
 });
+
+/**
+ * 拡大表示に何を出すか。
+ *
+ * かつては必ず原本を `/api/image?w=1920` に通していた。CDN が冷えていると
+ * Storage から原本を丸ごと落として変換するため、本番実測で 1 枚目に 4.5 秒
+ * かかっていた。アップロード時に 1920px の WebP を作るようにしたので、
+ * ある画像はそれを直接読む。無い画像だけ従来の経路に落ちる。
+ */
+describe('ImageLightbox / 表示する画像の選択', () => {
+  const withThumbs = (i: number): ImageWithLikeStatus => ({
+    ...images[i],
+    thumbnails: {
+      small: `https://storage.example.com/${i}_384.webp`,
+      medium: `https://storage.example.com/${i}_640.webp`,
+      large: `https://storage.example.com/${i}_1920.webp`,
+    },
+  });
+
+  it('large があれば Storage の URL を直接読み、/api/image を通さない', () => {
+    render(
+      <ImageLightbox
+        images={[withThumbs(0)]}
+        currentIndex={0}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+
+    const img = screen.getByAltText('DSC_0000') as HTMLImageElement;
+    expect(img.getAttribute('src')).toBe('https://storage.example.com/0_1920.webp');
+  });
+
+  it('large が無ければ従来どおり /api/image に落ちる', () => {
+    render(
+      <ImageLightbox images={images} currentIndex={0} onClose={vi.fn()} onNavigate={vi.fn()} />
+    );
+
+    const img = screen.getByAltText('DSC_0000') as HTMLImageElement;
+    expect(img.getAttribute('src')).toContain('/api/image?url=');
+    expect(img.getAttribute('src')).toContain('w=1920');
+  });
+
+  it('medium があれば読み込み中にそれを見せ、スピナーは出さない', () => {
+    const { container } = render(
+      <ImageLightbox
+        images={[withThumbs(0)]}
+        currentIndex={0}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+
+    const placeholder = container.querySelector('img[aria-hidden="true"]');
+    expect(placeholder?.getAttribute('src')).toBe('https://storage.example.com/0_640.webp');
+    expect(screen.queryByText('読み込み中')).not.toBeInTheDocument();
+  });
+
+  it('つなぎに出せる画像が無いときだけスピナーを出す', () => {
+    const { container } = render(
+      <ImageLightbox images={images} currentIndex={0} onClose={vi.fn()} onNavigate={vi.fn()} />
+    );
+
+    expect(container.querySelector('img[aria-hidden="true"]')).toBeNull();
+    expect(screen.getByText('読み込み中')).toBeInTheDocument();
+  });
+
+  it('読み込みが終わったらつなぎを消して原寸を見せる', () => {
+    const { container } = render(
+      <ImageLightbox
+        images={[withThumbs(0)]}
+        currentIndex={0}
+        onClose={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+
+    const img = screen.getByAltText('DSC_0000');
+    expect(img.className).toContain('opacity-0');
+
+    fireEvent.load(img);
+
+    expect(img.className).toContain('opacity-100');
+    expect(container.querySelector('img[aria-hidden="true"]')?.className).toContain('opacity-0');
+  });
+
+  it('隣の写真の先読みも large を使う', () => {
+    const created: string[] = [];
+    const RealImage = window.Image;
+    // jsdom の HTMLImageElement は継承して new できないため、差し替えで代用する。
+    // 先読みは `new window.Image()` に src を入れるだけなので、これで足りる。
+    window.Image = class {
+      set src(value: string) {
+        if (value) created.push(value);
+      }
+      get src() {
+        return '';
+      }
+    } as unknown as typeof window.Image;
+    try {
+      render(
+        <ImageLightbox
+          images={[withThumbs(0), withThumbs(1)]}
+          currentIndex={0}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      );
+    } finally {
+      window.Image = RealImage;
+    }
+
+    expect(created).toContain('https://storage.example.com/1_1920.webp');
+    expect(created.some((url) => url.includes('/api/image'))).toBe(false);
+  });
+});

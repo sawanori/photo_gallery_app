@@ -55,6 +55,11 @@ export interface Image {
   thumbnails?: {
     small: string;
     medium: string;
+    /**
+     * ライトボックス用の 1920px WebP。2026-09-06 より前にアップロードした
+     * 画像には無い。web 側はこれが無ければ `/api/image` に落ちる。
+     */
+    large?: string;
   };
   thumbnailPaths?: string[];
   createdAt: Date;
@@ -72,6 +77,19 @@ const IMAGES_COLLECTION = 'images';
 const PROJECTS_COLLECTION = 'projects';
 const LIKES_COLLECTION = 'likes';
 const PAGE_SIZE = 20;
+
+/**
+ * Storage が配信時に返す `Cache-Control`。
+ *
+ * 指定しないと Cloud Storage は `private, max-age=0` を返す。ブラウザは
+ * ギャラリーを開き直すたびに全サムネイルを再検証しにいき、写真が出るまで
+ * 毎回ネットワークを待つ。**この 1 行が再訪問時の体感を決める。**
+ *
+ * `immutable` を付けてよいのは、ファイル名が `${Date.now()}-${乱数}` で一意に
+ * 決まり、同じパスの中身が後から書き換わらないためである。写真を差し替えるときは
+ * 別のパスに上がり、Firestore の URL ごと変わる。
+ */
+const STORAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 // Convert Firestore document to Image object
 const docToImage = (docSnap: DocumentSnapshot): Image | null => {
@@ -305,10 +323,16 @@ export const uploadImageFile = async (
   const storagePath = `images/${userId}/${filename}`;
   const storageRef = ref(storage, storagePath);
 
-  const metadata = { contentType: file.type || 'image/jpeg' };
-  const webpMeta = { contentType: 'image/webp' };
+  const metadata = {
+    contentType: file.type || 'image/jpeg',
+    cacheControl: STORAGE_CACHE_CONTROL,
+  };
+  const webpMeta = {
+    contentType: 'image/webp',
+    cacheControl: STORAGE_CACHE_CONTROL,
+  };
 
-  let thumbnailData: { small: string; medium: string } | undefined;
+  let thumbnailData: Image['thumbnails'];
   let thumbnailPaths: string[] | undefined;
 
   await uploadBytes(storageRef, file, metadata);
@@ -320,7 +344,9 @@ export const uploadImageFile = async (
   try {
     // Upload thumbnails + get original URL in parallel
     const thumbnailUploads = thumbnailResults.map(async (thumb) => {
-      const thumbPath = `thumbnails/${userId}/${filename}_${thumb.width}.webp`;
+      // 実寸ではなく呼称の幅で名前を付ける。実寸だと元画像が小さいときに
+      // medium と large が同じパスになり、片方がもう片方を上書きする。
+      const thumbPath = `thumbnails/${userId}/${filename}_${thumb.nominalWidth}.webp`;
       const thumbRef = ref(storage, thumbPath);
       await uploadBytes(thumbRef, thumb.blob, webpMeta);
       uploadedPaths.push(thumbPath);
@@ -334,12 +360,13 @@ export const uploadImageFile = async (
     ]);
 
     if (thumbResults.length > 0) {
-      thumbnailData = { small: '', medium: '' };
+      const urls: Record<string, string> = {};
       thumbnailPaths = [];
       for (const t of thumbResults) {
-        thumbnailData[t.name] = t.url;
+        urls[t.name] = t.url;
         thumbnailPaths.push(t.path);
       }
+      thumbnailData = { small: '', medium: '', ...urls };
     }
 
     // 新規ドキュメントへの書き込みなので競合しない。トランザクションは不要。
