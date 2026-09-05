@@ -648,7 +648,9 @@ link that the photographer sends to each client.
 HOW TO REVIEW
 1. Launch the app for the first time. The "Open your gallery" screen appears.
    (The app remembers the gallery you open, so on later launches it goes
-   straight to that gallery. To return to this screen, reinstall the app.)
+   straight to that gallery. Step 8 shows how to come back to this screen.
+   Reinstalling does not: the invitation is kept in the keychain, which
+   outlives the app.)
 2. Paste the following invitation link into the input field and tap "Open":
 
    https://gallery.non-turn.com/gallery/<DEMO_TOKEN>
@@ -660,9 +662,18 @@ HOW TO REVIEW
    iOS will ask for permission to ADD photos. This app never requests
    permission to READ the photo library.
 7. Tap "Save all" to save every photo in the gallery at once.
+8. To leave this gallery, tap the exit icon at the right of the header and
+   confirm. The app forgets the invitation and returns to the "Open your
+   gallery" screen, where another link or code can be entered. Opening the
+   link above again brings the gallery back with its favourites intact.
 
 You can also tap the link on a device where the app is installed; it opens
 directly in the app via Universal Links.
+
+ABOUT THE LANGUAGE
+The interface is Japanese; the studio and its clients are in Japan. The entry
+screen in step 1 and its error messages are written in both Japanese and
+English so that this review can be completed without reading Japanese.
 
 ABOUT THE PHOTO PERMISSION
 The app declares NSPhotoLibraryAddUsageDescription only. It does not declare
