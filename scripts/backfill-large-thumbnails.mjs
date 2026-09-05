@@ -112,7 +112,21 @@ const LARGE_QUALITY = 82;
 /** admin/src/services/imageService.ts の STORAGE_CACHE_CONTROL と同じ。 */
 const CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
+/**
+ * パスワードを尋ねる。
+ *
+ * 端末に繋がっていない（エージェントのシェルやパイプ越しの）実行では、
+ * プロンプトを出しても入力が返らず、空文字のまま認証に進んで
+ * `auth/invalid-credential` になる。**原因が分からないエラーを出すより、
+ * 何をすればよいかを言って止まる。**
+ */
 function prompt(question) {
+  if (!process.stdin.isTTY) {
+    console.error(`\n${question.trim()} を読み取れません（端末に繋がっていません）。`);
+    console.error('ターミナルから直接実行するか、パスワードを標準入力に渡してください:');
+    console.error('  node scripts/backfill-large-thumbnails.mjs <email> --apply < password.txt');
+    process.exit(1);
+  }
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -123,6 +137,16 @@ function prompt(question) {
       resolve(answer);
     });
   });
+}
+
+/** 標準入力がファイル・パイプなら、1行目をパスワードとして読む。 */
+function readPasswordFromStdin() {
+  if (process.stdin.isTTY) return null;
+  try {
+    return readFileSync(0, 'utf8').split('\n')[0].trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 async function downloadImage(url) {
@@ -212,7 +236,8 @@ async function main() {
   const args = parseArgs();
 
   const email = args.email || (await prompt('Admin email: '));
-  const password = args.password || (await prompt('Admin password: '));
+  const password =
+    args.password || readPasswordFromStdin() || (await prompt('Admin password: '));
 
   try {
     await signInWithEmailAndPassword(auth, email, password);
