@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useGallery } from '@/contexts/GalleryContext';
 import BulkDownloadButton from './BulkDownloadButton';
+import LeaveGalleryButton from './LeaveGalleryButton';
 import { effectiveDeadline } from '@/utils/viewingWindow';
 
 interface HeaderProps {
@@ -57,11 +58,11 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
             )}
             <div>
               <h1 className="font-serif text-xl tracking-tight text-ink">
-                {invitation?.clientName || 'Gallery'}
+                {invitation?.clientName || 'ギャラリー'}
               </h1>
               <div className="flex items-center gap-3">
                 <p className="text-xs text-muted font-light">
-                  {totalCount} photos
+                  {totalCount}枚
                 </p>
                 {expiryDate && (
                   <p className={`text-xs font-light ${isExpiringSoon ? 'text-accent' : 'text-muted'}`}>
@@ -86,6 +87,8 @@ export default function Header({ showLikedLink = true, showBackLink = false, sho
               </Link>
             )}
             {showDownload && <BulkDownloadButton />}
+            {/* ネイティブでのみ描かれる。ブラウザでは null を返す。 */}
+            <LeaveGalleryButton />
           </div>
         </div>
       </div>
