@@ -54,9 +54,43 @@ async function closeDialogs(page: import('@playwright/test').Page) {
   }
 }
 
+/**
+ * ネイティブシェルとして開く。
+ *
+ * **素のブラウザで撮ると、アプリでは出ない文言が写る。** web は同じ URL でも
+ * ネイティブかどうかで表示を変えており、ブラウザ向けには初回ガイドに
+ * 「PC からのダウンロードを推奨します」「推奨ブラウザ: Google Chrome。Safari では
+ * 表示が不安定になる場合があります」が出る。App Store の掲載画像にこれが載ると、
+ * iOS アプリの紹介画像が PC と別ブラウザを勧めていることになる。
+ *
+ * アプリが注入するのと同じ形の能力情報を入れて、実機と同じ画面にする
+ * （mobile/src/bridge/inject.ts の buildInjectedScript と同じ形）。
+ * `window.ReactNativeWebView` は用意しない。postToNative はそれが無ければ
+ * false を返すだけなので、押しても壊れない。
+ */
+async function pretendToBeNativeShell(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    (window as unknown as { __NATIVE_GALLERY__: unknown }).__NATIVE_GALLERY__ = {
+      bridgeVersion: 1,
+      supports: [
+        'saveImage',
+        'saveImages',
+        'cancelSave',
+        'openSettings',
+        'leaveGallery',
+      ],
+      platform: 'ios',
+      appVersion: '1.0.1',
+      nonce: 'screenshot-run',
+    };
+    window.dispatchEvent(new Event('native-gallery-ready'));
+  });
+}
+
 test('App Store 用のスクリーンショットを撮る', async ({ page }) => {
   test.setTimeout(180_000);
 
+  await pretendToBeNativeShell(page);
   await page.goto(`${ORIGIN}/gallery/${DEMO_TOKEN}`, { waitUntil: 'domcontentloaded' });
 
   // 写真が実際に描画されるまで待つ。src が付いただけでは足りない。
