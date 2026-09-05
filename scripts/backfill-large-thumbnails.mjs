@@ -139,6 +139,36 @@ function prompt(question) {
   });
 }
 
+/**
+ * パスワードを画面に出さずに尋ねる。
+ *
+ * `rl.question` は入力をそのまま端末へ echo するため、伏せ字にしないと
+ * パスワードが画面に残る。ターミナルのスクロールバックにも、その画面を
+ * 貼り付けた先にも残る。**認証情報を扱うプロンプトは必ず伏せること。**
+ */
+function promptPassword(question) {
+  if (!process.stdin.isTTY) return prompt(question);
+
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+    let muted = false;
+    rl._writeToOutput = (str) => {
+      if (!muted) rl.output.write(str);
+    };
+    rl.question(question, (answer) => {
+      rl.close();
+      process.stdout.write('\n');
+      resolve(answer);
+    });
+    // question() が問いを書き終えたあとに伏せる。先に伏せると問いも消える。
+    muted = true;
+  });
+}
+
 /** 標準入力がファイル・パイプなら、1行目をパスワードとして読む。 */
 function readPasswordFromStdin() {
   if (process.stdin.isTTY) return null;
@@ -237,7 +267,7 @@ async function main() {
 
   const email = args.email || (await prompt('Admin email: '));
   const password =
-    args.password || readPasswordFromStdin() || (await prompt('Admin password: '));
+    args.password || readPasswordFromStdin() || (await promptPassword('Admin password: '));
 
   try {
     await signInWithEmailAndPassword(auth, email, password);
