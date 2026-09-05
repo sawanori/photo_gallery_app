@@ -8,11 +8,12 @@
  *
  * **既定は dry run。** 実際に書き込むには `--apply` を付ける。
  *
- *   node scripts/backfill-large-thumbnails.mjs <email> <password>
- *   node scripts/backfill-large-thumbnails.mjs <email> <password> --apply
- *   node scripts/backfill-large-thumbnails.mjs <email> <password> --apply --token <招待トークン>
+ *   node scripts/backfill-large-thumbnails.mjs <email>
+ *   node scripts/backfill-large-thumbnails.mjs <email> --apply
+ *   node scripts/backfill-large-thumbnails.mjs <email> --apply --token <招待トークン>
  *
- * 環境変数は migrate-thumbnails.mjs と同じものを使う。
+ * パスワードは省略すると対話で聞く。**引数に書かないこと**（シェルの履歴に残る）。
+ * Firebase の設定は web/.env.local から自動で読む。
  *
  * **注意: サムネイルは元画像の userId（アップロードした管理者の uid）配下に置く。**
  * storage.rules の create は `isAdmin() && request.auth.uid == userId` なので、
@@ -21,6 +22,7 @@
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import { readFileSync } from 'fs';
 import * as readline from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,22 +50,52 @@ const {
 } = require('firebase/storage');
 const sharp = require('sharp');
 
+/**
+ * 設定は `web/.env.local` から読む。
+ *
+ * 同じ値を FIREBASE_* として6個 export し直す運用にすると、写し間違いに気付かないまま
+ * 別のプロジェクトへ書き込みかねない。環境変数が既にあればそちらを優先する。
+ */
+function loadEnvFile() {
+  const path = resolve(__dirname, '..', 'web', '.env.local');
+  const values = {};
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return values;
+  }
+  for (const line of text.split('\n')) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (!match) continue;
+    values[match[1]] = match[2].replace(/^["']|["']$/g, '');
+  }
+  return values;
+}
+
+const fileEnv = loadEnvFile();
+const setting = (name) =>
+  process.env[`FIREBASE_${name}`] ??
+  process.env[`NEXT_PUBLIC_FIREBASE_${name}`] ??
+  fileEnv[`NEXT_PUBLIC_FIREBASE_${name}`];
+
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY,
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.FIREBASE_APP_ID,
+  apiKey: setting('API_KEY'),
+  authDomain: setting('AUTH_DOMAIN'),
+  projectId: setting('PROJECT_ID'),
+  storageBucket: setting('STORAGE_BUCKET'),
+  messagingSenderId: setting('MESSAGING_SENDER_ID'),
+  appId: setting('APP_ID'),
 };
 
 if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
-  console.error('Error: Firebase environment variables not set.');
-  console.error(
-    'Set FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, FIREBASE_STORAGE_BUCKET, FIREBASE_MESSAGING_SENDER_ID, FIREBASE_APP_ID'
-  );
+  console.error('Error: Firebase の設定が見つかりません。');
+  console.error('web/.env.local に NEXT_PUBLIC_FIREBASE_* を置くか、');
+  console.error('FIREBASE_API_KEY 等を環境変数で渡してください。');
   process.exit(1);
 }
+
+console.log(`Project: ${firebaseConfig.projectId}`);
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
