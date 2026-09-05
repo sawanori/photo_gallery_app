@@ -2,9 +2,11 @@
 
 import { useSyncExternalStore } from 'react';
 import {
+  BRIDGE_VERSION,
   detectNativeShell,
   subscribeToShellReady,
   type NativeCapabilities,
+  type NativeFeature,
 } from '@/lib/nativeBridge';
 
 /**
@@ -32,4 +34,20 @@ export function useIsNativeShell(): {
   );
 
   return { isNative: capabilities !== null, capabilities };
+}
+
+/**
+ * ネイティブが指定の機能に対応しているかを、描画に使える形で返す。
+ *
+ * `supportsFeature` と同じ判定だが、こちらは上のストア経由なので
+ * 描画中に呼んでも hydration mismatch にならない。**ボタンの出し分けには必ずこちらを使う。**
+ *
+ * web は push した瞬間に配信されるのに対し、アプリの更新は利用者が入れるまで届かない。
+ * 新しい機能を無条件に出すと、古いアプリの利用者には押しても何も起きないボタンが見える。
+ */
+export function useSupportsNativeFeature(feature: NativeFeature): boolean {
+  const { capabilities } = useIsNativeShell();
+  if (!capabilities) return false;
+  if (capabilities.bridgeVersion !== BRIDGE_VERSION) return false;
+  return capabilities.supports.includes(feature);
 }

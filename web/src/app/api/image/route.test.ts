@@ -15,6 +15,7 @@ const calls = vi.hoisted(() => ({
   resizeWidths: [] as number[],
   jpeg: [] as { quality: number }[],
   webp: [] as { quality: number }[],
+  avif: [] as { quality: number }[],
 }));
 
 vi.mock('sharp', () => {
@@ -32,7 +33,10 @@ vi.mock('sharp', () => {
         calls.webp.push(options);
         return pipeline;
       },
-      avif: () => pipeline,
+      avif: (options: { quality: number }) => {
+        calls.avif.push(options);
+        return pipeline;
+      },
       toBuffer: async () => Buffer.from([0xff, 0xd8, 0xff]),
     };
     return pipeline;
@@ -61,6 +65,7 @@ beforeEach(() => {
   calls.resizeWidths.length = 0;
   calls.jpeg.length = 0;
   calls.webp.length = 0;
+  calls.avif.length = 0;
   fetchMock.mockReset();
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
@@ -81,7 +86,7 @@ describe('GET /api/image / URL の検査', () => {
     const response = await get({ url: ALLOWED_URL, w: '640', q: '70' });
 
     expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toBe('image/jpeg');
+    expect(response.headers.get('content-type')).toBe('image/webp');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -143,7 +148,7 @@ describe('GET /api/image / パラメータの正規化', () => {
     const response = await get({ url: ALLOWED_URL, q: 'abc' });
 
     expect(response.status).toBe(200);
-    expect(calls.jpeg).toEqual([{ quality: 75, mozjpeg: true }]);
+    expect(calls.webp).toEqual([{ quality: 75 }]);
   });
 
   it('w=abc は既定の 640 に倒す', async () => {
@@ -165,20 +170,49 @@ describe('GET /api/image / パラメータの正規化', () => {
   it('q は 1〜100 に収める', async () => {
     fetchMock.mockResolvedValue(imageResponse());
     await get({ url: ALLOWED_URL, q: '5000' });
-    expect(calls.jpeg.at(-1)).toMatchObject({ quality: 100 });
+    expect(calls.webp.at(-1)).toMatchObject({ quality: 100 });
 
     fetchMock.mockResolvedValue(imageResponse());
     await get({ url: ALLOWED_URL, q: '-3' });
-    expect(calls.jpeg.at(-1)).toMatchObject({ quality: 1 });
+    expect(calls.webp.at(-1)).toMatchObject({ quality: 1 });
+  });
+});
+
+/**
+ * 出力形式は Accept を見ずに WebP で固定する。
+ *
+ * 以前は AVIF / WebP / JPEG を出し分けて `Vary: Accept` を付けていた。Vercel の CDN は
+ * Accept を文字列のままキャッシュキーに使うため、同じ写真がブラウザごとに作り直され、
+ * 本番では同じ URL に 3 通りの Accept を投げて 3 回とも MISS になっていた。
+ */
+describe('GET /api/image / 出力形式の固定', () => {
+  it('Accept に関わらず webp を返し、avif も jpeg も作らない', async () => {
+    for (const accept of [
+      'image/avif,image/webp,image/*',
+      'image/webp,image/*',
+      '*/*',
+      '',
+    ]) {
+      fetchMock.mockResolvedValue(imageResponse());
+
+      const response = await get({ url: ALLOWED_URL }, { accept });
+
+      expect(response.headers.get('content-type')).toBe('image/webp');
+    }
+
+    expect(calls.webp).toHaveLength(4);
+    expect(calls.avif).toEqual([]);
+    expect(calls.jpeg).toEqual([]);
   });
 
-  it('Accept に image/webp があれば webp で返す', async () => {
+  // Vary が残っていると CDN のキャッシュが Accept ごとに分裂する
+  it('Vary ヘッダは付けない', async () => {
     fetchMock.mockResolvedValue(imageResponse());
 
     const response = await get({ url: ALLOWED_URL }, { accept: 'image/webp,image/*' });
 
-    expect(response.headers.get('content-type')).toBe('image/webp');
-    expect(calls.webp).toEqual([{ quality: 75 }]);
+    expect(response.headers.get('vary')).toBeNull();
+    expect(response.headers.get('cache-control')).toContain('s-maxage=31536000');
   });
 });
 

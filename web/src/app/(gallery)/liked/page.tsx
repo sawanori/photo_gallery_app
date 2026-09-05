@@ -86,7 +86,7 @@ function LikedPageContent() {
               お気に入り
             </h2>
             <p className="text-sm text-muted mt-1">
-              {likedImages.length} photos
+              {likedImages.length}枚
             </p>
           </div>
 

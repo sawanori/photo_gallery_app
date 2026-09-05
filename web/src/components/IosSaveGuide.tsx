@@ -28,7 +28,7 @@ export default function IosSaveGuide() {
               写真を保存するには
             </p>
             <p className="text-xs text-muted mt-0.5">
-              写真を長押しして「&quot;写真&quot;に追加」を選択してください
+              保存アイコンを押すと写真が新しいタブで開きます。その写真を長押しして「&quot;写真&quot;に追加」を選択してください
             </p>
           </div>
           <button

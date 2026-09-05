@@ -99,8 +99,8 @@ describe('prepareUpload / 圧縮の仕様', () => {
     const file = makeFile('small.jpg', 'image/jpeg', 1 * MB);
     const result = await prepareUpload(file);
     expect(result.file).toBe(file);
-    // サムネイル2回分だけで、圧縮の convertToBlob は走っていない
-    expect(convertCalls).toHaveLength(2);
+    // サムネイル3回分だけで、圧縮の convertToBlob は走っていない
+    expect(convertCalls).toHaveLength(3);
   });
 
   it('4MB超は最大寸法3840・品質0.85で圧縮する', async () => {
@@ -149,21 +149,41 @@ describe('prepareUpload / 圧縮の仕様', () => {
 });
 
 describe('prepareUpload / サムネイルの仕様', () => {
-  it('幅384と640のWebPを品質0.7で2枚作る', async () => {
+  it('幅384・640・1920のWebPを3枚作る', async () => {
     const result = await prepareUpload(makeFile('a.jpg', 'image/jpeg', 1 * MB));
 
-    expect(result.thumbnails.map((t) => t.name)).toEqual(['small', 'medium']);
-    expect(result.thumbnails.map((t) => t.width)).toEqual([384, 640]);
+    expect(result.thumbnails.map((t) => t.name)).toEqual(['small', 'medium', 'large']);
+    expect(result.thumbnails.map((t) => t.width)).toEqual([384, 640, 1920]);
     for (const call of convertCalls) {
       expect(call.type).toBe('image/webp');
-      expect(call.quality).toBe(0.7);
     }
+  });
+
+  /**
+   * large は拡大表示で実際に見せる 1 枚なので、一覧用の 2 枚より品質を上げる。
+   * ここを 0.7 に戻すと、写真を開いたときの見え方が目に見えて落ちる。
+   */
+  it('一覧用は品質0.7、拡大表示用は0.82で書き出す', async () => {
+    const result = await prepareUpload(makeFile('a.jpg', 'image/jpeg', 1 * MB));
+
+    expect(result.thumbnails).toHaveLength(3);
+    expect(convertCalls.map((c) => c.quality)).toEqual([0.7, 0.7, 0.82]);
   });
 
   it('元画像が小さいときは拡大しない', async () => {
     installCanvasMocks(200, 100);
     const result = await prepareUpload(makeFile('tiny.jpg', 'image/jpeg', 1000));
-    expect(result.thumbnails.map((t) => t.width)).toEqual([200, 200]);
+    expect(result.thumbnails.map((t) => t.width)).toEqual([200, 200, 200]);
+  });
+
+  /**
+   * 実寸だけを持たせると、元画像が小さいときに medium と large が同じ
+   * Storage パスに書かれて互いを上書きする。呼称の幅を別に持たせて避ける。
+   */
+  it('実寸が同じでも呼称の幅は別々に持つ', async () => {
+    installCanvasMocks(200, 100);
+    const result = await prepareUpload(makeFile('tiny.jpg', 'image/jpeg', 1000));
+    expect(result.thumbnails.map((t) => t.nominalWidth)).toEqual([384, 640, 1920]);
   });
 
   it('アスペクト比を保つ', async () => {

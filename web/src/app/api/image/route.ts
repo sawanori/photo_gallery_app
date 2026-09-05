@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 
+/** sharp はネイティブ拡張なので Edge では動かない。 */
+export const runtime = 'nodejs';
+
+/**
+ * 東京で実行する。
+ *
+ * Storage のバケットは ASIA1（東京・大阪の二重リージョン）にある。既定のままだと
+ * バージニア（iad1）の関数が日本にある原本を取りに行き、変換して日本へ返す。
+ * 本番で実測したところ、CDN が冷えている 1 枚目で 4.5 秒かかっていた
+ * （同じ原本を Storage から直接取ると 0.35 秒）。
+ *
+ * 写真を最初に見るのは納品先のクライアントなので、**全員が必ずこの 1 枚目を踏む。**
+ */
+export const preferredRegion = 'hnd1';
+
 const ALLOWED_WIDTHS = [256, 384, 640, 828, 1080, 1200, 1920];
 const DEFAULT_WIDTH = 640;
 const DEFAULT_QUALITY = 75;
@@ -159,34 +174,28 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Image too large' }, { status: 413 });
     }
 
-    // Determine output format from Accept header
-    const accept = request.headers.get('accept') || '';
-    const supportsWebp = accept.includes('image/webp');
-    const supportsAvif = accept.includes('image/avif');
-
-    let pipeline = sharp(buffer).resize(width, undefined, {
-      withoutEnlargement: true,
-      fit: 'inside',
-    });
-
-    let outputType: string;
-
-    if (supportsAvif) {
-      pipeline = pipeline.avif({ quality, effort: 0 });
-      outputType = 'image/avif';
-    } else if (supportsWebp) {
-      pipeline = pipeline.webp({ quality });
-      outputType = 'image/webp';
-    } else {
-      pipeline = pipeline.jpeg({ quality, mozjpeg: true });
-      outputType = 'image/jpeg';
-    }
-
-    const optimized = await pipeline.toBuffer();
+    /**
+     * 出力は WebP に固定する。
+     *
+     * 以前は Accept を見て AVIF / WebP / JPEG を出し分け、`Vary: Accept` を付けていた。
+     * ところが Vercel の CDN は Accept を**文字列そのままで**キャッシュキーに使うため、
+     * ブラウザや WebView が違うだけで同じ写真が何度も作り直される。本番で同じ URL に
+     * 3 通りの Accept を投げたところ、3 回とも MISS だった。
+     *
+     * WebP は 2020 年以降の主要ブラウザがすべて読める。形式を 1 つに固定すれば
+     * `Vary` を外せて、最初の 1 人が温めたキャッシュが後続全員に効く。
+     */
+    const optimized = await sharp(buffer)
+      .resize(width, undefined, {
+        withoutEnlargement: true,
+        fit: 'inside',
+      })
+      .webp({ quality })
+      .toBuffer();
 
     return new Response(new Uint8Array(optimized), {
       headers: {
-        'Content-Type': outputType,
+        'Content-Type': 'image/webp',
         /**
          * s-maxage が無いと Vercel の CDN は一切キャッシュせず、訪問者が変わるたび、
          * ブラウザのキャッシュが切れるたびに sharp のリサイズが走る。
@@ -199,9 +208,8 @@ export async function GET(request: NextRequest) {
          * 裏で作り直すためのもの。切り替わりの瞬間に待たされるのを避ける。
          */
         'Cache-Control': `public, max-age=${CACHE_MAX_AGE}, s-maxage=31536000, stale-while-revalidate=86400, immutable`,
-        // 応答は Accept ヘッダで avif / webp / jpeg に分かれる。
-        // これが無いと、別の形式を受け付けるブラウザへ誤った形式が配られる。
-        'Vary': 'Accept',
+        // `Vary: Accept` は付けない。応答は Accept に依存しなくなったため不要で、
+        // 付けたままだと CDN のキャッシュが Accept 文字列ごとに分裂する。
       },
     });
   } catch (error) {

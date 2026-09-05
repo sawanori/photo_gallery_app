@@ -67,9 +67,17 @@ describe('imageService（projectId対応）', () => {
   // 1枚ごとの処理（uploadImageFile）とバッチ単位の処理（finalizeUploadBatch）に分離した。
 
   const THUMBS = [
-    { name: 'small' as const, blob: new Blob(['s']), width: 384 },
-    { name: 'medium' as const, blob: new Blob(['m']), width: 640 },
+    { name: 'small' as const, blob: new Blob(['s']), width: 384, nominalWidth: 384 },
+    { name: 'medium' as const, blob: new Blob(['m']), width: 640, nominalWidth: 640 },
+    { name: 'large' as const, blob: new Blob(['l']), width: 1920, nominalWidth: 1920 },
   ];
+
+  /**
+   * Storage は Cache-Control を指定しないと `private, max-age=0` を返す。
+   * ギャラリーを開き直すたびに全サムネイルを取り直すことになるので、
+   * アップロード時に必ず付ける（本番で `private, max-age=0` を実測）。
+   */
+  const CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
   const setupStorage = () => {
     mockStorage.ref.mockReturnValue('storageRef');
@@ -110,6 +118,7 @@ describe('imageService（projectId対応）', () => {
 
       expect(mockStorage.uploadBytes).toHaveBeenCalledWith('storageRef', mockFile, {
         contentType: 'image/jpeg',
+        cacheControl: CACHE_CONTROL,
       });
       expect(mockStorage.getDownloadURL).toHaveBeenCalledWith('storageRef');
     });
@@ -120,11 +129,60 @@ describe('imageService（projectId対応）', () => {
 
       await imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト');
 
-      // 元画像1 + サムネイル2
-      expect(mockStorage.uploadBytes).toHaveBeenCalledTimes(3);
+      // 元画像1 + サムネイル3（384 / 640 / 1920）
+      expect(mockStorage.uploadBytes).toHaveBeenCalledTimes(4);
       expect(mockStorage.uploadBytes).toHaveBeenCalledWith(
-        'storageRef', THUMBS[0].blob, { contentType: 'image/webp' }
+        'storageRef', THUMBS[0].blob, { contentType: 'image/webp', cacheControl: CACHE_CONTROL }
       );
+    });
+
+    /**
+     * ライトボックスが Storage から直接読む 1 枚。これが無いと原本を
+     * `/api/image` に通すことになり、CDN が冷えていると 1 枚目に数秒かかる。
+     */
+    it('1920px の large を thumbnails に保存する', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+      mockStorage.getDownloadURL.mockResolvedValue('https://example.com/thumb.webp');
+
+      await imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト');
+
+      expect(mockFirestore.setDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          thumbnails: {
+            small: 'https://example.com/thumb.webp',
+            medium: 'https://example.com/thumb.webp',
+            large: 'https://example.com/thumb.webp',
+          },
+        })
+      );
+    });
+
+    /**
+     * 実寸でパスを作ると、元画像が 640px 以下のときに medium と large が
+     * 同じパスになり、品質の違う 2 枚が互いを上書きする。
+     */
+    it('パスは実寸ではなく呼称の幅で作る', async () => {
+      const mockFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+      setupStorage();
+      const smallOriginal = [
+        { name: 'small' as const, blob: new Blob(['s']), width: 200, nominalWidth: 384 },
+        { name: 'medium' as const, blob: new Blob(['m']), width: 200, nominalWidth: 640 },
+        { name: 'large' as const, blob: new Blob(['l']), width: 200, nominalWidth: 1920 },
+      ];
+
+      await imageService.uploadImageFile(
+        'project-1', 'admin-uid', mockFile, smallOriginal, 'テスト'
+      );
+
+      const thumbPaths = mockStorage.ref.mock.calls
+        .map((call) => String(call[1]))
+        .filter((path) => path.startsWith('thumbnails/'));
+      expect(new Set(thumbPaths).size).toBe(3);
+      expect(thumbPaths.some((p) => p.endsWith('_384.webp'))).toBe(true);
+      expect(thumbPaths.some((p) => p.endsWith('_640.webp'))).toBe(true);
+      expect(thumbPaths.some((p) => p.endsWith('_1920.webp'))).toBe(true);
     });
 
     // 分離の核心。ここで書くと同じドキュメントへの書き込みが枚数分集中する。
@@ -218,8 +276,8 @@ describe('imageService（projectId対応）', () => {
         imageService.uploadImageFile('project-1', 'admin-uid', mockFile, THUMBS, 'テスト')
       ).rejects.toThrow('permission-denied');
 
-      // 原本 + サムネイル2枚
-      expect(mockStorage.deleteObject).toHaveBeenCalledTimes(3);
+      // 原本 + サムネイル3枚
+      expect(mockStorage.deleteObject).toHaveBeenCalledTimes(4);
     });
 
     it('後始末に失敗しても元の例外を隠さない', async () => {

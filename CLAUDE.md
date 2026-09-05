@@ -131,6 +131,14 @@ gsutil cors get gs://photo-gallery-app-20251204.firebasestorage.app   # verify
 - **Routes**: `/gallery/[token]`, `/liked`, `/privacy`, and two Route Handlers:
   `/api/image` (sharp resize proxy) and `/api/native/manifest` (native save authorisation)
 
+**Image delivery.** The grid reads `thumbnails.small` / `.medium` and the lightbox reads
+`thumbnails.large` — all straight from Storage. `/api/image` is only a fallback for images
+uploaded before 2026-09-06 that have no `large`. It runs in `hnd1` (`preferredRegion`) because
+the bucket is `ASIA1` and the default US region made a cold request take 4.5s against 0.35s for
+a direct Storage fetch. It always returns WebP and sets **no `Vary` header**: Vercel keys its CDN
+cache on the raw `Accept` string, so the previous AVIF/WebP/JPEG negotiation split the cache per
+browser and almost never hit. Do not reintroduce `Vary: Accept` here.
+
 ### Admin Panel (`/admin`)
 - **Firebase Config**: `admin/src/lib/firebase.ts`
 - **Services**: `admin/src/services/`
@@ -154,6 +162,10 @@ The mobile app deliberately owns **no UI**. It loads the deployed `/web` gallery
 into the device photo library. Keeping the UI in one place means `/web` changes reach the app
 without an app release.
 
+- **Language**: the `expo-localization` plugin declares `supportedLocales: { ios: ['ja'] }`, which
+  is what puts `CFBundleLocalizations` in the built `Info.plist`. Without it iOS treats the app as
+  English and shows it that way in Settings, even though every string in the app is Japanese.
+  Verify a config change with `npx expo config --type introspect | grep CFBundleLocalizations`.
 - **Config**: `mobile/app.config.ts` (scheme, universal links, permissions). `mobile/src/config.ts`
   holds the allowed image origins and the batch limits. The gallery origin comes from
   `EXPO_PUBLIC_WEB_ORIGIN`.
@@ -163,6 +175,13 @@ without an app release.
 - **Detection is deliberately triple-redundant**: injected `window.__NATIVE_GALLERY__`, a custom
   User-Agent suffix (`PhotoGalleryApp/<version>`), and `window.ReactNativeWebView`. Android's
   `injectedJavaScriptBeforeContentLoaded` is experimental and does not always arrive.
+- **Leaving a gallery**: the app remembers the last token in `expo-secure-store` and opens straight
+  into it, so without an explicit exit a viewer with no other link can never get back to the entry
+  screen — and deleting the app does not clear the keychain. The web's `LeaveGalleryButton` sends
+  `leaveGallery`, and the app forgets the token and shows `OpenByLinkScreen`. **The UI stays in the
+  web**; the app owns no screen for it. Gate it with `useSupportsNativeFeature('leaveGallery')` and
+  keep the feature out of `FALLBACK_FEATURES` — unlike saving, there is no browser behaviour to
+  fall back to, so a button that cannot reach the app must not be drawn at all.
 - **Saving**: `mobile/src/save/`. Every URL from the web is re-validated natively (exact origin
   match, Storage path prefix, filename sanitising) before download. Permission is **write-only**
   (`requestPermissionsAsync(true)`), so the app never gains read access to the user's photos.
@@ -199,7 +218,11 @@ images/{imageId}
   - userId: string                   # uid of the admin who uploaded it
   - likeCount: number
   - size: number                     # bytes of the original
-  - thumbnails: { small: string, medium: string }   # WebP download URLs
+  - thumbnails: { small: string, medium: string, large?: string }  # WebP download URLs
+                                     # large is the 1920px the lightbox shows. Images
+                                     # uploaded before 2026-09-06 do not have it; the web
+                                     # falls back to /api/image for those. Backfill with
+                                     # scripts/backfill-large-thumbnails.mjs
   - thumbnailPaths: string[]         # thumbnails/{adminUid}/{filename}_{width}.webp
   - createdAt, updatedAt: timestamp
 
@@ -232,12 +255,24 @@ likes/{invitationId}_{imageId}       # Keyed by INVITATION, not by UID, so the b
 
 ```
 /images/{adminUid}/{timestamp}-{random}                  # Originals, as uploaded
-/thumbnails/{adminUid}/{timestamp}-{random}_{width}.webp # 384px (small) and 640px (medium)
+/thumbnails/{adminUid}/{timestamp}-{random}_{width}.webp # 384 (small), 640 (medium), 1920 (large)
 ```
 
 The `{adminUid}` segment is the uid of the admin who uploaded the file, not the viewer's.
 Images are served through the `getDownloadURL` token in `images/{imageId}.url`, which bypasses
 Storage rules entirely — the `read` rule only governs SDK access.
+
+The `{width}` in a thumbnail path is the **nominal** size (384 / 640 / 1920), not the pixel width
+actually written. An original narrower than 1920 produces a smaller file under the `_1920` name.
+Naming by real pixels would put `medium` and `large` on the same path for small originals, and the
+two uploads (different quality) would overwrite each other.
+
+**Every upload must set `cacheControl`.** Cloud Storage serves objects with `private, max-age=0`
+when the metadata omits it, so the browser re-validates every thumbnail on each gallery visit.
+`admin/src/services/imageService.ts` sets `public, max-age=31536000, immutable`; this is safe
+because filenames are `${Date.now()}-${random}` and an object's bytes never change in place.
+Objects uploaded before 2026-09-06 still carry the default and need a one-off
+`gsutil setmeta -r -h "Cache-Control:public, max-age=31536000, immutable"` over the bucket.
 
 ## Quick Start
 

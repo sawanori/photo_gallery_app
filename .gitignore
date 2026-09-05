@@ -31,7 +31,8 @@ playwright-report/
 # 生成し直す手順は docs/app-store/handoff-to-external-ai.md の §6.7 にある。
 docs/app-store/申請手順書.txt
 docs/app-store/審査メモ.txt
-docs/app-store/審査回答.txt
+# 2.1 情報提供要求への返信一式（返信文・Notes・実機録画）。招待トークンが入っている。
+docs/app-store/審査回答-2026-09-04/
 
 # 掲載用スクリーンショット（20MB の生成物。撮り直しは手順書 10 章）
 docs/app-store/screenshots/

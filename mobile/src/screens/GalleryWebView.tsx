@@ -23,9 +23,15 @@ interface Props {
   sourceUrl: string;
   /** web が「この招待は確かに無効だ」と通知してきたときに呼ばれる。 */
   onInvitationInvalid?: (token: string) => void;
+  /** 利用者が web 上の「別のギャラリーを開く」を押したときに呼ばれる。 */
+  onLeaveGallery?: (token: string) => void;
 }
 
-export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props) {
+export default function GalleryWebView({
+  sourceUrl,
+  onInvitationInvalid,
+  onLeaveGallery,
+}: Props) {
   const webViewRef = useRef<WebView>(null);
   const [hasError, setHasError] = useState(false);
   const restartCount = useRef(0);
@@ -49,8 +55,8 @@ export default function GalleryWebView({ sourceUrl, onInvitationInvalid }: Props
   }, []);
 
   const handler = useMemo(
-    () => createMessageHandler(nonce, sendToWeb, onInvitationInvalid),
-    [nonce, sendToWeb, onInvitationInvalid]
+    () => createMessageHandler(nonce, sendToWeb, onInvitationInvalid, onLeaveGallery),
+    [nonce, sendToWeb, onInvitationInvalid, onLeaveGallery]
   );
 
   const handleShouldStartLoad = useCallback(

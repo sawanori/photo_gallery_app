@@ -36,8 +36,8 @@ const notoSansJp = Noto_Sans_JP({
 });
 
 export const metadata: Metadata = {
-  title: "Photo Gallery",
-  description: "Photo delivery gallery",
+  title: "フォトギャラリー",
+  description: "写真納品用のギャラリーです。",
   /**
    * サイト全体を検索対象から外す。
    *

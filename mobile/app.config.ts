@@ -38,7 +38,7 @@ const config: ExpoConfig = {
   slug: 'photo-gallery',
   // EAS 上のプロジェクトを所有するアカウント。
   owner: 'nonturn',
-  version: '1.0.0',
+  version: '1.0.1',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'light',
@@ -114,6 +114,25 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    [
+      /**
+       * 対応言語を日本語として宣言する。
+       *
+       * これが無いと iOS はアプリを英語のものとして扱い、設定アプリの言語欄も
+       * App Store の表示も英語になる。アプリの文言はもともと日本語なので、
+       * 実態に合わせるための宣言である。
+       *
+       * `['ja', 'en']` にはしない。切り替えの選択肢が設定アプリに出るのに、
+       * 切り替えても文言は変わらないため、かえって誤解を招く。
+       */
+      'expo-localization',
+      {
+        supportedLocales: {
+          ios: ['ja'],
+          android: ['ja'],
+        },
+      },
+    ],
   ],
 
   extra: {

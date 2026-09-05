@@ -284,3 +284,67 @@ describe('notifyInvitationInvalid', () => {
     expect(() => notifyInvitationInvalid('tok-123')).not.toThrow();
   });
 });
+
+/**
+ * ギャラリーから出る操作。
+ *
+ * アプリは一度開いたトークンをキーチェーンに残すため、出口が無いと
+ * 別のリンクを持たない利用者は入口画面へ戻れない。
+ *
+ * **web は push した瞬間に配信され、アプリの更新は遅れて届く。**
+ * 古いアプリに押しても何も起きないボタンを見せないよう、機能名で判定する。
+ */
+describe('requestLeaveGallery', () => {
+  function setUpBridge() {
+    const postMessage = vi.fn();
+    window.ReactNativeWebView = { postMessage };
+    return postMessage;
+  }
+
+  it('通常のブラウザでは何も送らず false を返す', async () => {
+    const { requestLeaveGallery } = await import('./nativeBridge');
+    expect(requestLeaveGallery('tok')).toBe(false);
+  });
+
+  it('対応しているネイティブへは token 付きで送る', async () => {
+    const postMessage = setUpBridge();
+    injectCapabilities({
+      supports: ['saveImage', 'saveImages', 'cancelSave', 'openSettings', 'leaveGallery'],
+    });
+
+    const { requestLeaveGallery } = await import('./nativeBridge');
+    expect(requestLeaveGallery('tok-123')).toBe(true);
+
+    expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({
+      v: BRIDGE_VERSION,
+      type: 'leaveGallery',
+      token: 'tok-123',
+      nonce: 'test-nonce',
+    });
+  });
+
+  // ストアに出ている 1.0.0 (6) はこの機能を持たない
+  it('leaveGallery を持たない古いアプリには送らない', async () => {
+    const postMessage = setUpBridge();
+    injectCapabilities({
+      supports: ['saveImage', 'saveImages', 'cancelSave', 'openSettings'],
+    });
+
+    const { requestLeaveGallery } = await import('./nativeBridge');
+    expect(requestLeaveGallery('tok')).toBe(false);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 注入が届かないと nonce が無く、送っても必ず捨てられる。
+   * 保存と違ってブラウザ側の代替が無いので、ボタン自体を出さない。
+   */
+  it('注入が届いていない（nonce 無し）ときは対応扱いにしない', async () => {
+    setUpBridge();
+    setUserAgent(`${REAL_UA} PhotoGalleryApp/1.0.1`);
+
+    const { requestLeaveGallery, supportsFeature: supports } = await import('./nativeBridge');
+    expect(supports('leaveGallery')).toBe(false);
+    expect(requestLeaveGallery('tok')).toBe(false);
+  });
+});
