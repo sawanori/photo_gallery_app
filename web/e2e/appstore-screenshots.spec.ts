@@ -32,8 +32,30 @@ const DEMO_TOKEN = process.env.DEMO_TOKEN;
 const OUT_DIR =
   process.env.SHOT_DIR ?? '/Volumes/DB/illustration_design/appstore-screenshots';
 
-// iPhone 6.9インチ。@3x で 1290×2796 になる。
-test.use({ viewport: { width: 430, height: 932 }, deviceScaleFactor: 3 });
+/**
+ * 端末プリセット。`SHOT_PRESET=android` で切り替える。既定は iOS。
+ *
+ * **Google Play は縦横比に上限がある。**「長辺は短辺の 2 倍を超えてはならない」ため、
+ * iPhone 6.9インチの 1290 × 2796（比率 2.17）はそのままでは受け付けられない。
+ * Android は 1080 × 1920（9:16、比率 1.78）で撮る。最小の 1080px も満たす。
+ */
+const PRESETS = {
+  // iPhone 6.9インチ。@3x で 1290×2796。
+  ios: {
+    device: { viewport: { width: 430, height: 932 }, deviceScaleFactor: 3 },
+    platform: 'ios' as const,
+  },
+  // @3x で 1080×1920。
+  android: {
+    device: { viewport: { width: 360, height: 640 }, deviceScaleFactor: 3 },
+    platform: 'android' as const,
+  },
+};
+
+const PRESET = PRESETS[(process.env.SHOT_PRESET ?? 'ios') as keyof typeof PRESETS];
+if (!PRESET) throw new Error('SHOT_PRESET は ios か android を指定してください');
+
+test.use(PRESET.device);
 
 test.beforeAll(() => {
   mkdirSync(OUT_DIR, { recursive: true });
@@ -69,7 +91,7 @@ async function closeDialogs(page: import('@playwright/test').Page) {
  * false を返すだけなので、押しても壊れない。
  */
 async function pretendToBeNativeShell(page: import('@playwright/test').Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript((platform: 'ios' | 'android') => {
     (window as unknown as { __NATIVE_GALLERY__: unknown }).__NATIVE_GALLERY__ = {
       bridgeVersion: 1,
       supports: [
@@ -79,12 +101,12 @@ async function pretendToBeNativeShell(page: import('@playwright/test').Page) {
         'openSettings',
         'leaveGallery',
       ],
-      platform: 'ios',
+      platform,
       appVersion: '1.0.1',
       nonce: 'screenshot-run',
     };
     window.dispatchEvent(new Event('native-gallery-ready'));
-  });
+  }, PRESET.platform);
 }
 
 test('App Store 用のスクリーンショットを撮る', async ({ page }) => {
