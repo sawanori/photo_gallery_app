@@ -19,6 +19,20 @@ import LoadErrorScreen from './LoadErrorScreen';
 /** レンダラが連続でクラッシュしたらリロードを諦めてエラー画面に落とす。 */
 const MAX_RENDERER_RESTARTS = 3;
 
+/**
+ * WebView を四方の safe area に収める。**下端を外さないこと。**
+ *
+ * 外すと、システムのナビゲーションバーが写真カードのボタンに重なる。
+ * Android 15 以降は targetSdk 35 以上のアプリを edge-to-edge で描くため、
+ * WebView がナビゲーションバーの裏まで広がる。3 ボタン操作の端末では
+ * 最下段のカードのハートと保存ボタンがバーの真下に入り、押しても
+ * システム側に取られる（2026-09-06 に SCG21 / Android 16 の実機で確認）。
+ *
+ * web 側で `env(safe-area-inset-bottom)` を使う手もあるが、Android の WebView が
+ * その値を返すかは端末と WebView のバージョンに依存する。ここで空けるほうが確実。
+ */
+const SAFE_AREA_EDGES = ['top', 'bottom', 'left', 'right'] as const;
+
 interface Props {
   sourceUrl: string;
   /** web が「この招待は確かに無効だ」と通知してきたときに呼ばれる。 */
@@ -124,7 +138,7 @@ export default function GalleryWebView({
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={SAFE_AREA_EDGES}>
       <View style={styles.container}>
         <WebView
           ref={webViewRef}
