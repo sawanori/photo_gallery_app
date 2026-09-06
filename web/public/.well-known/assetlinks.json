@@ -1,11 +1,13 @@
 [
   {
-    "relation": ["delegate_permission/common.handle_all_urls"],
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
     "target": {
       "namespace": "android_app",
       "package_name": "com.nonturn.photogallery",
       "sha256_cert_fingerprints": [
-        "REPLACE_WITH_SHA256_FINGERPRINT"
+        "C7:1E:B3:33:09:C6:4B:BB:F6:13:48:8D:42:86:CF:CC:09:F1:7F:07:C3:65:D0:91:E6:70:7E:21:A6:BD:C8:AD"
       ]
     }
   }
