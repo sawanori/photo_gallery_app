@@ -65,10 +65,24 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageC
         type="button"
         onClick={handleClick}
         aria-label={image.title ? `${image.title} を拡大表示` : '写真を拡大表示'}
-        className="
+        /*
+          写真が届くまでの**高さを先に確保する。**
+
+          読み込み前の <img> は高さ 0 なので、確保しないとカードが潰れ、
+          グリッド全体が高さを持たない。すると無限スクロールの sentinel が
+          画面内に居座り、次ページが際限なく読まれる。開いた瞬間に
+          ギャラリー全部のサムネイルを取りに行っていたのはこれが原因で、
+          2026-09-07 の本番実測では 160 枚・11.4MB が 250ms 以内に要求されていた。
+
+          写真ごとの縦横比は Firestore に持っていないので、縦位置と横位置の
+          間を取った 3:4 で置く。届いた時点で実寸に切り替わる。
+          いまも 0 から実寸へ跳ねているので、ずれはむしろ小さくなる。
+        */
+        className={`
           block w-full bg-surface relative cursor-pointer
           focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none
-        "
+          ${isLoaded ? '' : 'aspect-[3/4]'}
+        `}
       >
         {/* Background shimmer visible until image loads */}
         {!isLoaded && (

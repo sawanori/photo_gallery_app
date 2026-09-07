@@ -41,31 +41,62 @@ function useColumnCount() {
   return colCount;
 }
 
+/** sentinel が画面の下から何 px 手前に来たら次を読むか。 */
+const LOAD_AHEAD_PX = 600;
+
 export default function MasonryGrid({ images, onImageClick, hasMore, isLoadingMore, loadMore }: MasonryGridProps) {
   const colCount = useColumnCount();
+  const gridRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  /** 前回ページを足した時点のグリッドの高さ。 */
+  const loadedHeightRef = useRef(0);
 
-  // Infinite scroll via IntersectionObserver
   useEffect(() => {
     if (!hasMore || !loadMore) return;
     const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+    const grid = gridRef.current;
+    if (!sentinel || !grid) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          loadMore();
-        }
-      },
-      { rootMargin: '600px' }
-    );
+    /**
+     * 次のページを読むかどうかを、その場で測って決める。
+     *
+     * 「sentinel が見えている」だけを条件にしてはいけない。**読み込み前のカードは
+     * 高さを持たない。** 写真が届くまでグリッドは伸びず、sentinel は画面内に
+     * 居座り続けるので、loadMore が数フレームのうちに連続発火する。
+     * 20 枚ずつという設計も `loading="lazy"` も素通りして、開いた瞬間に
+     * ギャラリー全部のサムネイルを取りに行っていた
+     * （2026-09-07 の本番実測で 160 枚・11.4MB が 250ms 以内に要求されていた）。
+     *
+     * そこで「前回ページを足した時点よりグリッドが伸びていること」を条件に加える。
+     * 伸びた＝写真が実際に描画された、なので 1 画面ぶんずつしか進まない。
+     */
+    const maybeLoadMore = () => {
+      const { top } = sentinel.getBoundingClientRect();
+      if (top > window.innerHeight + LOAD_AHEAD_PX) return;
 
+      const height = grid.scrollHeight;
+      if (height <= loadedHeightRef.current) return;
+
+      loadedHeightRef.current = height;
+      loadMore();
+    };
+
+    const observer = new IntersectionObserver(maybeLoadMore, {
+      rootMargin: `${LOAD_AHEAD_PX}px`,
+    });
     observer.observe(sentinel);
-    return () => observer.disconnect();
-    // images.length を依存に入れるのは、次ページが届いても sentinel が
-    // 交差したままだと IntersectionObserver が再発火せず、そこで止まるため。
-    // 縦長の画面ではこれで無限スクロールが 1 ページで死んでいた（監査 F13）。
-  }, [hasMore, loadMore, images.length]);
+
+    // 写真が届いてグリッドが伸びたときにも測り直す。
+    // IntersectionObserver は交差したままだと再発火しないので、これが無いと
+    // 1 ページが画面を埋めない縦長の端末でそこから進まない（監査 F13）。
+    const resizeObserver = new ResizeObserver(maybeLoadMore);
+    resizeObserver.observe(grid);
+
+    return () => {
+      observer.disconnect();
+      resizeObserver.disconnect();
+    };
+  }, [hasMore, loadMore]);
 
   const columns = useMemo(() => {
     const cols: { image: ImageWithLikeStatus; originalIndex: number }[][] = Array.from(
@@ -90,7 +121,7 @@ export default function MasonryGrid({ images, onImageClick, hasMore, isLoadingMo
 
   return (
     <div>
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      <div ref={gridRef} className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {columns.map((col, colIndex) => (
           <div key={colIndex}>
             {col.map(({ image, originalIndex }) => (
