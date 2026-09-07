@@ -98,50 +98,65 @@ export function useInvitation(token: string): UseInvitationResult {
           return;
         }
 
-        // 4. Create or update session
-        const existingSession = await getSession(currentUser.uid);
-        if (!existingSession) {
-          await createSession(currentUser.uid, invitation.id);
-        } else if (existingSession.invitationId !== invitation.id) {
-          // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
-          // 古い ID を持ったままのセッション。お気に入りの読み取りは
-          // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
-          try {
-            await updateSessionInvitation(currentUser.uid, invitation.id);
-          } catch (e) {
-            console.warn('Failed to refresh session invitation:', e);
-          }
-        } else {
-          try {
-            await updateSessionAccess(currentUser.uid);
-          } catch (e) {
-            console.warn('Failed to update session access:', e);
-          }
-        }
+        // 4. Store token in localStorage for session recovery
+        //    通信を伴わないので、ネットワーク待ちの前に済ませる。
+        localStorage.setItem('gallery_token', token);
 
-        // 5. アクセス回数は**開くたびに**加算する。
+        // 5. 画像のメタデータ取得を**ここで始める。**
+        //
+        //    この取得に要るのは匿名認証だけで、セッションも閲覧回数の記録も要らない。
+        //    以前は「セッション取得 → セッション書き込み → 閲覧回数 +1 → 画像取得」と
+        //    直列に await していたため、写真の URL が決まるまでに Firestore への往復が
+        //    3 回ぶん余計に前へ積まれていた。表示に要らないものを表示の前に置かない。
+        const imagesPromise = getImagesByIds(invitation.imageIds);
+
+        // 6. セッションの確保。
+        //    お気に入りの一覧（likes の list）は「自分のセッションが指している招待」に
+        //    限ってルールが許すため、これが済むまで読めない。画像の取得とは並行に進む。
+        //    失敗しても閲覧は止めない（お気に入りが読めなくなるだけ）。
+        const sessionReady = (async () => {
+          const existingSession = await getSession(currentUser.uid);
+          if (!existingSession) {
+            await createSession(currentUser.uid, invitation.id);
+            return;
+          }
+          if (existingSession.invitationId !== invitation.id) {
+            // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
+            // 古い ID を持ったままのセッション。お気に入りの読み取りは
+            // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
+            await updateSessionInvitation(currentUser.uid, invitation.id);
+            return;
+          }
+          await updateSessionAccess(currentUser.uid);
+        })().catch((e) => {
+          console.warn('Failed to prepare session:', e);
+        });
+
+        // 7. アクセス回数は**開くたびに**加算する。
         //    以前はセッションが無いときだけ加算していたため、再訪も、同じ匿名 UID で
         //    開いた 2 つ目の招待も数えられず、管理画面の値は「端末あたり最大 1」だった（監査 F5）。
         //    Firestore ルールは「有効なセッションを持つ者が +1 する」ことを要求するので、
         //    **必ずセッションを確保した後に呼ぶ。**
-        //    失敗しても閲覧の妨げにはしない（統計が 1 回抜けるだけ）。
-        try {
-          await updateInvitationAccess(invitation.id);
-        } catch (e) {
-          console.warn('Failed to update invitation access count:', e);
-        }
+        //    ただの統計なので、写真の表示はこれを待たない。
+        const accessCounted = sessionReady
+          .then(() => updateInvitationAccess(invitation.id))
+          .catch((e) => {
+            console.warn('Failed to update invitation access count:', e);
+          });
 
-        // 6. Store token in localStorage for session recovery
-        localStorage.setItem('gallery_token', token);
+        // 8. お気に入りは招待に紐づく。匿名 UID ではない。
+        //    UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
+        //    クライアントがブラウザで選んだお気に入りがアプリで消える。
+        const likedPromise = sessionReady
+          .then(() => getLikedImageIds(invitation.id))
+          .catch((e) => {
+            // 読めなくてもギャラリーは見られる。ハートが点かないだけ。
+            console.warn('Failed to load liked images:', e);
+            return [] as string[];
+          });
 
-        // 7 & 8. Fetch all image metadata and liked status in parallel
-        const [images, likedImageIds] = await Promise.all([
-          getImagesByIds(invitation.imageIds),
-          // お気に入りは招待に紐づく。匿名 UID ではない。
-          // UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
-          // クライアントがブラウザで選んだお気に入りがアプリで消える。
-          getLikedImageIds(invitation.id),
-        ]);
+        // 9. 画像が揃った時点で表示に移る。お気に入りと閲覧回数はこの後で追いつく。
+        const images = await imagesPromise;
 
         // ファイル名の自然順に並べる。管理画面のアップロード画面と同じ規則。
         // localeCompare をそのまま使うと数字が文字として比較され、
@@ -153,13 +168,15 @@ export function useInvitation(token: string): UseInvitationResult {
           )
         );
 
-        const likedSet = new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id)));
-
-        // 9. Update context
         setInvitation(invitation);
         setAllImages(images);
-        setLikedIds(likedSet);
         setIsValid(true);
+        setIsLoading(false);
+
+        // 10. 遅れて届くもの。ここで失敗しても上の表示は取り消さない。
+        const likedImageIds = await likedPromise;
+        setLikedIds(new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id))));
+        await accessCounted;
       } catch (err) {
         // ここに来るのは招待の解決より後（画像の取得など）の失敗。
         // 招待そのものが無効だったわけではないので、**通知はしない。**

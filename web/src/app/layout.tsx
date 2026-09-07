@@ -68,8 +68,16 @@ export default function RootLayout({
       className={`${instrumentSerif.variable} ${outfit.variable} ${notoSansJp.variable}`}
     >
       <head>
-        {/* 写真は Storage から来る。接続の確立だけ先に済ませておく。 */}
+        {/*
+          ギャラリーを開くと、写真の URL が決まるまでに 3 つのホストへ順に繋ぎに行く。
+          匿名サインイン（identitytoolkit）→ 招待と画像の取得（firestore）→ 写真本体（Storage）で、
+          しかも JS の読み込みが終わるまで 1 本目すら始まらない。
+          接続（DNS・TCP・TLS）だけでも HTML の解析中に済ませておく。
+        */}
+        <link rel="preconnect" href="https://identitytoolkit.googleapis.com" />
+        <link rel="preconnect" href="https://firestore.googleapis.com" />
         <link rel="preconnect" href="https://firebasestorage.googleapis.com" />
+        <link rel="dns-prefetch" href="https://securetoken.googleapis.com" />
         <link rel="dns-prefetch" href="https://firebasestorage.googleapis.com" />
         <link rel="preconnect" href="https://photo-gallery-app-20251204.firebasestorage.app" />
         <link rel="dns-prefetch" href="https://photo-gallery-app-20251204.firebasestorage.app" />
