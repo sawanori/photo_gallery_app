@@ -24,12 +24,14 @@ import {
   ACTIVE_INVITATION,
   ADMIN_UID,
   EXPIRED_INVITATION,
+  EXPIRED_PER_DEVICE_INVITATION,
   IMAGE_ALSO_IN_INVITATION,
   IMAGE_IN_INVITATION,
   IMAGE_OUTSIDE_INVITATION,
   INACTIVE_INVITATION,
   OTHER_INVITATION,
   OTHER_VIEWER_UID,
+  PER_DEVICE_INVITATION,
   PROJECT_ID_DOC,
   VIEWER_UID,
   getTestEnv,
@@ -517,6 +519,199 @@ describe('likes', () => {
     );
     await assertSucceeds(
       deleteDoc(doc(adminDb(), 'likes', `${OTHER_INVITATION}_${IMAGE_IN_INVITATION}`))
+    );
+  });
+});
+
+describe('likes（perDevice: 端末ごとに分ける招待）', () => {
+  const likeId = (uid: string, imageId: string) => `${PER_DEVICE_INVITATION}_${uid}_${imageId}`;
+  const likeData = (uid: string, imageId: string, invitationId = PER_DEVICE_INVITATION) => ({
+    invitationId,
+    imageId,
+    userId: uid,
+    createdAt: serverTimestamp(),
+  });
+
+  it('2 人が同じ写真にそれぞれ like を作れる', async () => {
+    await seedSession(env, VIEWER_UID, PER_DEVICE_INVITATION);
+    await seedSession(env, OTHER_VIEWER_UID, PER_DEVICE_INVITATION);
+    await assertSucceeds(
+      setDoc(
+        doc(viewerDb(), 'likes', likeId(VIEWER_UID, IMAGE_ALSO_IN_INVITATION)),
+        likeData(VIEWER_UID, IMAGE_ALSO_IN_INVITATION)
+      )
+    );
+    await assertSucceeds(
+      setDoc(
+        doc(otherViewerDb(), 'likes', likeId(OTHER_VIEWER_UID, IMAGE_ALSO_IN_INVITATION)),
+        likeData(OTHER_VIEWER_UID, IMAGE_ALSO_IN_INVITATION)
+      )
+    );
+  });
+
+  it('トランザクションで未作成の自分の like を読んで作れる（本番と同じ形）', async () => {
+    await seedSession(env, VIEWER_UID, PER_DEVICE_INVITATION);
+    const db = viewerDb();
+    await assertSucceeds(
+      runTransaction(db, async (transaction) => {
+        const likeRef = doc(db, 'likes', likeId(VIEWER_UID, IMAGE_ALSO_IN_INVITATION));
+        const likeDoc = await transaction.get(likeRef);
+        expect(likeDoc.exists()).toBe(false);
+        transaction.set(likeRef, likeData(VIEWER_UID, IMAGE_ALSO_IN_INVITATION));
+      })
+    );
+  });
+
+  it('不正な形式の like は作れない', async () => {
+    await seedSession(env, VIEWER_UID, PER_DEVICE_INVITATION);
+    const db = viewerDb();
+    // shared 形式の ID
+    await assertFails(
+      setDoc(
+        doc(db, 'likes', `${PER_DEVICE_INVITATION}_${IMAGE_ALSO_IN_INVITATION}`),
+        likeData(VIEWER_UID, IMAGE_ALSO_IN_INVITATION)
+      )
+    );
+    // 他人の UID を含む ID
+    await assertFails(
+      setDoc(
+        doc(db, 'likes', likeId(OTHER_VIEWER_UID, IMAGE_ALSO_IN_INVITATION)),
+        likeData(OTHER_VIEWER_UID, IMAGE_ALSO_IN_INVITATION)
+      )
+    );
+    // userId の詐称
+    await assertFails(
+      setDoc(
+        doc(db, 'likes', likeId(VIEWER_UID, IMAGE_ALSO_IN_INVITATION)),
+        likeData(OTHER_VIEWER_UID, IMAGE_ALSO_IN_INVITATION)
+      )
+    );
+    // 招待に含まれない画像
+    await assertFails(
+      setDoc(
+        doc(db, 'likes', likeId(VIEWER_UID, IMAGE_OUTSIDE_INVITATION)),
+        likeData(VIEWER_UID, IMAGE_OUTSIDE_INVITATION)
+      )
+    );
+  });
+
+  it('失効した招待では like を作れない', async () => {
+    await seedSession(env, VIEWER_UID, EXPIRED_PER_DEVICE_INVITATION);
+    await assertFails(
+      setDoc(
+        doc(
+          viewerDb(),
+          'likes',
+          `${EXPIRED_PER_DEVICE_INVITATION}_${VIEWER_UID}_${IMAGE_IN_INVITATION}`
+        ),
+        likeData(VIEWER_UID, IMAGE_IN_INVITATION, EXPIRED_PER_DEVICE_INVITATION)
+      )
+    );
+  });
+
+  it('一覧は自分の userId で絞ったときだけ読める', async () => {
+    await seedSession(env, VIEWER_UID, PER_DEVICE_INVITATION);
+    const likes = collection(viewerDb(), 'likes');
+    const own = await assertSucceeds(
+      getDocs(
+        query(
+          likes,
+          where('invitationId', '==', PER_DEVICE_INVITATION),
+          where('userId', '==', VIEWER_UID)
+        )
+      )
+    );
+    expect(own.docs.map((d) => d.id)).toEqual([likeId(VIEWER_UID, IMAGE_IN_INVITATION)]);
+
+    await assertFails(getDocs(query(likes, where('invitationId', '==', PER_DEVICE_INVITATION))));
+    await assertFails(
+      getDocs(
+        query(
+          likes,
+          where('invitationId', '==', PER_DEVICE_INVITATION),
+          where('userId', '==', OTHER_VIEWER_UID)
+        )
+      )
+    );
+  });
+
+  it('自分の like は削除できるが、他人の like は削除できない', async () => {
+    await seedSession(env, VIEWER_UID, PER_DEVICE_INVITATION);
+    await assertFails(
+      deleteDoc(doc(viewerDb(), 'likes', likeId(OTHER_VIEWER_UID, IMAGE_IN_INVITATION)))
+    );
+    await assertSucceeds(
+      deleteDoc(doc(viewerDb(), 'likes', likeId(VIEWER_UID, IMAGE_IN_INVITATION)))
+    );
+  });
+
+  it('単体取得は自分の ID だけ。他人の文書は有無に関係なく拒否される', async () => {
+    await seedSession(env, VIEWER_UID, PER_DEVICE_INVITATION);
+    const db = viewerDb();
+    await assertSucceeds(getDoc(doc(db, 'likes', likeId(VIEWER_UID, IMAGE_IN_INVITATION))));
+    await assertSucceeds(getDoc(doc(db, 'likes', likeId(VIEWER_UID, IMAGE_ALSO_IN_INVITATION))));
+    await assertFails(getDoc(doc(db, 'likes', likeId(OTHER_VIEWER_UID, IMAGE_IN_INVITATION))));
+    await assertFails(
+      getDoc(doc(db, 'likes', likeId(OTHER_VIEWER_UID, IMAGE_ALSO_IN_INVITATION)))
+    );
+  });
+
+  it('shared の招待のセッションから perDevice の文書を単体取得できない', async () => {
+    await seedSession(env, VIEWER_UID, ACTIVE_INVITATION);
+    await assertFails(
+      getDoc(doc(viewerDb(), 'likes', likeId(OTHER_VIEWER_UID, IMAGE_IN_INVITATION)))
+    );
+  });
+
+  it('失効した招待では単体取得できない', async () => {
+    await seedSession(env, VIEWER_UID, EXPIRED_PER_DEVICE_INVITATION);
+    await assertFails(
+      getDoc(
+        doc(
+          viewerDb(),
+          'likes',
+          `${EXPIRED_PER_DEVICE_INVITATION}_${VIEWER_UID}_${IMAGE_IN_INVITATION}`
+        )
+      )
+    );
+  });
+
+  it('管理者は perDevice の like を一覧・削除できる', async () => {
+    const all = await assertSucceeds(
+      getDocs(query(collection(adminDb(), 'likes'), where('invitationId', '==', PER_DEVICE_INVITATION)))
+    );
+    expect(all.size).toBe(2);
+    await assertSucceeds(
+      deleteDoc(doc(adminDb(), 'likes', likeId(VIEWER_UID, IMAGE_IN_INVITATION)))
+    );
+  });
+});
+
+describe('likes（shared の単体取得と範囲の取り違え）', () => {
+  it('自分の招待の like は単体取得できるが、他の招待の like はできない', async () => {
+    await seedSession(env, VIEWER_UID, ACTIVE_INVITATION);
+    const db = viewerDb();
+    await assertSucceeds(
+      getDoc(doc(db, 'likes', `${ACTIVE_INVITATION}_${IMAGE_IN_INVITATION}`))
+    );
+    await assertSucceeds(
+      getDoc(doc(db, 'likes', `${ACTIVE_INVITATION}_${IMAGE_ALSO_IN_INVITATION}`))
+    );
+    await assertFails(getDoc(doc(db, 'likes', `${OTHER_INVITATION}_${IMAGE_IN_INVITATION}`)));
+  });
+
+  it('shared の招待に perDevice 形式の like は作れない', async () => {
+    await seedSession(env, VIEWER_UID, ACTIVE_INVITATION);
+    await assertFails(
+      setDoc(
+        doc(viewerDb(), 'likes', `${ACTIVE_INVITATION}_${VIEWER_UID}_${IMAGE_ALSO_IN_INVITATION}`),
+        {
+          invitationId: ACTIVE_INVITATION,
+          imageId: IMAGE_ALSO_IN_INVITATION,
+          userId: VIEWER_UID,
+          createdAt: serverTimestamp(),
+        }
+      )
     );
   });
 });

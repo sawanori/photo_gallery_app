@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGallery } from '@/contexts/GalleryContext';
 import {
@@ -17,6 +17,7 @@ import { getImagesByIds } from '@/services/imageService';
 import { getLikedImageIds } from '@/services/likeService';
 import { compareNatural, sortNameFromStoragePath } from '@/utils/naturalSort';
 import { notifyInvitationInvalid } from '@/lib/nativeBridge';
+import { Invitation } from '@/types';
 
 /** 通信に失敗したときの文言。無効・期限切れとは区別する。 */
 const LOAD_FAILED_MESSAGE = 'ギャラリーの読み込みに失敗しました。';
@@ -25,15 +26,61 @@ interface UseInvitationResult {
   isLoading: boolean;
   error: string | null;
   isValid: boolean;
+  /** お気に入りの一覧の読み込みをやり直す。セッションの確保からやり直す。 */
+  retryLikes: () => Promise<void>;
+}
+
+/**
+ * セッションの確保。
+ * お気に入りの一覧（likes の list）は「自分のセッションが指している招待」に
+ * 限ってルールが許すため、これが済むまで読めない。
+ */
+async function ensureSession(uid: string, invitationId: string): Promise<void> {
+  const existingSession = await getSession(uid);
+  if (!existingSession) {
+    await createSession(uid, invitationId);
+    return;
+  }
+  if (existingSession.invitationId !== invitationId) {
+    // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
+    // 古い ID を持ったままのセッション。お気に入りの読み取りは
+    // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
+    await updateSessionInvitation(uid, invitationId);
+    return;
+  }
+  await updateSessionAccess(uid);
 }
 
 export function useInvitation(token: string): UseInvitationResult {
   const { user, isLoading: authLoading, signIn } = useAuth();
-  const { setInvitation, setAllImages, setLikedIds } = useGallery();
+  const { setInvitation, setAllImages, setLikedIds, setLikesStatus } = useGallery();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isValid, setIsValid] = useState(false);
   const initializedRef = useRef(false);
+  // 再試行に要る値。初期化の中で決まる。
+  const likesTargetRef = useRef<{ invitation: Invitation; uid: string } | null>(null);
+
+  const applyLikedIds = useCallback(
+    (invitation: Invitation, likedImageIds: string[]) => {
+      setLikedIds(new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id))));
+      setLikesStatus('ready');
+    },
+    [setLikedIds, setLikesStatus]
+  );
+
+  const retryLikes = useCallback(async () => {
+    const target = likesTargetRef.current;
+    if (!target) return;
+    setLikesStatus('loading');
+    try {
+      await ensureSession(target.uid, target.invitation.id);
+      applyLikedIds(target.invitation, await getLikedImageIds(target.invitation, target.uid));
+    } catch (e) {
+      console.warn('Failed to load liked images:', e);
+      setLikesStatus('failed');
+    }
+  }, [applyLikedIds, setLikesStatus]);
 
   useEffect(() => {
     if (authLoading || initializedRef.current) return;
@@ -43,6 +90,7 @@ export function useInvitation(token: string): UseInvitationResult {
       try {
         setIsLoading(true);
         setError(null);
+        setLikesStatus('loading');
 
         // 0. トークンが無いのは「拒否された」のと同じ扱いにする。
         //    以前は空文字のまま doc(db,'invitations','') に渡して例外になり、
@@ -110,25 +158,10 @@ export function useInvitation(token: string): UseInvitationResult {
         //    3 回ぶん余計に前へ積まれていた。表示に要らないものを表示の前に置かない。
         const imagesPromise = getImagesByIds(invitation.imageIds);
 
-        // 6. セッションの確保。
-        //    お気に入りの一覧（likes の list）は「自分のセッションが指している招待」に
-        //    限ってルールが許すため、これが済むまで読めない。画像の取得とは並行に進む。
+        // 6. セッションの確保。画像の取得とは並行に進む。
         //    失敗しても閲覧は止めない（お気に入りが読めなくなるだけ）。
-        const sessionReady = (async () => {
-          const existingSession = await getSession(currentUser.uid);
-          if (!existingSession) {
-            await createSession(currentUser.uid, invitation.id);
-            return;
-          }
-          if (existingSession.invitationId !== invitation.id) {
-            // 別の招待を開いた、または招待のドキュメント ID をトークンに移行した後で
-            // 古い ID を持ったままのセッション。お気に入りの読み取りは
-            // セッションが持つ招待 ID を鍵にするため、ここがずれると読めなくなる。
-            await updateSessionInvitation(currentUser.uid, invitation.id);
-            return;
-          }
-          await updateSessionAccess(currentUser.uid);
-        })().catch((e) => {
+        likesTargetRef.current = { invitation, uid: currentUser.uid };
+        const sessionReady = ensureSession(currentUser.uid, invitation.id).catch((e) => {
           console.warn('Failed to prepare session:', e);
         });
 
@@ -144,15 +177,14 @@ export function useInvitation(token: string): UseInvitationResult {
             console.warn('Failed to update invitation access count:', e);
           });
 
-        // 8. お気に入りは招待に紐づく。匿名 UID ではない。
-        //    UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
-        //    クライアントがブラウザで選んだお気に入りがアプリで消える。
+        // 8. お気に入りの範囲は招待の likeScope で決まる（likeService）。
         const likedPromise = sessionReady
-          .then(() => getLikedImageIds(invitation.id))
+          .then(() => getLikedImageIds(invitation, currentUser.uid))
           .catch((e) => {
-            // 読めなくてもギャラリーは見られる。ハートが点かないだけ。
+            // 読めなくてもギャラリーは見られる。**空の一覧として扱わない。**
+            // 「0 枚」に見えると、選択が消えたように見え、押すと上書きしてしまう。
             console.warn('Failed to load liked images:', e);
-            return [] as string[];
+            return null;
           });
 
         // 9. 画像が揃った時点で表示に移る。お気に入りと閲覧回数はこの後で追いつく。
@@ -175,7 +207,11 @@ export function useInvitation(token: string): UseInvitationResult {
 
         // 10. 遅れて届くもの。ここで失敗しても上の表示は取り消さない。
         const likedImageIds = await likedPromise;
-        setLikedIds(new Set(likedImageIds.filter((id) => invitation.imageIds.includes(id))));
+        if (likedImageIds) {
+          applyLikedIds(invitation, likedImageIds);
+        } else {
+          setLikesStatus('failed');
+        }
         await accessCounted;
       } catch (err) {
         // ここに来るのは招待の解決より後（画像の取得など）の失敗。
@@ -189,7 +225,7 @@ export function useInvitation(token: string): UseInvitationResult {
     };
 
     initializeGallery();
-  }, [authLoading, user, token, signIn, setInvitation, setAllImages, setLikedIds]);
+  }, [authLoading, user, token, signIn, setInvitation, setAllImages, setLikesStatus, applyLikedIds]);
 
-  return { isLoading: isLoading || authLoading, error, isValid };
+  return { isLoading: isLoading || authLoading, error, isValid, retryLikes };
 }

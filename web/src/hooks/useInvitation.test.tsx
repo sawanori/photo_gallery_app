@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { Invitation } from '../types';
 
 /**
@@ -30,8 +30,12 @@ const {
   notifyInvitationInvalid,
   getImagesByIds,
   getLikedImageIds,
+  setLikedIds,
+  setLikesStatus,
   INVALID_INVITATION_MESSAGE,
 } = vi.hoisted(() => ({
+  setLikedIds: vi.fn(),
+  setLikesStatus: vi.fn(),
   signIn: vi.fn(),
   lookupInvitation: vi.fn(),
   getSession: vi.fn(),
@@ -53,7 +57,8 @@ vi.mock('../contexts/GalleryContext', () => ({
   useGallery: () => ({
     setInvitation: vi.fn(),
     setAllImages: vi.fn(),
-    setLikedIds: vi.fn(),
+    setLikedIds,
+    setLikesStatus,
   }),
 }));
 
@@ -103,6 +108,79 @@ beforeEach(() => {
   getImagesByIds.mockResolvedValue([]);
   getLikedImageIds.mockResolvedValue([]);
   getSession.mockResolvedValue(null);
+});
+
+describe('useInvitation / お気に入りの一覧', () => {
+  it('招待と匿名 UID を渡して読み、完了してから ready にする', async () => {
+    getLikedImageIds.mockResolvedValue(['img1', 'not-in-invitation']);
+
+    renderHook(() => useInvitation('tok'));
+
+    await waitFor(() => expect(setLikesStatus).toHaveBeenLastCalledWith('ready'));
+    expect(setLikesStatus).toHaveBeenCalledWith('loading');
+    expect(getLikedImageIds).toHaveBeenCalledWith(invitation, 'uid1');
+    expect(setLikedIds).toHaveBeenCalledWith(new Set(['img1']));
+    expect(setLikedIds.mock.invocationCallOrder[0]).toBeLessThan(
+      setLikesStatus.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('一覧が届くまで ready にしない（写真は先に表示する）', async () => {
+    let resolveLikes: (ids: string[]) => void = () => {};
+    getLikedImageIds.mockReturnValue(
+      new Promise<string[]>((resolve) => {
+        resolveLikes = resolve;
+      })
+    );
+
+    const { result } = renderHook(() => useInvitation('tok'));
+    await waitFor(() => expect(result.current.isValid).toBe(true));
+
+    expect(setLikesStatus).not.toHaveBeenCalledWith('ready');
+    resolveLikes([]);
+    await waitFor(() => expect(setLikesStatus).toHaveBeenLastCalledWith('ready'));
+  });
+
+  it('読み込み失敗は failed にする。空の一覧として扱わず、写真は見られる', async () => {
+    getLikedImageIds.mockRejectedValue(new Error('denied'));
+
+    const { result } = renderHook(() => useInvitation('tok'));
+
+    await waitFor(() => expect(setLikesStatus).toHaveBeenLastCalledWith('failed'));
+    expect(setLikedIds).not.toHaveBeenCalled();
+    expect(result.current.isValid).toBe(true);
+    expect(result.current.error).toBeNull();
+  });
+
+  it('再試行で、セッションの確保から読み直して ready になる', async () => {
+    getLikedImageIds.mockRejectedValueOnce(new Error('denied'));
+    getLikedImageIds.mockResolvedValue(['img1']);
+
+    const { result } = renderHook(() => useInvitation('tok'));
+    await waitFor(() => expect(setLikesStatus).toHaveBeenLastCalledWith('failed'));
+    getSession.mockClear();
+
+    await act(async () => {
+      await result.current.retryLikes();
+    });
+
+    expect(getSession).toHaveBeenCalledWith('uid1');
+    expect(setLikedIds).toHaveBeenCalledWith(new Set(['img1']));
+    expect(setLikesStatus).toHaveBeenLastCalledWith('ready');
+  });
+
+  it('再試行も失敗したら failed に戻る', async () => {
+    getLikedImageIds.mockRejectedValue(new Error('denied'));
+
+    const { result } = renderHook(() => useInvitation('tok'));
+    await waitFor(() => expect(setLikesStatus).toHaveBeenLastCalledWith('failed'));
+
+    await act(async () => {
+      await result.current.retryLikes();
+    });
+
+    expect(setLikesStatus).toHaveBeenLastCalledWith('failed');
+  });
 });
 
 describe('useInvitation / アクセス回数', () => {

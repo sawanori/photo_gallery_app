@@ -83,6 +83,7 @@ function toInvitation(id: string, data: any): Invitation {
     createdAt: data.createdAt?.toDate(),
     updatedAt: data.updatedAt?.toDate(),
     viewingDays: data.viewingDays,
+    likeScope: data.likeScope,
   };
 }
 

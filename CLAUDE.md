@@ -124,7 +124,8 @@ gsutil cors get gs://photo-gallery-app-20251204.firebasestorage.app   # verify
   - `authService.ts` - anonymous sign-in only (no sign-up, no password)
   - `invitationService.ts` - invitation lookup by token, session create/update, access counting
   - `imageService.ts` - image documents fetched one by one by ID (never a collection query)
-  - `likeService.ts` - like/unlike, keyed by **invitation**, not by anonymous UID
+  - `likeService.ts` - sets a like to a target state (idempotent). The key depends on the invitation's
+    `likeScope`: by **invitation** for `shared`, by invitation and anonymous UID for `perDevice`
   - `manifestService.ts` - authorises the native app's save requests
   - `downloadService.ts` - bulk ZIP download in the browser
 - **Contexts**: `AuthContext` (anonymous Firebase Auth), `GalleryContext` (invitation + images)
@@ -146,7 +147,7 @@ browser and almost never hit. Do not reintroduce `Vary: Accept` here.
   - `projectService.ts` - Project CRUD and cascading delete
   - `imageService.ts` - Upload (original + WebP thumbnails), listing, deletion
   - `invitationService.ts` - Invitation issuing; the document ID **is** the token
-  - `likeService.ts` - Reads the client's selection back per invitation
+  - `likeService.ts` - Reads the client's selection back per invitation; aggregates `perDevice` likes
   - `userService.ts` - User management
 - **Contexts**: `admin/src/contexts/AuthContext.tsx`
 - **Routes**: `/` (login), `/admin/dashboard` (project list), `/admin/projects/new`,
@@ -234,6 +235,7 @@ invitations/{token}                  # The document ID IS the invitation token (
   - imageIds: string[]               # the selection this client may see
   - expiresAt: timestamp
   - viewingDays: number              # viewing window from createdAt; default 7
+  - likeScope?: 'shared' | 'perDevice' # set at creation only; missing means shared
   - isActive: boolean
   - accessCount: number
   - lastAccessedAt: timestamp
@@ -244,10 +246,16 @@ sessions/{anonymousUid}              # One per browser/WebView, rewritten when a
   - anonymousUid: string
   - createdAt, lastAccessedAt: timestamp
 
-likes/{invitationId}_{imageId}       # Keyed by INVITATION, not by UID, so the browser and the
-  - invitationId: string             # native app share one selection for the same link
+likes/{invitationId}_{imageId}       # likeScope 'shared': keyed by INVITATION, so the browser and
+  - invitationId: string             # the native app share one selection for the same link
   - imageId: string
   - userId: string                   # last anonymous UID to touch it; audit only
+  - createdAt: timestamp
+
+likes/{invitationId}_{uid}_{imageId} # likeScope 'perDevice': one person's like. Other viewers of
+  - invitationId: string             # the same link never see it, and it does not carry over
+  - imageId: string                  # between a browser and the app. images.likeCount is not
+  - userId: string                   # updated; the admin panel counts these documents instead.
   - createdAt: timestamp
 ```
 
@@ -338,10 +346,13 @@ together.
   `lastAccessedAt` to the server timestamp, on the invitation their own session points at.
 - **sessions**: read/write own document only. `create` and any change of `invitationId` require
   the target invitation to be active and unexpired. `delete` admin only.
-- **likes**: `get` any authenticated user; `list`/`create`/`delete` are scoped to the still-valid
-  invitation the caller's session points at, and `create` additionally requires the `imageId` to
-  be in that invitation's `imageIds` and the document ID to be `{invitationId}_{imageId}`.
-  Admins may `list` and `delete` across invitations.
+- **likes**: `get`/`list`/`create`/`delete` are scoped to the still-valid invitation the caller's
+  session points at, and `create` additionally requires the `imageId` to be in that invitation's
+  `imageIds`. The document ID must be `{invitationId}_{imageId}`, or for a `perDevice` invitation
+  `{invitationId}_{uid}_{imageId}` with `userId` equal to the caller. On a `perDevice` invitation
+  callers reach only their own likes, so `list` must filter by their `userId`; `get` decides from
+  the document ID alone, so a denial reveals nothing about someone else's like.
+  Admins may `get`, `list` and `delete` across invitations.
 - The viewing window (`createdAt + viewingDays`) is **not** enforced by the rules — rules cannot
   add days to a timestamp. It is enforced by `web/src/utils/viewingWindow.ts` and by
   `/api/native/manifest`. `expiresAt` is the hard, server-enforced limit.

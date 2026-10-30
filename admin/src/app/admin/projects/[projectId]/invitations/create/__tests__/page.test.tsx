@@ -159,6 +159,68 @@ describe('CreateInvitationPage', () => {
     });
   });
 
+  describe('いいねの扱い', () => {
+    const created = {
+      id: 'inv-1',
+      token: 'test-token',
+      projectId: 'project-1',
+      clientName: 'テストクライアント',
+      createdBy: 'admin-uid',
+      imageIds: ['image-1'],
+      expiresAt: new Date(),
+      isActive: true,
+      accessCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
+      await user.type(screen.getByLabelText(/クライアント名/), 'テストクライアント');
+      await waitFor(() => {
+        expect(document.querySelector('[data-image-id="image-1"]')).toBeTruthy();
+      });
+      await user.click(document.querySelector('[data-image-id="image-1"]') as HTMLElement);
+      await user.click(document.querySelector('button[type="submit"]') as HTMLButtonElement);
+    }
+
+    beforeEach(() => {
+      mockGetImagesByProject.mockResolvedValue(sampleImages);
+      mockCreateInvitation.mockResolvedValue(created);
+    });
+
+    it('何も選ばなければ shared で作成する', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<CreateInvitationPage />);
+      await screen.findByLabelText(/クライアント名/);
+
+      await fillAndSubmit(user);
+
+      await waitFor(() => {
+        expect(mockCreateInvitation).toHaveBeenCalledWith(
+          expect.objectContaining({ likeScope: 'shared' })
+        );
+      });
+    });
+
+    it('参加者ごとを選ぶと perDevice で作成し、日数の案内を出す', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<CreateInvitationPage />);
+      await screen.findByLabelText(/クライアント名/);
+
+      expect(screen.queryByText(/閲覧できる日数は長めをおすすめします/)).toBeNull();
+      await user.click(screen.getByLabelText(/参加者ごとに選ぶ/));
+      expect(await screen.findByText(/閲覧できる日数は長めをおすすめします/)).toBeInTheDocument();
+
+      await fillAndSubmit(user);
+
+      await waitFor(() => {
+        expect(mockCreateInvitation).toHaveBeenCalledWith(
+          expect.objectContaining({ likeScope: 'perDevice' })
+        );
+      });
+    });
+  });
+
   it('成功後にギャラリーURLを表示する', async () => {
     mockGetImagesByProject.mockResolvedValue(sampleImages);
     mockCreateInvitation.mockResolvedValue({

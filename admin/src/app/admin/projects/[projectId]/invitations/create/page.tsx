@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Input, InputNumber, DatePicker, Form, Empty, Spin, App } from 'antd';
+import { Alert, Button, Card, Input, InputNumber, DatePicker, Form, Empty, Spin, App, Radio } from 'antd';
 import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
@@ -9,7 +9,7 @@ import {
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { getImagesByProject, Image } from '@/services/imageService';
-import { createInvitation, getGalleryUrl, Invitation } from '@/services/invitationService';
+import { createInvitation, getGalleryUrl, Invitation, LikeScope } from '@/services/invitationService';
 import { useAuth } from '@/contexts/AuthContext';
 import { DEFAULT_VIEWING_DAYS } from '@/utils/viewingWindow';
 import dayjs from 'dayjs';
@@ -22,6 +22,7 @@ export default function CreateInvitationPage() {
   const { message } = App.useApp();
 
   const [form] = Form.useForm();
+  const likeScope = Form.useWatch('likeScope', form);
   const [images, setImages] = useState<Image[]>([]);
   const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,6 +68,7 @@ export default function CreateInvitationPage() {
     clientEmail?: string;
     expiresAt?: dayjs.Dayjs;
     viewingDays?: number;
+    likeScope?: LikeScope;
   }) => {
     if (!user) return;
 
@@ -89,6 +91,7 @@ export default function CreateInvitationPage() {
         imageIds: selectedImageIds,
         expiresAt,
         viewingDays: values.viewingDays,
+        likeScope: values.likeScope,
       });
 
       // 招待は既に作られている。URL を組み立てられなくても「作成失敗」にはしない。
@@ -245,6 +248,7 @@ export default function CreateInvitationPage() {
               // 既定は web 側の DEFAULT_VIEWING_DAYS に合わせる。
               // ここを変えるなら web/src/utils/viewingWindow.ts も見ること。
               viewingDays: DEFAULT_VIEWING_DAYS,
+              likeScope: 'shared',
               expiresAt: dayjs().add(30, 'day'),
             }}
           >
@@ -261,6 +265,28 @@ export default function CreateInvitationPage() {
               name="clientEmail"
             >
               <Input type="email" placeholder="例: tanaka@example.com" />
+            </Form.Item>
+
+            {/*
+              参加者が複数いる招待（パーティーなど）は perDevice にする。
+              shared のままだと、ある人のいいねが同じリンクを開いた全員に見える。
+            */}
+            <Form.Item
+              label="いいねの扱い"
+              name="likeScope"
+              tooltip="作成後は変更できません。"
+              extra={
+                likeScope === 'perDevice'
+                  ? '参加者が見るのが遅れやすいので、閲覧できる日数は長めをおすすめします。'
+                  : undefined
+              }
+            >
+              <Radio.Group
+                options={[
+                  { value: 'shared', label: '1組で選ぶ（全員で同じ選択を共有）' },
+                  { value: 'perDevice', label: '参加者ごとに選ぶ（端末ごとに別々。パーティーなど）' },
+                ]}
+              />
             </Form.Item>
 
             {/*

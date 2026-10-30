@@ -16,10 +16,13 @@ vi.mock('../../../../../../../services/invitationService', () => ({
 
 // 選定結果の表示で使うサービス。モックしないと本物の Firebase を初期化して落ちる。
 const mockGetLikedImageIdsByInvitation = vi.fn();
+const mockGetLikeSummaryByInvitation = vi.fn();
 const mockGetImage = vi.fn();
 vi.mock('../../../../../../../services/likeService', () => ({
   getLikedImageIdsByInvitation: (...args: unknown[]) =>
     mockGetLikedImageIdsByInvitation(...args),
+  getLikeSummaryByInvitation: (...args: unknown[]) =>
+    mockGetLikeSummaryByInvitation(...args),
 }));
 vi.mock('../../../../../../../services/imageService', () => ({
   getImage: (...args: unknown[]) => mockGetImage(...args),
@@ -238,6 +241,58 @@ describe('InvitationDetailPage', () => {
   });
 
   // 「招待が見つかりません」は削除済みを意味する。読み込み失敗とは別物。
+  describe('perDevice の招待', () => {
+    const image = (id: string, title: string) => ({ id, title, url: `https://example.com/${id}.jpg` });
+
+    beforeEach(() => {
+      mockGetInvitation.mockResolvedValue({ ...sampleInvitation, likeScope: 'perDevice' });
+      mockGetGalleryUrl.mockReturnValue('https://example.com/gallery/abc123def456');
+      mockGetImage.mockImplementation(async (id: string) =>
+        id === 'image-1' ? image('image-1', 'DSC_1') : image('image-2', 'DSC_2')
+      );
+    });
+
+    it('同じ写真は 1 枚だけ表示し、件数と端末数を出す。件数の多い順に並べる', async () => {
+      mockGetLikeSummaryByInvitation.mockResolvedValue({
+        counts: [
+          { imageId: 'image-1', count: 1 },
+          { imageId: 'image-2', count: 2 },
+        ],
+        deviceCount: 2,
+      });
+
+      renderWithProviders(<InvitationDetailPage />);
+
+      expect(await screen.findByText('♥ 2')).toBeInTheDocument();
+      expect(screen.getByText('♥ 1')).toBeInTheDocument();
+      expect(screen.getByText('参加者のいいね')).toBeInTheDocument();
+      expect(screen.getByText('いいねした端末・ブラウザ数')).toBeInTheDocument();
+      expect(mockGetLikedImageIdsByInvitation).not.toHaveBeenCalled();
+      const names = screen.getAllByText(/^DSC_/).map((el) => el.textContent);
+      expect(names).toEqual(['DSC_2', 'DSC_1']);
+    });
+
+    it('いいねが無いときは専用の文言を出す', async () => {
+      mockGetLikeSummaryByInvitation.mockResolvedValue({ counts: [], deviceCount: 0 });
+
+      renderWithProviders(<InvitationDetailPage />);
+
+      expect(await screen.findByText('まだいいねがありません')).toBeInTheDocument();
+    });
+
+    it('shared の招待では集計を使わず、件数も出さない', async () => {
+      mockGetInvitation.mockResolvedValue(sampleInvitation);
+      mockGetLikedImageIdsByInvitation.mockResolvedValue(['image-1']);
+
+      renderWithProviders(<InvitationDetailPage />);
+
+      expect(await screen.findByText('DSC_1')).toBeInTheDocument();
+      expect(screen.getByText('クライアントの選定')).toBeInTheDocument();
+      expect(mockGetLikeSummaryByInvitation).not.toHaveBeenCalled();
+      expect(screen.queryByText(/^♥/)).toBeNull();
+    });
+  });
+
   describe('読み込み失敗', () => {
     it('取得に失敗したら Alert と再試行ボタンを出す', async () => {
       mockGetInvitation.mockRejectedValue(new Error('network'));

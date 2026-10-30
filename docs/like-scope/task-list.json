@@ -1,0 +1,451 @@
+{
+  "feature": "招待ごとのいいね範囲（likeScope）",
+  "version": 2,
+  "tasks": [
+    {
+      "task_id": "task_000",
+      "title": "（任意・2026-10-30 にユーザーの判断で打ち切り）いいねした写真の保存経路を実機で測定する",
+      "goal": "どの環境で何枚まで保存できるかを実装前に確定し、案内の文言と対象を決める",
+      "scope": [
+        "現在の本番の /liked の保存を、4 つの環境と 2 つの枚数で確かめる",
+        "結果を docs/like-scope/measurement.md に記録する"
+      ],
+      "non_scope": [
+        "コードの変更",
+        "引き継ぎリンクの設計"
+      ],
+      "files_to_read": [
+        "docs/like-scope/implementation-plan.md"
+      ],
+      "files_to_create": [
+        "docs/like-scope/measurement.md"
+      ],
+      "files_to_modify": [],
+      "dependencies": [],
+      "implementation_steps": [
+        "実機が要るためユーザーが実施する。Claude は手順表を measurement.md に用意する",
+        "管理画面で 100 枚以上の測定用の招待を作り、現在の shared のまま使う",
+        "環境はアプリ（iOS、Android）、iPhone の Safari、Android の Chrome、LINE 内ブラウザ",
+        "各環境で 50 枚と 100 枚をいいねし、/liked から保存して、完了の有無、所要時間、写真の取り出し方法を記録する",
+        "LINE 内ブラウザでは、外部ブラウザやアプリへ移る手段があるかも記録する。User-Agent の記録は求めない（判定は check_015 の実機確認で確かめる）",
+        "招待トークンを含む URL を measurement.md に書かない。測定後は招待を無効にする",
+        "結果に応じて task_008 の文言を確定する。保存できない環境は「保存できない」と明記する。枚数で失敗する環境があれば、枚数の案内を task_008 に追加して計画を更新する"
+      ],
+      "done_definition": [
+        "全環境と 2 つの枚数の結果が measurement.md に記録されている",
+        "task_008 の文言と isInAppBrowser の対象が確定している"
+      ],
+      "verify_commands": [
+        "git diff --stat -- web admin mobile"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_001",
+      "title": "Firestore ルールに perDevice の分岐を追加し、rules-tests で固定する",
+      "goal": "perDevice の招待では自分のいいねだけを読み取り、作成、削除でき、既存の招待の正規の操作は変わらない状態にする",
+      "scope": [
+        "firestore.rules の likes の get / list / create / delete",
+        "rules-tests の seed と perDevice、get のテスト"
+      ],
+      "non_scope": [
+        "images.likeCount のルールの変更",
+        "invitations のルールの変更",
+        "本番デプロイ"
+      ],
+      "files_to_read": [
+        "docs/like-scope/implementation-plan.md",
+        "firestore.rules",
+        "rules-tests/test/helpers.ts",
+        "rules-tests/test/firestore.test.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "firestore.rules",
+        "rules-tests/test/helpers.ts",
+        "rules-tests/test/firestore.test.ts"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "計画書 §10 の関数 sessionLikesPerDevice / likeIdMatchesScope / likeIdInOwnScope / likeOwnedInScope を追加する",
+        "likes の get / list / create / delete を §10 のとおり変更し、コメントを更新する",
+        "helpers.ts に PER_DEVICE_INVITATION と EXPIRED_PER_DEVICE_INVITATION を追加し、likeScope: 'perDevice' と imageIds を持つ招待、VIEWER_UID と OTHER_VIEWER_UID のいいねを seed する",
+        "firestore.test.ts に、acceptance-checks の check_003 から check_008 の許可と拒否をすべて追加する",
+        "既存の likes のテストは変更せずに実行する"
+      ],
+      "done_definition": [
+        "npm run test:emu が成功する",
+        "git diff で既存のテストケースの本体に変更が無い",
+        "存在しない自分の文書の get が許可され、他人の文書の get は文書の有無に関係なく拒否されることをテストが確かめている"
+      ],
+      "verify_commands": [
+        "cd rules-tests && npm run test:emu"
+      ],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_002",
+      "title": "web の likeService と招待の型を likeScope に対応させる",
+      "goal": "招待の範囲に応じて鍵と問い合わせを切り替え、目的の状態を指定する冪等な書き込みにする",
+      "scope": [
+        "LikeScope 型と Invitation.likeScope",
+        "toInvitation への追加",
+        "setLiked と getLikedImageIds",
+        "hasLiked と toggleLike の削除"
+      ],
+      "non_scope": [
+        "呼び出し元と UI の変更（task_003）"
+      ],
+      "files_to_read": [
+        "docs/like-scope/implementation-plan.md",
+        "web/src/services/likeService.ts",
+        "web/src/services/likeService.test.ts",
+        "web/src/services/invitationService.ts",
+        "web/src/types/index.ts"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/types/index.ts",
+        "web/src/services/invitationService.ts",
+        "web/src/services/likeService.ts",
+        "web/src/services/likeService.test.ts"
+      ],
+      "dependencies": [
+        "task_001"
+      ],
+      "implementation_steps": [
+        "types/index.ts に LikeScope と Invitation.likeScope? を追加する",
+        "toInvitation に likeScope: data.likeScope を追加する",
+        "getLikeId を招待と UID を受け取る形にし、likeScope === 'perDevice' のときだけ {invitationId}_{uid}_{imageId} を返す",
+        "計画書 §9 の表のとおり setLiked を実装する。既に目的の状態なら書き込まずに成功する",
+        "perDevice では images を読まず書かない。shared では変化があるときだけ likeCount を ±1 する",
+        "getLikedImageIds は perDevice で where('userId', '==', userId) を追加する",
+        "テストを setLiked に合わせて書き直す。shared の ID 形式と likeCount の期待値は維持する",
+        "perDevice の ID、likeCount を更新しないこと、userId の絞り込み、未知の値が shared になること、冪等性のテストを追加する"
+      ],
+      "done_definition": [
+        "web の npm test -- src/services/likeService.test.ts が成功する",
+        "shared の ID が inv-1_img-9 のままであることをテストが確かめている",
+        "同じ状態を 2 回指定しても書き込みが 1 回だけで、例外にならないことをテストが確かめている",
+        "perDevice で images への書き込みが無いことをテストが確かめている"
+      ],
+      "verify_commands": [
+        "cd web && npm test -- src/services/likeService.test.ts"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_003",
+      "title": "web のいいね一覧の状態を管理し、ハートと /liked を確実にする",
+      "goal": "読み込みの完了前に操作させず、読み込み中、失敗、0 枚を区別し、保存対象を正しくする",
+      "scope": [
+        "GalleryContext の likesStatus",
+        "useInvitation の状態更新と retryLikes",
+        "LikeButton の setLiked と無効状態",
+        "/liked とギャラリーの状態表示"
+      ],
+      "non_scope": [
+        "案内の表示（task_008）",
+        "BulkDownloadButton の変更",
+        "ネイティブブリッジの変更"
+      ],
+      "files_to_read": [
+        "docs/like-scope/implementation-plan.md",
+        "web/src/contexts/GalleryContext.tsx",
+        "web/src/hooks/useInvitation.ts",
+        "web/src/hooks/useInvitation.test.tsx",
+        "web/src/hooks/useLikedImages.ts",
+        "web/src/components/LikeButton.tsx",
+        "web/src/app/(gallery)/liked/page.tsx",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx"
+      ],
+      "files_to_create": [
+        "web/src/components/LikeButton.test.tsx",
+        "web/src/app/(gallery)/liked/page.test.tsx"
+      ],
+      "files_to_modify": [
+        "web/src/contexts/GalleryContext.tsx",
+        "web/src/hooks/useInvitation.ts",
+        "web/src/hooks/useInvitation.test.tsx",
+        "web/src/components/LikeButton.tsx",
+        "web/src/components/ImageCard.tsx",
+        "web/src/components/ImageCard.test.tsx",
+        "web/src/components/MasonryGrid.test.tsx",
+        "web/src/components/ImageLightbox.test.tsx",
+        "web/src/app/(gallery)/liked/page.tsx",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx"
+      ],
+      "dependencies": [
+        "task_002"
+      ],
+      "implementation_steps": [
+        "GalleryContext に likesStatus（初期値 loading）と setLikesStatus を追加する",
+        "useInvitation で、初期化の開始時に loading、一覧の取得成功で setLikedIds の後に ready、失敗で failed にする。失敗を空の配列に変換しない",
+        "getLikedImageIds の呼び出しを (invitation, currentUser.uid) にする",
+        "セッションの確保と一覧の取得を内部関数にまとめ、retryLikes として返す",
+        "LikeButton を setLiked(invitation, imageId, user.uid, !isLiked) に変え、likesStatus が ready でなければ disabled にする",
+        "/liked を計画書 §8 の 4 つの表示に分ける。保存ボタンは ready で 1 枚以上のときだけ出す",
+        "ギャラリーの failed の表示と再試行ボタンを追加する",
+        "ImageCard.tsx のコメントを shared についての記述だとわかる文に直す",
+        "3 つのコンポーネントテストのモックを setLiked と likesStatus: 'ready' に合わせる",
+        "遅延と失敗を与えるテストを追加する。読み込み中に押せないこと、後着の一覧で選択が消えないこと、失敗後の再試行で ready になることを確かめる"
+      ],
+      "done_definition": [
+        "web の npm test、npm run lint、npm run build がすべて成功する",
+        "/liked が失敗時に「まだありません」を表示しないことをテストが確かめている",
+        "/liked の保存が likedImages だけを渡すことをテストが確かめている",
+        "git diff に BulkDownloadButton.tsx の変更が無い",
+        "web/src に toggleLike と hasLiked の呼び出しが残っていない"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run lint",
+        "cd web && npm run build"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_004",
+      "title": "admin の招待作成で likeScope を選べるようにする",
+      "goal": "管理者が招待の作成時に、共有か端末別かを指定できる",
+      "scope": [
+        "admin の Invitation 型、docToInvitation、createInvitation",
+        "作成フォームの Radio.Group と閲覧日数の案内"
+      ],
+      "non_scope": [
+        "作成後の変更手段",
+        "updateInvitation への likeScope の追加",
+        "閲覧日数の自動変更"
+      ],
+      "files_to_read": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/__tests__/page.test.tsx"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "admin/src/services/invitationService.ts",
+        "admin/src/services/__tests__/invitationService.test.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/create/__tests__/page.test.tsx"
+      ],
+      "dependencies": [],
+      "implementation_steps": [
+        "Invitation に likeScope? を追加し、docToInvitation で写す",
+        "createInvitation の引数に likeScope? を追加し、未指定なら 'shared' を保存する",
+        "計画書 §8 の文言で Radio.Group を追加し、initialValues に likeScope: 'shared' を入れる",
+        "perDevice を選んでいるときだけ閲覧日数の案内を表示する",
+        "handleSubmit から createInvitation へ likeScope を渡す",
+        "既定値、perDevice の引き渡し、保存値、案内の表示のテストを追加する"
+      ],
+      "done_definition": [
+        "admin の npx vitest run が成功する",
+        "何も選ばずに作成すると likeScope: 'shared' が保存されることをテストが確かめている",
+        "updateInvitation の Pick に likeScope が含まれていない"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npm run lint"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_005",
+      "title": "admin の招待詳細に perDevice の集計を表示する",
+      "goal": "perDevice の招待で、画像ごとのいいね数と端末・ブラウザ数を重複なく確認できる",
+      "scope": [
+        "getLikeSummaryByInvitation の追加",
+        "招待詳細の範囲の表示と perDevice の集計カード"
+      ],
+      "non_scope": [
+        "shared の表示の変更",
+        "端末別の選択内容の一覧"
+      ],
+      "files_to_read": [
+        "admin/src/services/likeService.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/__tests__/page.test.tsx"
+      ],
+      "files_to_create": [
+        "admin/src/services/__tests__/likeService.test.ts"
+      ],
+      "files_to_modify": [
+        "admin/src/services/likeService.ts",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/page.tsx",
+        "admin/src/app/admin/projects/[projectId]/invitations/[id]/__tests__/page.test.tsx"
+      ],
+      "dependencies": [
+        "task_004"
+      ],
+      "implementation_steps": [
+        "getLikeSummaryByInvitation を追加し、imageId ごとの件数と重複を除いた userId の数を返す",
+        "loadSelection を招待を受け取る形にし、perDevice では集計を、shared では既存の関数を使う",
+        "再試行ボタンの呼び出しも同じ引数に揃える",
+        "Descriptions に「いいねの扱い」を追加する",
+        "perDevice の表示を計画書 §8 のとおりにする。並びは件数の多い順、同数はファイル名の自然順",
+        "ファイル名のコピーは画面の並び順で 1 件につき 1 回にする",
+        "集計、重複なし、並び順、shared の既存表示のテストを追加する"
+      ],
+      "done_definition": [
+        "admin の npx vitest run、npm run lint、npm run build がすべて成功する",
+        "同じ画像を 2 端末がいいねしても、サムネイルが 1 枚で ♥ 2 と表示されることをテストが確かめている",
+        "既存の shared のテストの期待値が変わっていない"
+      ],
+      "verify_commands": [
+        "cd admin && npx vitest run",
+        "cd admin && npm run lint",
+        "cd admin && npm run build"
+      ],
+      "risk_level": "medium"
+    },
+    {
+      "task_id": "task_006",
+      "title": "プライバシーポリシーと CLAUDE.md を実装に合わせる",
+      "goal": "公開文書とリポジトリの説明が、端末別のいいねと矛盾しない状態にする",
+      "scope": [
+        "web/src/app/privacy/page.tsx の「お気に入りの選択内容」の文言",
+        "CLAUDE.md の Firestore Schema、Security Rules、likeService の説明"
+      ],
+      "non_scope": [
+        "ストアのプライバシー申告の変更",
+        "AGENTS.md の更新"
+      ],
+      "files_to_read": [
+        "web/src/app/privacy/page.tsx",
+        "CLAUDE.md"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "web/src/app/privacy/page.tsx",
+        "CLAUDE.md"
+      ],
+      "dependencies": [
+        "task_001",
+        "task_003",
+        "task_005"
+      ],
+      "implementation_steps": [
+        "プライバシーポリシーに、招待によってはお気に入りの選択を匿名の識別子と結び付けて保存し、撮影担当者には集計として表示することを追記する",
+        "CLAUDE.md の invitations に likeScope を、likes に 2 つの ID 形式を書く",
+        "CLAUDE.md の Security Rules の likes に perDevice の条件と、get の新しい条件を書く",
+        "CLAUDE.md の likeService と Authentication Flow の説明を、実装と矛盾しない文に直す"
+      ],
+      "done_definition": [
+        "web の npm run build が成功する",
+        "CLAUDE.md の likes の記述が firestore.rules の実装と一致している"
+      ],
+      "verify_commands": [
+        "cd web && npm run build"
+      ],
+      "risk_level": "low"
+    },
+    {
+      "task_id": "task_007",
+      "title": "本番へ反映し、実機で確認する",
+      "goal": "本番で perDevice の保存まで動き、既存の招待が壊れていないことを確かめる",
+      "scope": [
+        "firestore:rules のデプロイ",
+        "master への push による web と admin の自動デプロイ",
+        "本番のテスト招待と実機での確認"
+      ],
+      "non_scope": [
+        "アプリのビルドとストア申請",
+        "firestore:rules 以外の Firebase へのデプロイ"
+      ],
+      "files_to_read": [
+        "docs/like-scope/acceptance-checks.json",
+        "docs/like-scope/measurement.md",
+        "CLAUDE.md"
+      ],
+      "files_to_create": [],
+      "files_to_modify": [
+        "docs/like-scope/measurement.md"
+      ],
+      "dependencies": [
+        "task_000",
+        "task_001",
+        "task_002",
+        "task_003",
+        "task_004",
+        "task_005",
+        "task_006",
+        "task_008"
+      ],
+      "implementation_steps": [
+        "ユーザーにデプロイの実施を確認する",
+        "firebase deploy --only firestore:rules を実行する",
+        "デプロイ済みの現行 web の shared の招待で、いいねと解除ができることを確認する",
+        "コミットを master へ push し、Vercel の web と admin の Production が READY になることを確認する",
+        "管理画面で perDevice のテスト招待を作り、acceptance-checks の手動項目を 2 台以上で確認する",
+        "問い合わせが failed-precondition になった場合は、複合インデックスを追加して firestore:indexes をデプロイする",
+        "結果を measurement.md に記録する。招待トークンを含む URL をコードや docs に書かない。確認後はテスト招待を無効にする"
+      ],
+      "done_definition": [
+        "手動の受け入れ項目がすべて合格し、結果が記録されている",
+        "本番の shared の招待に回帰が無い"
+      ],
+      "verify_commands": [
+        "firebase deploy --only firestore:rules",
+        "git diff --stat -- mobile front back"
+      ],
+      "risk_level": "high"
+    },
+    {
+      "task_id": "task_008",
+      "title": "perDevice の招待で、いいねの前に案内を表示する",
+      "goal": "環境を移ると選択が引き継がれないことを、いいねする前に参加者へ知らせる",
+      "scope": [
+        "LikeScopeNotice の作成",
+        "isInAppBrowser の追加",
+        "ギャラリーと /liked への配置"
+      ],
+      "non_scope": [
+        "shared の招待での表示",
+        "引き継ぎリンク",
+        "外部ブラウザを自動で開く処理"
+      ],
+      "files_to_read": [
+        "docs/like-scope/implementation-plan.md",
+        "docs/like-scope/measurement.md",
+        "web/src/utils/device.ts",
+        "web/src/hooks/useIsNativeShell.ts",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx",
+        "web/src/app/(gallery)/liked/page.tsx"
+      ],
+      "files_to_create": [
+        "web/src/components/LikeScopeNotice.tsx",
+        "web/src/components/LikeScopeNotice.test.tsx"
+      ],
+      "files_to_modify": [
+        "web/src/utils/device.ts",
+        "web/src/utils/device.test.ts",
+        "web/src/app/(gallery)/gallery/[token]/page.tsx",
+        "web/src/app/(gallery)/liked/page.tsx"
+      ],
+      "dependencies": [
+        "task_000",
+        "task_003"
+      ],
+      "implementation_steps": [
+        "isInAppBrowser を追加する。判定する User-Agent は task_000 の記録に従い、LINE は必ず含める",
+        "LikeScopeNotice を作る。invitation.likeScope が perDevice のときだけ描画する",
+        "通常は計画書 §8 の 1 行の案内を表示する",
+        "isInAppBrowser が true でネイティブシェルではないときは、強調した案内とリンクのコピーボタンを表示する。文言は task_000 の結果に従う",
+        "ギャラリーと /liked のヘッダー下に配置する",
+        "表示の分岐、LINE の User-Agent の判定、ネイティブシェルで強調表示にならないことをテストする"
+      ],
+      "done_definition": [
+        "web の npm test、npm run lint、npm run build が成功する",
+        "shared の招待では何も表示されないことをテストが確かめている",
+        "ネイティブシェルでは強調表示にならないことをテストが確かめている"
+      ],
+      "verify_commands": [
+        "cd web && npm test",
+        "cd web && npm run lint",
+        "cd web && npm run build"
+      ],
+      "risk_level": "low"
+    }
+  ]
+}

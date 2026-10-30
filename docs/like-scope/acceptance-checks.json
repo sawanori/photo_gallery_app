@@ -1,0 +1,189 @@
+{
+  "feature": "招待ごとのいいね範囲（likeScope）",
+  "checks": [
+    {
+      "id": "check_001",
+      "target": "主要フロー: 端末間の分離",
+      "rule": "perDevice の招待を 2 台の端末で開き、端末 A だけでいいねする",
+      "expected_result": "端末 B を再読み込みしてもハートは点灯せず、/liked は空のまま。端末 A では再読み込み後も点灯している",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待を 2 台で開いて確認する"
+    },
+    {
+      "id": "check_002",
+      "target": "主要フロー: 同じ写真への独立した操作",
+      "rule": "perDevice の招待で 2 台が同じ写真にいいねし、端末 A だけが解除する",
+      "expected_result": "両方のいいねが成功する。端末 A では解除され、端末 B では点灯したまま",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待を 2 台で操作し、再読み込みして確認する"
+    },
+    {
+      "id": "check_003",
+      "target": "ルール: perDevice の作成",
+      "rule": "自分の UID の鍵で招待内の画像にいいねする。2 人が同じ画像にいいねする",
+      "expected_result": "どちらも許可される",
+      "manual_or_automated": "automated",
+      "verification_method": "cd rules-tests && npm run test:emu"
+    },
+    {
+      "id": "check_004",
+      "target": "ルール: perDevice の不正な作成",
+      "rule": "shared 形式の ID、他人の UID を含む ID、userId の詐称、招待外の画像、失効した招待で作成する",
+      "expected_result": "すべて拒否される",
+      "manual_or_automated": "automated",
+      "verification_method": "cd rules-tests && npm run test:emu"
+    },
+    {
+      "id": "check_005",
+      "target": "ルール: perDevice の一覧",
+      "rule": "invitationId と自分の userId で絞る問い合わせと、userId なし、または他人の userId の問い合わせを実行する",
+      "expected_result": "自分の userId の問い合わせだけが許可され、結果に他人の文書が含まれない",
+      "manual_or_automated": "automated",
+      "verification_method": "cd rules-tests && npm run test:emu"
+    },
+    {
+      "id": "check_006",
+      "target": "ルール: perDevice の削除",
+      "rule": "自分のいいねと他人のいいねを削除する。管理者が削除する",
+      "expected_result": "自分の分と管理者の削除は許可され、他人の分は拒否される",
+      "manual_or_automated": "automated",
+      "verification_method": "cd rules-tests && npm run test:emu"
+    },
+    {
+      "id": "check_007",
+      "target": "ルール: get",
+      "rule": "(a) 存在する自分の文書 (b) 存在しない自分の文書 (c) 存在する他人の文書 (d) 存在しない他人の文書を perDevice のセッションで get する。(e) shared の招待のセッションから perDevice の文書を get する。(f) shared の別の招待の文書を get する。(g) 失効した招待で get する",
+      "expected_result": "(a)(b) は許可され、(c)(d)(e)(f)(g) はすべて拒否される。(c) と (d) の結果が同じなので、拒否から相手のいいねの有無が分からない",
+      "manual_or_automated": "automated",
+      "verification_method": "cd rules-tests && npm run test:emu"
+    },
+    {
+      "id": "check_008",
+      "target": "ルール: shared の回帰",
+      "rule": "likeScope が無い招待に perDevice 形式の ID で作成する。自分の招待の shared の文書を get する。既存の likes のテストをそのまま実行する",
+      "expected_result": "perDevice 形式は拒否され、get は許可され、既存のテストが無修正で成功する",
+      "manual_or_automated": "automated",
+      "verification_method": "cd rules-tests && npm run test:emu、および git diff で既存テストの本体が変わっていないことを確認する"
+    },
+    {
+      "id": "check_009",
+      "target": "web: setLiked",
+      "rule": "likeScope に perDevice、shared、未設定、未知の値を与える。同じ状態を 2 回指定する",
+      "expected_result": "perDevice だけが {invitationId}_{uid}_{imageId} を使い images を更新しない。それ以外は {invitationId}_{imageId} で変化があるときだけ likeCount を ±1 する。2 回目は書き込まず、例外にならない",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm test（likeService.test.ts）"
+    },
+    {
+      "id": "check_010",
+      "target": "web: 読み込み中の操作",
+      "rule": "いいね一覧の取得を遅らせ、写真が表示された状態でハートを見る",
+      "expected_result": "写真は表示され、ハートは ready になるまで押せない。ready の後に既存のいいねが点灯する",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm test（LikeButton.test.tsx と useInvitation.test.tsx）"
+    },
+    {
+      "id": "check_011",
+      "target": "web: 読み込み失敗",
+      "rule": "いいね一覧の取得を失敗させ、ギャラリーと /liked を表示して再試行する",
+      "expected_result": "写真は見られる。/liked に「まだありません」と保存ボタンは出ず、失敗の文言と再試行ボタンが出る。再試行の成功で ready になる",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm test（liked/page.test.tsx と useInvitation.test.tsx）"
+    },
+    {
+      "id": "check_012",
+      "target": "主要フロー: いいねした写真の保存（アプリ）",
+      "rule": "ストア版の iOS と Android のアプリで perDevice の招待を開き、一部の写真をいいねして /liked から保存する",
+      "expected_result": "いいねした写真だけが写真アプリに保存される。保存枚数が /liked の枚数と一致する",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待で保存し、写真アプリで枚数と内容を確かめる"
+    },
+    {
+      "id": "check_013",
+      "target": "主要フロー: いいねした写真の保存（ブラウザ）",
+      "rule": "iPhone の Safari、Android の Chrome、PC のブラウザで perDevice の招待を開き、一部の写真をいいねして /liked から保存する",
+      "expected_result": "いいねした写真だけが ZIP に入り、参加者が取り出せる。task_000 で失敗した環境と枚数には案内が出る",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待で ZIP を保存し、中身の枚数と内容を確かめる"
+    },
+    {
+      "id": "check_014",
+      "target": "保存対象: 全件保存の回帰",
+      "rule": "いいねがある状態で、ギャラリーの全件保存を実行する",
+      "expected_result": "いいねの有無に関係なく全画像が対象になる。git diff に BulkDownloadButton.tsx の変更が無い",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待で確認し、git diff で確かめる"
+    },
+    {
+      "id": "check_015",
+      "target": "案内の表示",
+      "rule": "perDevice の招待を LINE 内ブラウザ、Safari、アプリで開く。shared の招待を同じ環境で開く",
+      "expected_result": "perDevice は、いいねの前に案内が見える。LINE 内ブラウザは強調表示とコピーボタン、アプリは強調なし。shared は案内なし",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待を実機で開く。分岐は cd web && npm test（LikeScopeNotice.test.tsx）でも確かめる"
+    },
+    {
+      "id": "check_016",
+      "target": "admin: 招待の作成",
+      "rule": "範囲を選ばずに作成する。perDevice を選んで作成する",
+      "expected_result": "それぞれ likeScope: 'shared' と 'perDevice' が保存される。perDevice のときだけ閲覧日数の案内が出る。スマートフォン幅でも選択肢が切れない",
+      "manual_or_automated": "automated",
+      "verification_method": "cd admin && npx vitest run。表示幅は task_007 で本番の管理画面を 375px 幅にして目視する"
+    },
+    {
+      "id": "check_017",
+      "target": "admin: perDevice の集計",
+      "rule": "同じ写真を 2 端末がいいねした招待の詳細を開く",
+      "expected_result": "サムネイルは 1 枚で ♥ 2 と表示され、端末・ブラウザ数は 2。件数の多い順に並ぶ",
+      "manual_or_automated": "automated",
+      "verification_method": "cd admin && npx vitest run。task_007 で本番の値も確認する"
+    },
+    {
+      "id": "check_018",
+      "target": "admin: shared の回帰",
+      "rule": "既存の招待の詳細を開き、選定とファイル名のコピーを使う",
+      "expected_result": "カード名、枚数、並び順、コピーの内容が変更前と同じ",
+      "manual_or_automated": "automated",
+      "verification_method": "cd admin && npx vitest run。task_007 で本番の既存招待も確認する"
+    },
+    {
+      "id": "check_019",
+      "target": "本番: インデックス",
+      "rule": "本番の perDevice の招待でいいねを読み込む",
+      "expected_result": "failed-precondition が出ず、いいねが読み込まれる",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待をブラウザの開発者ツールを開いて読み込み、コンソールにいいね一覧の読み込み失敗が出ないことを確認する"
+    },
+    {
+      "id": "check_020",
+      "target": "本番: 既存招待の回帰",
+      "rule": "ルールのデプロイ後に shared の招待を開き、2 つのブラウザでいいねと解除をし、/liked から保存する",
+      "expected_result": "両方のブラウザで同じ選択が見え、いいねした写真を保存できる",
+      "manual_or_automated": "manual",
+      "verification_method": "本番の shared のテスト招待で確認する"
+    },
+    {
+      "id": "check_021",
+      "target": "ネイティブアプリの差分",
+      "rule": "/mobile を変更しないこと",
+      "expected_result": "git diff に mobile、front、back の差分が無い",
+      "manual_or_automated": "automated",
+      "verification_method": "git diff --stat -- mobile front back"
+    },
+    {
+      "id": "check_022",
+      "target": "スマートフォン表示",
+      "rule": "perDevice の招待のギャラリー、ライトボックス、/liked をスマートフォンで開く",
+      "expected_result": "案内が全文読め、ヘッダーのボタンや写真に重ならない。ハートを操作できる",
+      "manual_or_automated": "manual",
+      "verification_method": "本番のテスト招待を iPhone と Android で目視する"
+    },
+    {
+      "id": "check_023",
+      "target": "ビルド、型、lint",
+      "rule": "web と admin の検証コマンドをすべて実行する",
+      "expected_result": "すべて成功する",
+      "manual_or_automated": "automated",
+      "verification_method": "cd web && npm test && npm run lint && npm run build; cd admin && npx vitest run && npm run lint && npm run build"
+    }
+  ]
+}

@@ -5,6 +5,14 @@ import { Image, Invitation } from '@/types';
 
 const PAGE_SIZE = 20;
 
+/**
+ * お気に入りの一覧の状態。
+ *
+ * 写真は一覧より先に表示されるため、「読み込み中」「失敗」「0 枚」を区別しないと、
+ * /liked が選択の消えたような表示になり、一覧が届く前に押したいいねが上書きされる。
+ */
+export type LikesStatus = 'loading' | 'ready' | 'failed';
+
 interface GalleryContextValue {
   invitation: Invitation | null;
   setInvitation: (inv: Invitation | null) => void;
@@ -13,6 +21,8 @@ interface GalleryContextValue {
   images: Image[];
   likedIds: Set<string>;
   setLikedIds: (ids: Set<string>) => void;
+  likesStatus: LikesStatus;
+  setLikesStatus: (status: LikesStatus) => void;
   toggleLikedId: (imageId: string) => void;
   updateImageLikeCount: (imageId: string, delta: number) => void;
   totalCount: number;
@@ -28,6 +38,7 @@ export function GalleryProvider({ children }: { children: ReactNode }) {
   const [allImages, setAllImages] = useState<Image[]>([]);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [likesStatus, setLikesStatus] = useState<LikesStatus>('loading');
 
   const images = useMemo(() => allImages.slice(0, visibleCount), [allImages, visibleCount]);
   const totalCount = allImages.length;
@@ -69,6 +80,8 @@ export function GalleryProvider({ children }: { children: ReactNode }) {
         images,
         likedIds,
         setLikedIds,
+        likesStatus,
+        setLikesStatus,
         toggleLikedId,
         updateImageLikeCount,
         totalCount,

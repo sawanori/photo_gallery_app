@@ -10,6 +10,8 @@ import { useNativeSave } from '@/hooks/useNativeSave';
 import { useIsNativeShell } from '@/hooks/useIsNativeShell';
 import { useGallery } from '@/contexts/GalleryContext';
 import Header from '@/components/Header';
+import LikeScopeNotice from '@/components/LikeScopeNotice';
+import LikesFailedNotice from '@/components/LikesFailedNotice';
 import MasonryGrid from '@/components/MasonryGrid';
 import ExpiredLink from '@/components/ExpiredLink';
 import AndroidSaveGuide from '@/components/AndroidSaveGuide';
@@ -33,8 +35,8 @@ const BulkDownloadNotice = dynamic(() => import('@/components/BulkDownloadNotice
 function LikedPageContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
-  const { isLoading, error, isValid } = useInvitation(token);
-  const { invitation } = useGallery();
+  const { isLoading, error, isValid, retryLikes } = useInvitation(token);
+  const { invitation, likesStatus } = useGallery();
   const { likedImages } = useLikedImages();
   const {
     isDownloading,
@@ -80,17 +82,20 @@ function LikedPageContent() {
       <Header showLikedLink={false} showBackLink showDownload={false} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <LikeScopeNotice />
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h2 className="font-serif text-xl text-ink">
               お気に入り
             </h2>
-            <p className="text-sm text-muted mt-1">
-              {likedImages.length}枚
-            </p>
+            {likesStatus === 'ready' && (
+              <p className="text-sm text-muted mt-1">
+                {likedImages.length}枚
+              </p>
+            )}
           </div>
 
-          {likedImages.length > 0 && (
+          {likesStatus === 'ready' && likedImages.length > 0 && (
             <button
               onClick={handleZipDownload}
               disabled={isDownloading || nativeSave.isSaving}
@@ -110,7 +115,17 @@ function LikedPageContent() {
           )}
         </div>
 
-        {likedImages.length === 0 ? (
+        {likesStatus === 'loading' ? (
+          <div className="flex items-center justify-center py-20">
+            <div
+              role="status"
+              aria-label="お気に入りを読み込んでいます"
+              className="w-8 h-8 border-2 border-border border-t-ink rounded-full animate-spin"
+            />
+          </div>
+        ) : likesStatus === 'failed' ? (
+          <LikesFailedNotice onRetry={retryLikes} />
+        ) : likedImages.length === 0 ? (
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} className="w-12 h-12 text-border mx-auto mb-3">

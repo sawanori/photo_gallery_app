@@ -13,6 +13,7 @@ import userEvent from '@testing-library/user-event';
 vi.mock('../contexts/GalleryContext', () => ({
   useGallery: () => ({
     invitation: { id: 'inv1', token: 'tok' },
+    likesStatus: 'ready',
     toggleLikedId: vi.fn(),
     updateImageLikeCount: vi.fn(),
   }),
@@ -27,7 +28,7 @@ vi.mock('../services/downloadService', () => ({
 }));
 
 vi.mock('../services/likeService', () => ({
-  toggleLike: vi.fn(async () => undefined),
+  setLiked: vi.fn(async () => undefined),
 }));
 
 import ImageLightbox from './ImageLightbox';

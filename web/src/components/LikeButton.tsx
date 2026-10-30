@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGallery } from '@/contexts/GalleryContext';
-import { toggleLike } from '@/services/likeService';
+import { setLiked } from '@/services/likeService';
 
 interface LikeButtonProps {
   imageId: string;
@@ -13,15 +13,16 @@ interface LikeButtonProps {
 
 export default function LikeButton({ imageId, isLiked, size = 'md' }: LikeButtonProps) {
   const { user } = useAuth();
-  const { invitation, toggleLikedId, updateImageLikeCount } = useGallery();
+  const { invitation, likesStatus, toggleLikedId, updateImageLikeCount } = useGallery();
+  // 一覧が届く前に押すと、後から届く一覧で上書きされて保存対象から写真が抜ける。
+  const canLike = invitation !== null && likesStatus === 'ready';
   const [isAnimating, setIsAnimating] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
     // 招待が読み込めていないとお気に入りの鍵が決まらない。
-    // お気に入りは招待に紐づくため、invitation なしでは操作させない。
-    if (!user || !invitation || isProcessing) return;
+    if (!user || !invitation || !canLike || isProcessing) return;
 
     setIsProcessing(true);
     setIsAnimating(true);
@@ -31,7 +32,7 @@ export default function LikeButton({ imageId, isLiked, size = 'md' }: LikeButton
     updateImageLikeCount(imageId, isLiked ? -1 : 1);
 
     try {
-      await toggleLike(invitation.id, imageId, user.uid);
+      await setLiked(invitation, imageId, user.uid, !isLiked);
     } catch {
       // Revert on error
       toggleLikedId(imageId);
@@ -47,7 +48,7 @@ export default function LikeButton({ imageId, isLiked, size = 'md' }: LikeButton
   return (
     <button
       onClick={handleClick}
-      disabled={isProcessing || !invitation}
+      disabled={isProcessing || !canLike}
       className={`
         ${sizeClasses} rounded-full flex items-center justify-center gap-1
         transition-all duration-200 cursor-pointer

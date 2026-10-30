@@ -23,6 +23,8 @@ export const ACTIVE_INVITATION = 'tok-active-invitation';
 export const OTHER_INVITATION = 'tok-other-invitation';
 export const INACTIVE_INVITATION = 'tok-inactive-invitation';
 export const EXPIRED_INVITATION = 'tok-expired-invitation';
+export const PER_DEVICE_INVITATION = 'tok-per-device-invitation';
+export const EXPIRED_PER_DEVICE_INVITATION = 'tok-expired-per-device-invitation';
 
 export const IMAGE_IN_INVITATION = 'img-in-invitation';
 export const IMAGE_ALSO_IN_INVITATION = 'img-also-in-invitation';
@@ -130,6 +132,30 @@ export async function seed(env: RulesTestEnvironment): Promise<void> {
       isActive: true,
       expiresAt: past(),
     });
+    await setDoc(doc(db, 'invitations', PER_DEVICE_INVITATION), {
+      ...baseInvitation,
+      token: PER_DEVICE_INVITATION,
+      likeScope: 'perDevice',
+      isActive: true,
+      expiresAt: future(),
+    });
+    await setDoc(doc(db, 'invitations', EXPIRED_PER_DEVICE_INVITATION), {
+      ...baseInvitation,
+      token: EXPIRED_PER_DEVICE_INVITATION,
+      likeScope: 'perDevice',
+      isActive: true,
+      expiresAt: past(),
+    });
+
+    // perDevice の分離を確かめるため、同じ写真に 2 人分の like を用意する。
+    for (const uid of [VIEWER_UID, OTHER_VIEWER_UID]) {
+      await setDoc(doc(db, 'likes', `${PER_DEVICE_INVITATION}_${uid}_${IMAGE_IN_INVITATION}`), {
+        invitationId: PER_DEVICE_INVITATION,
+        imageId: IMAGE_IN_INVITATION,
+        userId: uid,
+        createdAt: Timestamp.now(),
+      });
+    }
 
     // list の絞り込みを確かめるため、2 つの招待の like を用意する。
     await setDoc(doc(db, 'likes', `${ACTIVE_INVITATION}_${IMAGE_IN_INVITATION}`), {

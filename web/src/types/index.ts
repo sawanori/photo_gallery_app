@@ -26,6 +26,8 @@ export interface Image {
   updatedAt: Date;
 }
 
+export type LikeScope = 'shared' | 'perDevice';
+
 export interface Invitation {
   id: string;
   token: string;
@@ -41,6 +43,8 @@ export interface Invitation {
   updatedAt: Date;
   /** 作成日からの閲覧可能日数。未設定なら 7 日（utils/viewingWindow.ts） */
   viewingDays?: number;
+  /** お気に入りの範囲。未設定なら shared（services/likeService.ts） */
+  likeScope?: LikeScope;
 }
 
 export interface Session {

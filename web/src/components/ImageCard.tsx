@@ -112,7 +112,7 @@ const ImageCard = memo(function ImageCard({ image, index, onImageClick }: ImageC
         <div className="absolute bottom-0 left-0 right-0 p-3">
           {/*
             いいねの件数はここに出していたが、削除した。
-            お気に入りは招待リンク単位で記録するため（likeService の getLikeId）、
+            shared の招待ではお気に入りを招待リンク単位で記録するため（likeService の getLikeId）、
             1案件に1リンクを配る運用では値が 0 か 1 にしかならず、
             ハートの点灯と同じことを二重に表示していた。
           */}

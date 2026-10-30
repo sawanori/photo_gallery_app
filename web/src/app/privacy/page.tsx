@@ -60,7 +60,7 @@ export default function PrivacyPolicyPage() {
           </li>
           <li>
             <strong className="font-medium text-neutral-900">お気に入りの選択内容</strong>
-            ：選んでいただいた写真の識別子を保存します。撮影担当者が選定結果を確認するために使います。
+            ：選んでいただいた写真の識別子を保存します。撮影担当者が選定結果を確認するために使います。参加者ごとに選ぶ形式のギャラリーでは、選択内容を匿名の識別子と結び付けて保存し、撮影担当者には写真ごとの件数として表示します。
           </li>
           <li>
             <strong className="font-medium text-neutral-900">アクセス日時・アクセス回数</strong>

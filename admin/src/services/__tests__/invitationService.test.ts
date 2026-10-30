@@ -70,6 +70,37 @@ describe('invitationService（projectId対応）', () => {
       );
     });
 
+    it.each([
+      ['省略すると shared', undefined, 'shared'],
+      ['指定した値を保存する', 'perDevice' as const, 'perDevice'],
+    ])('likeScope: %s', async (_name, likeScope, expected) => {
+      mockFirestore.collection.mockReturnValue('invitations-collection');
+      mockFirestore.doc.mockReturnValue({ id: 'new-invitation-id' });
+      mockFirestore.setDoc.mockResolvedValue(undefined);
+      mockFirestore.getDoc.mockResolvedValue(
+        createMockDocSnapshot('new-invitation-id', {
+          ...sampleInvitation,
+          likeScope: expected,
+          expiresAt: { toDate: () => new Date('2025-12-31') },
+        })
+      );
+
+      const result = await invitationService.createInvitation({
+        projectId: 'project-1',
+        clientName: '田中太郎',
+        createdBy: 'admin-uid',
+        imageIds: ['image-1'],
+        expiresAt: new Date('2025-12-31'),
+        likeScope,
+      });
+
+      expect(mockFirestore.setDoc).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ likeScope: expected })
+      );
+      expect(result.likeScope).toBe(expected);
+    });
+
     it('21文字のtokenを生成する', async () => {
       const mockDocRef = { id: 'new-invitation-id' };
       mockFirestore.collection.mockReturnValue('invitations-collection');

@@ -68,6 +68,38 @@ service cloud.firestore {
       return usableInvitation(inv) && imageId in inv.imageIds;
     }
 
+    /**
+     * このセッションの招待が、お気に入りを端末（匿名 UID）ごとに分ける招待か。
+     * likeScope を持たない招待は 'shared' として扱う。
+     */
+    function sessionLikesPerDevice() {
+      return invitationData(sessionInvitationId()).get('likeScope', 'shared') == 'perDevice';
+    }
+
+    /** 作成する like のドキュメント ID が、招待の範囲に合った形式か。 */
+    function likeIdMatchesScope(likeId, data) {
+      return sessionLikesPerDevice()
+        ? likeId == data.invitationId + '_' + request.auth.uid + '_' + data.imageId &&
+          data.userId == request.auth.uid
+        : likeId == data.invitationId + '_' + data.imageId;
+    }
+
+    /**
+     * 単体取得してよい like か。**ドキュメントの中身を見ず、ID だけで判定する。**
+     * 有無で許可を変えると、拒否されたこと自体が「相手がいいねしている」という
+     * 情報になる。未作成の自分の like を読む必要もある。
+     */
+    function likeIdInOwnScope(likeId) {
+      return sessionLikesPerDevice()
+        ? likeId.matches(sessionInvitationId() + '_' + request.auth.uid + '_.+')
+        : likeId.matches(sessionInvitationId() + '_.+');
+    }
+
+    /** perDevice の招待では、自分の like だけを一覧・削除できる。 */
+    function likeOwnedInScope(data) {
+      return !sessionLikesPerDevice() || data.userId == request.auth.uid;
+    }
+
     /** likeCount の変化が ±1 か。任意の値への書き換えを封じる。 */
     function likeCountDeltaValid() {
       return request.resource.data.likeCount == resource.data.likeCount + 1 ||
@@ -140,27 +172,35 @@ service cloud.firestore {
 
     // Likes collection
     match /likes/{likeId} {
-      // お気に入りは招待に紐づく。匿名 UID には紐づけない。
-      // UID を鍵にすると、同じ招待リンクでもブラウザとアプリで別人扱いになり、
-      // クライアントがブラウザで選んだお気に入りがアプリで消える。
+      // お気に入りの範囲は招待の likeScope で決まる。
+      //
+      // shared（既定）: 招待に紐づく。`{invitationId}_{imageId}`。同じリンクを開いた全員で
+      // 1 つの選択を共有する。ブラウザで選んだお気に入りがアプリでも見える。
+      // perDevice: 端末に紐づく。`{invitationId}_{uid}_{imageId}`。パーティーのように
+      // 複数の参加者が同じリンクを使うとき、他の人のいいねを見せない。
       //
       // 読み書きできるのは、そのセッションが開いている招待の分だけ。
-      // 招待 ID は招待トークンそのものなので、これを知っている＝ギャラリーを
-      // 開ける立場であり、その範囲を超えた情報は得られない。
       //
       // 2026-09-02: すべての条項に「招待が今も有効」を足した。セッションは
       // 消えないので、これが無いと失効した招待でも選定を書き換えられる（S4-B2）。
-      allow get: if isAuthenticated();
+      //
+      // 2026-10-30: get を認証済み全員から絞った。shared の一覧には他の人の userId が
+      // 含まれるので、その UID と招待トークンから perDevice の文書を直接読めたため。
+      allow get: if isAdmin() ||
+        (hasValidSession() &&
+         sessionInvitationUsable() &&
+         likeIdInOwnScope(likeId));
       allow list: if isAdmin() ||
         (hasValidSession() &&
          resource.data.invitationId == sessionInvitationId() &&
-         sessionInvitationUsable());
+         sessionInvitationUsable() &&
+         likeOwnedInScope(resource.data));
       // imageId が招待の選定に含まれることを要求する。含まれない like を作れると、
       // 管理者の getLikedImageIdsByInvitation に身に覚えのない画像が混ざる（S4-B5）。
       allow create: if hasValidSession() &&
         request.resource.data.invitationId == sessionInvitationId() &&
         request.resource.data.imageId is string &&
-        likeId == request.resource.data.invitationId + '_' + request.resource.data.imageId &&
+        likeIdMatchesScope(likeId, request.resource.data) &&
         imageInSessionInvitation(request.resource.data.imageId);
       // 管理者にも削除を許す。画像を削除したとき、その画像に付いたお気に入りも
       // 一緒に消す必要があるため。2026-08-17 に read を get / list へ分けた際、
@@ -170,7 +210,8 @@ service cloud.firestore {
       allow delete: if isAdmin() ||
         (hasValidSession() &&
          resource.data.invitationId == sessionInvitationId() &&
-         sessionInvitationUsable());
+         sessionInvitationUsable() &&
+         likeOwnedInScope(resource.data));
     }
 
     // Invitations collection

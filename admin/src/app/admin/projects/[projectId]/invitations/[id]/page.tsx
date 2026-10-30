@@ -26,7 +26,7 @@ import {
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { getInvitation, updateInvitation, getGalleryUrl, Invitation } from '@/services/invitationService';
-import { getLikedImageIdsByInvitation } from '@/services/likeService';
+import { getLikedImageIdsByInvitation, getLikeSummaryByInvitation } from '@/services/likeService';
 import { getImage, type Image } from '@/services/imageService';
 import {
   effectiveDeadline,
@@ -71,17 +71,35 @@ export default function InvitationDetailPage() {
   const [selectionLoading, setSelectionLoading] = useState(false);
   const [selectionFailed, setSelectionFailed] = useState(false);
 
-  const loadSelection = useCallback(async (id: string) => {
+  // perDevice の招待の集計。shared では null のまま。
+  const [likeCounts, setLikeCounts] = useState<Map<string, number> | null>(null);
+  const [deviceCount, setDeviceCount] = useState(0);
+
+  const loadSelection = useCallback(async (target: Invitation) => {
     try {
       setSelectionLoading(true);
       setSelectionFailed(false);
-      const imageIds = await getLikedImageIdsByInvitation(id);
+      const summary =
+        target.likeScope === 'perDevice' ? await getLikeSummaryByInvitation(target.id) : null;
+      const imageIds = summary
+        ? summary.counts.map(({ imageId }) => imageId)
+        : await getLikedImageIdsByInvitation(target.id);
+      const counts = summary
+        ? new Map(summary.counts.map(({ imageId, count }) => [imageId, count]))
+        : null;
       const images = (await Promise.all(imageIds.map((imageId) => getImage(imageId))))
         .filter((image): image is Image => image !== null);
-      // 撮影者が見る順序は、管理画面のアップロード順（ファイル名の自然順）に揃える
+      // 撮影者が見る順序は、管理画面のアップロード順（ファイル名の自然順）に揃える。
+      // perDevice では人気の写真を探すので、件数の多い順を優先する。
       const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-      images.sort((a, b) => collator.compare(selectionFileName(a), selectionFileName(b)));
+      images.sort(
+        (a, b) =>
+          (counts ? (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) : 0) ||
+          collator.compare(selectionFileName(a), selectionFileName(b))
+      );
       setSelected(images);
+      setLikeCounts(counts);
+      setDeviceCount(summary?.deviceCount ?? 0);
     } catch (error) {
       console.error('Failed to load selection:', error);
       setSelectionFailed(true);
@@ -114,7 +132,7 @@ export default function InvitationDetailPage() {
         setLoadFailed(false);
         if (inv) {
           setDaysDraft(normalizeViewingDays(inv.viewingDays));
-          void loadSelection(inv.id);
+          void loadSelection(inv);
         }
       } catch (error) {
         if (cancelled) return;
@@ -307,6 +325,9 @@ export default function InvitationDetailPage() {
               {invitation.clientEmail}
             </Descriptions.Item>
           )}
+          <Descriptions.Item label="いいねの扱い">
+            {invitation.likeScope === 'perDevice' ? '参加者ごと（端末ごとに別々）' : '1組で共有'}
+          </Descriptions.Item>
           <Descriptions.Item label="画像数">
             {invitation.imageIds.length} 枚
           </Descriptions.Item>
@@ -418,7 +439,8 @@ export default function InvitationDetailPage() {
         style={{ marginTop: 16 }}
         title={
           <span>
-            <HeartOutlined /> クライアントの選定
+            <HeartOutlined />{' '}
+            {invitation.likeScope === 'perDevice' ? '参加者のいいね' : 'クライアントの選定'}
           </span>
         }
         extra={
@@ -440,7 +462,7 @@ export default function InvitationDetailPage() {
             </p>
             <Button
               icon={<ReloadOutlined />}
-              onClick={() => invitation && loadSelection(invitation.id)}
+              onClick={() => invitation && loadSelection(invitation)}
             >
               再試行
             </Button>
@@ -448,16 +470,33 @@ export default function InvitationDetailPage() {
         ) : !selected || selected.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description="まだ選ばれていません"
+            description={
+              invitation.likeScope === 'perDevice' ? 'まだいいねがありません' : 'まだ選ばれていません'
+            }
           />
         ) : (
           <>
-            <Statistic
-              title="選ばれた枚数"
-              value={selected.length}
-              suffix={`/ ${invitation.imageIds.length} 枚`}
-              style={{ marginBottom: 16 }}
-            />
+            {likeCounts ? (
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col>
+                  <Statistic
+                    title="いいねされた枚数"
+                    value={selected.length}
+                    suffix={`/ ${invitation.imageIds.length} 枚`}
+                  />
+                </Col>
+                <Col>
+                  <Statistic title="いいねした端末・ブラウザ数" value={deviceCount} />
+                </Col>
+              </Row>
+            ) : (
+              <Statistic
+                title="選ばれた枚数"
+                value={selected.length}
+                suffix={`/ ${invitation.imageIds.length} 枚`}
+                style={{ marginBottom: 16 }}
+              />
+            )}
             <Row gutter={[8, 8]}>
               {selected.map((image) => (
                 <Col key={image.id} xs={12} sm={8} md={6}>
@@ -481,6 +520,9 @@ export default function InvitationDetailPage() {
                   >
                     {selectionFileName(image)}
                   </div>
+                  {likeCounts && (
+                    <div style={{ fontSize: 12, marginTop: 2 }}>♥ {likeCounts.get(image.id) ?? 0}</div>
+                  )}
                 </Col>
               ))}
             </Row>

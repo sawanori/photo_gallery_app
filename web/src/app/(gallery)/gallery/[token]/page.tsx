@@ -5,7 +5,10 @@ import { use } from 'react';
 import dynamic from 'next/dynamic';
 import { useInvitation } from '@/hooks/useInvitation';
 import { useGalleryImages } from '@/hooks/useGalleryImages';
+import { useGallery } from '@/contexts/GalleryContext';
 import Header from '@/components/Header';
+import LikeScopeNotice from '@/components/LikeScopeNotice';
+import LikesFailedNotice from '@/components/LikesFailedNotice';
 import MasonryGrid from '@/components/MasonryGrid';
 import ExpiredLink from '@/components/ExpiredLink';
 import IosSaveGuide from '@/components/IosSaveGuide';
@@ -35,7 +38,8 @@ const SKELETON_HEIGHTS = [
 
 export default function GalleryPage({ params }: PageProps) {
   const { token } = use(params);
-  const { isLoading, error, isValid } = useInvitation(token);
+  const { isLoading, error, isValid, retryLikes } = useInvitation(token);
+  const { likesStatus } = useGallery();
   const { images, hasMore, isLoadingMore, loadMore, totalCount } = useGalleryImages();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -74,6 +78,8 @@ export default function GalleryPage({ params }: PageProps) {
       <Header showLikedLink showBackLink={false} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <LikeScopeNotice />
+        {likesStatus === 'failed' && <LikesFailedNotice onRetry={retryLikes} />}
         <MasonryGrid
           images={images}
           onImageClick={(index) => setLightboxIndex(index)}

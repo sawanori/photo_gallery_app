@@ -28,6 +28,12 @@ const TOKEN_ALPHABET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-';
 const generateToken = customAlphabet(TOKEN_ALPHABET, 21);
 
+/**
+ * お気に入りの範囲。shared は全員で 1 つの選択を共有し、perDevice は端末ごとに分ける。
+ * 作成後は変更しない。変えると既存のいいねが読めなくなる。
+ */
+export type LikeScope = 'shared' | 'perDevice';
+
 export interface Invitation {
   id: string;
   token: string;
@@ -43,6 +49,8 @@ export interface Invitation {
    * （web/src/services/invitationService.ts の validateInvitation が判定する）。
    */
   viewingDays?: number;
+  /** 未設定なら shared として扱われる。 */
+  likeScope?: LikeScope;
   isActive: boolean;
   accessCount: number;
   lastAccessedAt?: Date;
@@ -67,6 +75,7 @@ const docToInvitation = (docSnap: { id: string; data: () => any }): Invitation |
     imageIds: data.imageIds || [],
     expiresAt: data.expiresAt?.toDate(),
     viewingDays: data.viewingDays,
+    likeScope: data.likeScope,
     isActive: data.isActive ?? true,
     accessCount: data.accessCount || 0,
     lastAccessedAt: data.lastAccessedAt?.toDate(),
@@ -131,6 +140,8 @@ export const createInvitation = async (params: {
   expiresAt: Date;
   /** 省略時は web 側の既定（7 日）が適用される。 */
   viewingDays?: number;
+  /** 省略時は shared。 */
+  likeScope?: LikeScope;
 }): Promise<Invitation> => {
   if (params.imageIds.length === 0) {
     throw new Error('imageIds must not be empty');
@@ -155,6 +166,7 @@ export const createInvitation = async (params: {
     imageIds: params.imageIds,
     expiresAt: Timestamp.fromDate(params.expiresAt),
     viewingDays: normalizeViewingDays(params.viewingDays),
+    likeScope: params.likeScope ?? 'shared',
     isActive: true,
     accessCount: 0,
     createdAt: serverTimestamp(),
