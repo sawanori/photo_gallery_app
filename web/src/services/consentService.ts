@@ -32,6 +32,8 @@ export interface ConsentForm {
   id: string;
   projectId: string;
   title: string;
+  /** 写真の受け渡しに関与しない主催者・会場の名前。同意事項に一項目足す。空なら足さない。 */
+  organizerName: string;
   isActive: boolean;
   linkMode: LinkMode;
   sharedInvitationId?: string;
@@ -91,6 +93,7 @@ export async function getConsentForm(db: Firestore, formId: string): Promise<Con
     id: snap.id,
     projectId: data.projectId,
     title: data.title ?? '',
+    organizerName: typeof data.organizerName === 'string' ? data.organizerName.trim() : '',
     isActive: data.isActive === true,
     linkMode: data.linkMode === 'shared' ? 'shared' : 'perPerson',
     sharedInvitationId: data.sharedInvitationId || undefined,
@@ -144,6 +147,8 @@ interface StoredResponse {
   nameKana: string;
   email: string;
   consentVersion: string;
+  /** 同意した時点のフォームの organizerName。版と合わせて、同意した文面を再現する。 */
+  organizerName: string;
   agreedAt: Date;
   invitationId?: string;
   deliveryStatus: DeliveryStatus;
@@ -157,6 +162,7 @@ function readResponse(data: DocumentData): StoredResponse {
     nameKana: data.nameKana,
     email: data.email,
     consentVersion: data.consentVersion,
+    organizerName: data.organizerName ?? '',
     agreedAt: toDate(data.agreedAt) ?? new Date(0),
     invitationId: data.invitationId || undefined,
     deliveryStatus: data.deliveryStatus ?? 'pending',
@@ -328,6 +334,7 @@ export async function submitConsent(
       nameKana: input.nameKana,
       email: input.email,
       consentVersion: CONSENT_VERSION,
+      organizerName: form.organizerName,
       agreedAt: Timestamp.fromDate(now),
       ...(existing ? {} : { createdAt: Timestamp.fromDate(now), deliveryStatus: 'pending' }),
       updatedAt: FieldValue.serverTimestamp(),

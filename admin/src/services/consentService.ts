@@ -33,6 +33,11 @@ export interface ConsentForm {
   id: string;
   projectId: string;
   title: string;
+  /**
+   * 写真の受け渡しに関与しない主催者・会場の名前（例: WWJ株式会社）。
+   * 入れると、同意事項に「受け渡しは当社と利用者の間のもので、この会社は関与しない」が載る。
+   */
+  organizerName: string;
   isActive: boolean;
   linkMode: LinkMode;
   sharedInvitationId?: string;
@@ -50,6 +55,8 @@ export interface ConsentResponse {
   nameKana: string;
   email: string;
   consentVersion: string;
+  /** 同意した時点のフォームの organizerName。 */
+  organizerName: string;
   agreedAt?: Date;
   deliveryStatus: DeliveryStatus;
   invitationId?: string;
@@ -59,7 +66,7 @@ export interface ConsentResponse {
 
 export type ConsentFormSettings = Pick<
   ConsentForm,
-  'title' | 'linkMode' | 'sharedInvitationId' | 'deliveryTiming' | 'viewingDays'
+  'title' | 'organizerName' | 'linkMode' | 'sharedInvitationId' | 'deliveryTiming' | 'viewingDays'
 >;
 
 const FORMS_COLLECTION = 'consentForms';
@@ -80,6 +87,7 @@ const docToForm = (id: string, data: any): ConsentForm => ({
   id,
   projectId: data.projectId,
   title: data.title ?? '',
+  organizerName: data.organizerName ?? '',
   isActive: data.isActive === true,
   linkMode: data.linkMode === 'shared' ? 'shared' : 'perPerson',
   sharedInvitationId: data.sharedInvitationId || undefined,
@@ -98,6 +106,7 @@ const docToResponse = (id: string, data: any): ConsentResponse => ({
   nameKana: data.nameKana ?? '',
   email: data.email ?? '',
   consentVersion: data.consentVersion ?? '',
+  organizerName: data.organizerName ?? '',
   agreedAt: data.agreedAt?.toDate(),
   deliveryStatus: data.deliveryStatus ?? 'pending',
   invitationId: data.invitationId || undefined,
@@ -129,6 +138,7 @@ export const getConsentResponses = async (formId: string): Promise<ConsentRespon
 
 const settingsToData = (settings: ConsentFormSettings) => ({
   title: settings.title.trim(),
+  organizerName: (settings.organizerName ?? '').trim(),
   linkMode: settings.linkMode,
   // perPerson に切り替えたら共通の招待は持たない。web が誤って読まないように消しておく。
   sharedInvitationId: settings.linkMode === 'shared' ? settings.sharedInvitationId ?? '' : '',
@@ -163,6 +173,7 @@ export const updateConsentForm = async (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data: Record<string, any> = { updatedAt: serverTimestamp() };
   if (updates.title !== undefined) data.title = updates.title.trim();
+  if (updates.organizerName !== undefined) data.organizerName = updates.organizerName.trim();
   if (updates.linkMode !== undefined) {
     data.linkMode = updates.linkMode;
     data.sharedInvitationId =

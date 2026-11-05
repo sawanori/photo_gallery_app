@@ -6,8 +6,12 @@
  * 「その人が何に同意したか」を後から辿れるのは版を通してだけである。
  *
  * 2026-11-05 の版はたたき台。公開前に NonTurn が内容を確認する前提で書いている。
+ * 2026-11-05-2: 「受け渡しの当事者」（主催者・会場は関与しない）を足した。
+ *
+ * 文面はフォームの `organizerName`（関与しない主催者・会場の名前）によって一項目変わる。
+ * 同意の記録には版と一緒にその名前も残すので、版と名前から文面を再現できる。
  */
-export const CONSENT_VERSION = '2026-11-05';
+export const CONSENT_VERSION = '2026-11-05-2';
 
 export const CONSENT_CONTACT_EMAIL = 'info@non-turn.com';
 
@@ -16,7 +20,25 @@ export interface ConsentClause {
   body: string;
 }
 
-export const CONSENT_CLAUSES: ConsentClause[] = [
+/**
+ * 写真の受け渡しの当事者。主催者や会場の運営者が受け渡しの相手だと誤解されないように書く。
+ * 参加者は主催者に問い合わせがちだが、主催者はこのサービスにも個人情報にも触れない。
+ */
+function partiesClause(organizerName: string): ConsentClause {
+  return {
+    title: '写真の受け渡しの当事者',
+    body: `写真の受け取りおよび閲覧は、当社とご利用者様との間で行うものです。${organizerName}は、写真の受け渡し、オンラインギャラリーの提供、および本同意でご入力いただく個人情報の取り扱いに関与しません。写真の受け取りに関するお問い合わせは、当社までご連絡ください。`,
+  };
+}
+
+/** 主催者・会場の名前が無ければ「受け渡しの当事者」の項目を出さない。 */
+export function consentClauses(organizerName?: string): ConsentClause[] {
+  const name = organizerName?.trim();
+  if (!name) return BASE_CLAUSES;
+  return [BASE_CLAUSES[0], partiesClause(name), ...BASE_CLAUSES.slice(1)];
+}
+
+const BASE_CLAUSES: ConsentClause[] = [
   {
     title: '写真の受け取り',
     body:

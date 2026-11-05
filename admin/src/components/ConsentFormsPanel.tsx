@@ -129,6 +129,7 @@ export default function ConsentFormsPanel({ projectId, projectName, invitations,
       target === 'new'
         ? {
             title: projectName,
+            organizerName: '',
             linkMode: 'perPerson',
             sharedInvitationId: undefined,
             deliveryTiming: 'onSubmit',
@@ -136,6 +137,7 @@ export default function ConsentFormsPanel({ projectId, projectName, invitations,
           }
         : {
             title: target.title,
+            organizerName: target.organizerName,
             linkMode: target.linkMode,
             sharedInvitationId: target.sharedInvitationId,
             deliveryTiming: target.deliveryTiming,
@@ -293,6 +295,7 @@ export default function ConsentFormsPanel({ projectId, projectName, invitations,
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, fontSize: 13, color: 'var(--color-ink-muted)', marginBottom: 12 }}>
                   <span>{linkModeLabel[form.linkMode]}</span>
                   <span>{deliveryTimingLabel[form.deliveryTiming]}</span>
+                  {form.organizerName && <span>{form.organizerName} は関与しない旨を記載</span>}
                   {form.linkMode === 'perPerson' && <span>閲覧 {form.viewingDays} 日</span>}
                   <span>同意 {list.length} 人</span>
                 </div>
@@ -391,6 +394,15 @@ export default function ConsentFormsPanel({ projectId, projectName, invitations,
             rules={[{ required: true, whitespace: true, message: 'イベント名を入力してください' }]}
           >
             <Input maxLength={100} />
+          </Form.Item>
+
+          <Form.Item
+            label="関与しない主催者・会場"
+            name="organizerName"
+            tooltip="入れると、同意事項に「写真の受け取りと閲覧は当社と参加者の間のもので、この会社は関与しない」という項目が載ります。"
+            extra="例: WWJ株式会社。空欄ならこの項目は載りません。参加者が同意したあとで変えても、その人の同意の記録は変わりません。"
+          >
+            <Input maxLength={100} placeholder="WWJ株式会社" />
           </Form.Item>
 
           <Form.Item label="送る URL" name="linkMode">

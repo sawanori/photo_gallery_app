@@ -1,4 +1,4 @@
-import { CONSENT_CLAUSES, CONSENT_CONTACT_EMAIL } from '@/content/consentTerms';
+import { CONSENT_CONTACT_EMAIL, consentClauses } from '@/content/consentTerms';
 import type { MailMessage } from '@/lib/mailer';
 
 /**
@@ -20,6 +20,8 @@ export interface ConsentEmailInput {
   email: string;
   agreedAt: Date;
   consentVersion: string;
+  /** 同意した時点の organizerName。同意事項の文面をその時点のものにそろえる。 */
+  organizerName?: string;
   gallery?: { url: string; deadline: Date | null };
 }
 
@@ -133,7 +135,7 @@ export function composeConsentEmail(input: ConsentEmailInput): MailMessage {
   });
 
   blocks.push({ type: 'heading', text: '同意事項' });
-  CONSENT_CLAUSES.forEach((clause, index) => {
+  consentClauses(input.organizerName).forEach((clause, index) => {
     blocks.push({ type: 'p', lines: [`${index + 1}. ${clause.title}`, clause.body] });
   });
 

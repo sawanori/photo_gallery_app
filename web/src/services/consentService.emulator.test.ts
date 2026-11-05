@@ -2,6 +2,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deleteApp, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { CONSENT_VERSION } from '@/content/consentTerms';
 import type { MailMessage } from '@/lib/mailer';
 import { deliverForForm, responseIdFor, submitConsent, type ConsentDeps } from './consentService';
 
@@ -36,6 +37,7 @@ describe.skipIf(!EMULATOR)('consentService（エミュレータ）', () => {
     db.collection('consentForms').doc(id).set({
       projectId: 'project-1',
       title: '秋の交流会',
+      organizerName: 'WWJ株式会社',
       isActive: true,
       linkMode: 'perPerson',
       deliveryTiming: 'onSubmit',
@@ -113,6 +115,10 @@ describe.skipIf(!EMULATOR)('consentService（エミュレータ）', () => {
     expect(sent[0].subject).toContain('同意を受け付けました');
     expect(sent[0].text).toContain(`${ORIGIN}/gallery/${token}`);
     expect(sent[0].text).toContain('企業名：株式会社サンプル');
+    // 同意した文面を再現できるよう、その時点の主催者名を記録とメールに残す。
+    expect(stored.organizerName).toBe('WWJ株式会社');
+    expect(stored.consentVersion).toBe(CONSENT_VERSION);
+    expect(sent[0].text).toContain('WWJ株式会社は、写真の受け渡し');
   });
 
   it('同じ人が送り直しても、記録も招待も増やさない（大文字小文字の違いも同じ人）', async () => {

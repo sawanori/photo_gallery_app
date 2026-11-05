@@ -9,7 +9,7 @@ import { PAGE_FONT } from './font';
  *
  * フォームの設定は Admin SDK でサーバー側から読む。`consentForms` はルールで
  * クライアントから読めない（共通の招待トークンを持っているため）。
- * 画面に渡すのはイベント名と受付中かどうかだけにする。
+ * 画面に渡すのはイベント名と、同意事項に載せる主催者・会場の名前だけにする。
  *
  * サイト全体の noindex（app/layout.tsx）をそのまま受け継ぐ。
  */
@@ -50,5 +50,7 @@ export default async function ConsentPage({ params }: { params: Promise<{ formId
     );
   }
 
-  return <ConsentFormClient formId={form.id} eventTitle={form.title} />;
+  return (
+    <ConsentFormClient formId={form.id} eventTitle={form.title} organizerName={form.organizerName} />
+  );
 }

@@ -3,8 +3,8 @@
 import { useState, type FormEvent } from 'react';
 import {
   CONSENT_CHECKBOX_LABEL,
-  CONSENT_CLAUSES,
   CONSENT_CONTACT_EMAIL,
+  consentClauses,
 } from '@/content/consentTerms';
 import {
   hasErrors,
@@ -20,6 +20,7 @@ import { PAGE_FONT } from './font';
 interface Props {
   formId: string;
   eventTitle: string;
+  organizerName: string;
 }
 
 type Phase =
@@ -51,7 +52,7 @@ function submitErrorMessage(code: string | undefined, status: number): string {
   return '送信できませんでした。時間をおいて、もう一度送信してください。';
 }
 
-export default function ConsentFormClient({ formId, eventTitle }: Props) {
+export default function ConsentFormClient({ formId, eventTitle, organizerName }: Props) {
   const [values, setValues] = useState<ConsentInput>({ companyName: '', name: '', nameKana: '', email: '' });
   const [agreed, setAgreed] = useState(false);
   const [errors, setErrors] = useState<ConsentErrors>({});
@@ -139,7 +140,7 @@ export default function ConsentFormClient({ formId, eventTitle }: Props) {
           同意事項
         </h2>
         <ol className="mt-4 space-y-5 rounded-lg bg-[var(--color-surface)] px-5 py-6">
-          {CONSENT_CLAUSES.map((clause, index) => (
+          {consentClauses(organizerName).map((clause, index) => (
             <li key={clause.title}>
               <p className="text-[15px] font-medium">
                 {index + 1}. {clause.title}

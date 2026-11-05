@@ -296,6 +296,8 @@ likes/{invitationId}_{uid}_{imageId} # likeScope 'perDevice': one person's like.
 
 consentForms/{formId}                # formId is random (21 chars): knowing it lets you receive photos
   - projectId, title: string         # title is the event name shown on the form and in emails
+  - organizerName: string            # organiser/venue NOT involved in the hand-over (e.g. WWJ株式会社).
+                                     # Non-empty adds a 「受け渡しの当事者」 clause; empty omits it
   - isActive: boolean
   - linkMode: 'perPerson' | 'shared'
   - sharedInvitationId: string       # the invitation sent to everyone when linkMode is shared
@@ -308,6 +310,8 @@ consentResponses/{formId}_{sha256(lower-cased email) first 32 hex}  # written by
   - formId, projectId: string
   - companyName, name, nameKana, email: string
   - consentVersion: string           # CONSENT_VERSION the person agreed to
+  - organizerName: string            # the form's organizerName at that time; with the version it
+                                     # reproduces the exact wording agreed to
   - agreedAt: timestamp              # latest submission
   - deliveryStatus: 'pending' | 'sent' | 'failed'
   - invitationId?: string            # the invitation that was (or will be) sent
