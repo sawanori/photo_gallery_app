@@ -276,5 +276,27 @@ service cloud.firestore {
          invitationUsable(request.resource.data.invitationId));
       allow delete: if isAdmin();
     }
+
+    // Consent forms collection
+    match /consentForms/{formId} {
+      // 写真の受け取りへの同意フォーム。管理画面で作り、参加者は web の
+      // /consent/{formId} から送信する。参加者側の読み書きは web の Route Handler が
+      // Admin SDK で行うので、クライアントには管理者以外一切許さない。
+      // 共通 URL の設定では sharedInvitationId に招待トークンを持つため、
+      // 匿名認証しただけの第三者に読ませてはいけない。
+      allow read, update, delete: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.projectId is string &&
+        request.resource.data.projectId.size() > 0;
+    }
+
+    // Consent responses collection
+    match /consentResponses/{responseId} {
+      // 参加者の企業名・氏名・メールアドレス。書くのは web の Route Handler（Admin SDK）
+      // だけで、ルールを通らない。クライアントからは作成も改変もさせない。
+      // 同意の記録なので、管理者でも中身を書き換えられないようにしておく。
+      allow read, delete: if isAdmin();
+      allow create, update: if false;
+    }
   }
 }

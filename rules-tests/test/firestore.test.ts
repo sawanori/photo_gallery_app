@@ -731,3 +731,96 @@ describe('projects', () => {
     await assertFails(getDoc(doc(anonDb(), 'images', IMAGE_IN_INVITATION)));
   });
 });
+
+describe('consentForms / consentResponses（写真の受け取りへの同意）', () => {
+  const FORM_ID = 'consent-form-1';
+  const RESPONSE_ID = `${FORM_ID}_hash`;
+
+  beforeEach(async () => {
+    // 参加者側の書き込みは web の Route Handler（Admin SDK）が行い、ルールを通らない。
+    await env.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore() as unknown as Firestore;
+      await setDoc(doc(db, 'consentForms', FORM_ID), {
+        projectId: PROJECT_ID_DOC,
+        title: 'テストイベント',
+        isActive: true,
+        linkMode: 'shared',
+        sharedInvitationId: ACTIVE_INVITATION,
+        deliveryTiming: 'onSubmit',
+        viewingDays: 7,
+        createdBy: ADMIN_UID,
+        createdAt: Timestamp.now(),
+      });
+      await setDoc(doc(db, 'consentResponses', RESPONSE_ID), {
+        formId: FORM_ID,
+        projectId: PROJECT_ID_DOC,
+        companyName: '株式会社サンプル',
+        name: '山田 太郎',
+        nameKana: 'やまだ たろう',
+        email: 'taro@example.com',
+        consentVersion: '2026-11-05',
+        agreedAt: Timestamp.now(),
+        deliveryStatus: 'pending',
+      });
+    });
+  });
+
+  it('管理者はフォームを作成・読み取り・更新・削除できる', async () => {
+    const db = adminDb();
+    await assertSucceeds(
+      setDoc(doc(db, 'consentForms', 'consent-form-2'), {
+        projectId: PROJECT_ID_DOC,
+        title: '別のイベント',
+        isActive: true,
+      })
+    );
+    await assertSucceeds(
+      getDocs(query(collection(db, 'consentForms'), where('projectId', '==', PROJECT_ID_DOC)))
+    );
+    await assertSucceeds(updateDoc(doc(db, 'consentForms', FORM_ID), { isActive: false }));
+    await assertSucceeds(deleteDoc(doc(db, 'consentForms', 'consent-form-2')));
+  });
+
+  it('projectId の無いフォームは管理者でも作れない', async () => {
+    await assertFails(setDoc(doc(adminDb(), 'consentForms', 'consent-form-3'), { title: 'x' }));
+  });
+
+  it('匿名ユーザーはフォームを読めない（共通の招待トークンを持つため）', async () => {
+    await assertFails(getDoc(doc(viewerDb(), 'consentForms', FORM_ID)));
+    await assertFails(getDocs(collection(viewerDb(), 'consentForms')));
+    await assertFails(getDoc(doc(anonDb(), 'consentForms', FORM_ID)));
+  });
+
+  it('匿名ユーザーはフォームを作れず、変えられない', async () => {
+    await assertFails(
+      setDoc(doc(viewerDb(), 'consentForms', 'consent-form-4'), { projectId: PROJECT_ID_DOC })
+    );
+    await assertFails(updateDoc(doc(viewerDb(), 'consentForms', FORM_ID), { isActive: false }));
+  });
+
+  it('管理者は同意の記録を読み取り・削除できるが、作成も改変もできない', async () => {
+    const db = adminDb();
+    await assertSucceeds(
+      getDocs(query(collection(db, 'consentResponses'), where('formId', '==', FORM_ID)))
+    );
+    await assertFails(
+      updateDoc(doc(db, 'consentResponses', RESPONSE_ID), { email: 'other@example.com' })
+    );
+    await assertFails(
+      setDoc(doc(db, 'consentResponses', `${FORM_ID}_new`), { formId: FORM_ID })
+    );
+    await assertSucceeds(deleteDoc(doc(db, 'consentResponses', RESPONSE_ID)));
+  });
+
+  it('匿名ユーザーは同意の記録を読めず、書けない', async () => {
+    await assertFails(getDoc(doc(viewerDb(), 'consentResponses', RESPONSE_ID)));
+    await assertFails(getDocs(collection(viewerDb(), 'consentResponses')));
+    await assertFails(
+      setDoc(doc(viewerDb(), 'consentResponses', `${FORM_ID}_self`), {
+        formId: FORM_ID,
+        email: 'self@example.com',
+      })
+    );
+    await assertFails(deleteDoc(doc(viewerDb(), 'consentResponses', RESPONSE_ID)));
+  });
+});

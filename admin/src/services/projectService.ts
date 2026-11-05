@@ -21,6 +21,7 @@ import {
   type DeleteImagesResult,
 } from './imageService';
 import { getInvitationsByProject } from './invitationService';
+import { deleteConsentDataForProject } from './consentService';
 import { createBatchWriter } from '../utils/batchWriter';
 import dayjs from 'dayjs';
 
@@ -179,6 +180,10 @@ export const deleteProject = async (
   projectId: string,
   onProgress?: (progress: DeleteProgress) => void
 ): Promise<DeleteImagesResult> => {
+  // 0. 同意フォームと同意の記録を消す。フォームが生きていると、削除の途中に届いた
+  //    送信が新しい招待を作り、次の手順で消し残す。
+  await deleteConsentDataForProject(projectId);
+
   // 1. 招待とそのセッションを消す。アクセスを断つのが先。
   const invitations = await getInvitationsByProject(projectId);
   if (invitations.length > 0) {

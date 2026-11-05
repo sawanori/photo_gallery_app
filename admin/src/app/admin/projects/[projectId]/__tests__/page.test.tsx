@@ -29,6 +29,11 @@ vi.mock('../../../../../services/invitationService', () => ({
   getGalleryUrl: (token: string) => `http://localhost:3002/gallery/${token}`,
 }));
 
+// 同意フォームのタブは自分でデータを読む。この画面のテストでは中身を見ない。
+vi.mock('../../../../../components/ConsentFormsPanel', () => ({
+  default: () => null,
+}));
+
 vi.mock('../../../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { uid: 'admin-uid', email: 'admin@test.com' },

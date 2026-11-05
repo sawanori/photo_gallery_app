@@ -14,6 +14,7 @@ import type { Metadata } from 'next';
  * - お気に入り: firestore.rules の likes
  * - 写真の保存: mobile/src/save/（書き込み専用。読み取り権限は宣言しない）
  * - 解析ツールは一切入れていない（web / mobile とも依存に無い）
+ * - 同意フォーム: web/src/services/consentService.ts（企業名・氏名・読み仮名・メールアドレス）
  */
 export const metadata: Metadata = {
   title: 'プライバシーポリシー | NonTurnPhoto',
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-const UPDATED = '2026年8月22日';
+const UPDATED = '2026年11月5日';
 const CONTACT_EMAIL = 'info@non-turn.com';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -46,9 +47,15 @@ export default function PrivacyPolicyPage() {
       </p>
 
       <Section title="1. 取得する情報">
-        <p>本サービスは、閲覧者の氏名・メールアドレス・電話番号を取得しません。アカウント登録もありません。</p>
+        <p>
+          本サービスにアカウント登録はありません。ギャラリーの閲覧にあたって、閲覧者の氏名・メールアドレス・電話番号は取得しません。
+        </p>
         <p>本サービスの利用にあたり、次の情報を取得します。</p>
         <ul className="list-disc space-y-2 pl-5">
+          <li>
+            <strong className="font-medium text-neutral-900">同意書フォームの入力内容</strong>
+            ：イベントで撮影した写真の受け取りに同意書フォームをお使いいただく場合に限り、企業名・氏名・読み仮名・メールアドレスと、同意した日時および同意事項の版を取得します。
+          </li>
           <li>
             <strong className="font-medium text-neutral-900">匿名の識別子</strong>
             ：閲覧を継続するために、氏名等と結び付かない匿名の識別子を自動的に発行します。
@@ -104,6 +111,7 @@ export default function PrivacyPolicyPage() {
       <Section title="4. 利用目的">
         <ul className="list-disc space-y-2 pl-5">
           <li>撮影した写真を、依頼者ご本人および共有先の方へお届けするため</li>
+          <li>同意書フォームでは、写真の受け取り用 URL をメールでお送りし、同意の内容を記録し、お問い合わせに対応するため</li>
           <li>お気に入りの選定結果を撮影担当者が確認するため</li>
           <li>不正なアクセスの検知および障害対応のため</li>
         </ul>
@@ -119,6 +127,7 @@ export default function PrivacyPolicyPage() {
             — 写真および上記1の情報の保管。データの保存先リージョンは東京（asia-northeast1）です。
           </li>
           <li>Vercel Inc.（ウェブサイトのホスティング）— アクセスログの記録。</li>
+          <li>Twilio Inc.（SendGrid）— 同意書フォームをお使いいただいた方へのメールの送信。</li>
         </ul>
       </Section>
 
@@ -183,8 +192,11 @@ export default function PrivacyPolicyPage() {
           the Japanese policy above, which prevails in case of any discrepancy.
         </p>
         <p>
-          <strong className="font-medium text-neutral-900">What we collect.</strong> We do not ask
-          viewers for a name, email address, or phone number, and there is no account registration.
+          <strong className="font-medium text-neutral-900">What we collect.</strong> There is no
+          account registration, and we do not ask gallery viewers for a name, email address, or phone
+          number. If you use a consent form to receive photos from an event, we collect your company
+          name, name, name reading and email address, with the time you agreed and the version of the
+          terms.
           We generate an anonymous identifier so a viewing session can continue, and we store the
           invitation token from your link, the photos you mark as favourites, access timestamps and
           counts, and standard server access logs (IP address, browser type).
@@ -204,7 +216,8 @@ export default function PrivacyPolicyPage() {
         <p>
           <strong className="font-medium text-neutral-900">Sharing.</strong> We never sell or share
           your data with third parties. We use Google Firebase (authentication, database, storage;
-          data stored in the Tokyo region) and Vercel (website hosting) to operate the service.
+          data stored in the Tokyo region) Vercel (website hosting) and Twilio SendGrid (sending consent-form emails) to operate the
+          service.
         </p>
         <p>
           <strong className="font-medium text-neutral-900">Retention.</strong> Photos and related
@@ -219,7 +232,7 @@ export default function PrivacyPolicyPage() {
           </a>
           .
         </p>
-        <p className="text-sm text-neutral-500">Last updated: 22 August 2026</p>
+        <p className="text-sm text-neutral-500">Last updated: 5 November 2026</p>
       </div>
     </main>
   );

@@ -40,6 +40,12 @@ npm test                       # Vitest
 npm run lint                   # ESLint
 npm run build                  # Production build (also type-checks)
 ```
+`src/services/consentService.emulator.test.ts` is skipped unless a Firestore emulator is running.
+Run it with:
+```bash
+cd rules-tests && npx firebase emulators:exec --config ../firebase.json --only firestore \
+  --project demo-photo-gallery "cd ../web && npx vitest run src/services/consentService.emulator.test.ts"
+```
 
 ### Native Shell (Expo)
 ```bash
@@ -129,8 +135,32 @@ gsutil cors get gs://photo-gallery-app-20251204.firebasestorage.app   # verify
   - `manifestService.ts` - authorises the native app's save requests
   - `downloadService.ts` - bulk ZIP download in the browser
 - **Contexts**: `AuthContext` (anonymous Firebase Auth), `GalleryContext` (invitation + images)
-- **Routes**: `/gallery/[token]`, `/liked`, `/privacy`, and two Route Handlers:
-  `/api/image` (sharp resize proxy) and `/api/native/manifest` (native save authorisation)
+- **Routes**: `/gallery/[token]`, `/liked`, `/privacy`, `/consent/[formId]`, and Route Handlers:
+  `/api/image` (sharp resize proxy), `/api/native/manifest` (native save authorisation),
+  `/api/consent/[formId]` (consent form submission) and `/api/consent/deliver` (the admin's
+  "send the URL" button)
+
+**Consent forms** (写真の受け取りへの同意フォーム). An event participant opens `/consent/[formId]`,
+enters company name, name, name reading and email, ticks the consent box, and receives the gallery
+URL by email. The gallery URL is the ordinary `/gallery/[token]`, so it opens in NT-photo when the
+app is installed. `/consent` is deliberately **not** a universal link: the form stays in the browser.
+- Everything server-side goes through the **Admin SDK** (`src/lib/firebaseAdmin.ts`), because the
+  responses hold personal data and the handler issues invitations. `consentForms` and
+  `consentResponses` are closed to every non-admin client in the rules.
+- Each form has two settings, both changeable later from the admin panel: `linkMode`
+  (`perPerson` issues one invitation per person containing **all** of the project's images at send
+  time; `shared` sends one existing invitation to everyone) and `deliveryTiming` (`onSubmit` sends
+  the URL at once — or only a receipt if the project has no images yet; `later` sends a receipt and
+  waits for the admin's bulk send).
+- A person is keyed by form + lower-cased email, so resubmitting updates one record and reuses
+  the same invitation. The consent record is written **before** the email is sent; a failed email
+  leaves `deliveryStatus: 'failed'` for the admin to resend.
+- The consent wording lives in `src/content/consentTerms.ts`. **Bump `CONSENT_VERSION` whenever it
+  changes** — each response stores the version it agreed to.
+- Server-only env vars: `FIREBASE_SERVICE_ACCOUNT_KEY` (service account JSON), `SENDGRID_API_KEY`,
+  `GALLERY_ORIGIN` (required in production — the URL put in emails; must be the universal-link
+  domain), `ADMIN_ORIGIN` (required in production — CORS for `/api/consent/deliver`). Set
+  `MAIL_TRANSPORT=log` in development to print emails instead of sending them.
 
 **Image delivery.** The grid reads `thumbnails.small` / `.medium` and the lightbox reads
 `thumbnails.large` — all straight from Storage. `/api/image` is only a fallback for images
@@ -149,6 +179,11 @@ browser and almost never hit. Do not reintroduce `Vary: Accept` here.
   - `invitationService.ts` - Invitation issuing; the document ID **is** the token
   - `likeService.ts` - Reads the client's selection back per invitation; aggregates `perDevice` likes
   - `userService.ts` - User management
+  - `consentService.ts` - Consent forms: create/update, read responses, ask `/web` to send URLs
+    (`/api/consent/deliver`, authorised by the admin's Firebase ID token). Responses are read-only
+    here; only `/web` writes them
+- **Components**: `admin/src/components/ConsentFormsPanel.tsx` — the 同意フォーム tab of the
+  project detail page
 - **Contexts**: `admin/src/contexts/AuthContext.tsx`
 - **Routes**: `/` (login), `/admin/dashboard` (project list), `/admin/projects/new`,
   `/admin/projects/[projectId]`, `/admin/projects/[projectId]/images/upload`,
@@ -236,6 +271,7 @@ invitations/{token}                  # The document ID IS the invitation token (
   - expiresAt: timestamp
   - viewingDays: number              # viewing window from createdAt; default 7
   - likeScope?: 'shared' | 'perDevice' # set at creation only; missing means shared
+  - consentFormId?, consentResponseId?: string # set when issued by a consent form (perPerson)
   - isActive: boolean
   - accessCount: number
   - lastAccessedAt: timestamp
@@ -257,7 +293,31 @@ likes/{invitationId}_{uid}_{imageId} # likeScope 'perDevice': one person's like.
   - imageId: string                  # between a browser and the app. images.likeCount is not
   - userId: string                   # updated; the admin panel counts these documents instead.
   - createdAt: timestamp
+
+consentForms/{formId}                # formId is random (21 chars): knowing it lets you receive photos
+  - projectId, title: string         # title is the event name shown on the form and in emails
+  - isActive: boolean
+  - linkMode: 'perPerson' | 'shared'
+  - sharedInvitationId: string       # the invitation sent to everyone when linkMode is shared
+  - deliveryTiming: 'onSubmit' | 'later'
+  - viewingDays: number              # for invitations issued in perPerson mode
+  - createdBy: string                # admin uid; copied onto issued invitations
+  - createdAt, updatedAt: timestamp
+
+consentResponses/{formId}_{sha256(lower-cased email) first 32 hex}  # written by /web only
+  - formId, projectId: string
+  - companyName, name, nameKana, email: string
+  - consentVersion: string           # CONSENT_VERSION the person agreed to
+  - agreedAt: timestamp              # latest submission
+  - deliveryStatus: 'pending' | 'sent' | 'failed'
+  - invitationId?: string            # the invitation that was (or will be) sent
+  - sentAt?: timestamp
+  - lastError?: string               # why the last send failed
+  - createdAt, updatedAt: timestamp
 ```
+
+Deleting a project deletes its consent forms and responses first (before invitations), so a
+submission that arrives mid-delete cannot leave a fresh invitation behind.
 
 ## Storage Structure
 
@@ -353,6 +413,11 @@ together.
   callers reach only their own likes, so `list` must filter by their `userId`; `get` decides from
   the document ID alone, so a denial reveals nothing about someone else's like.
   Admins may `get`, `list` and `delete` across invitations.
+- **consentForms**: admin only, all operations (`create` also requires a `projectId`). A shared
+  form holds an invitation token, so it must never be readable by an anonymous visitor.
+- **consentResponses**: admin may `read` and `delete` only. `create`/`update` are denied to every
+  client, admins included — only `/web`'s Admin SDK writes them, and a consent record should not
+  be editable after the fact.
 - The viewing window (`createdAt + viewingDays`) is **not** enforced by the rules — rules cannot
   add days to a timestamp. It is enforced by `web/src/utils/viewingWindow.ts` and by
   `/api/native/manifest`. `expiresAt` is the hard, server-enforced limit.

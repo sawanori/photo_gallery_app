@@ -21,6 +21,7 @@ import {
   EyeOutlined,
   DeleteOutlined,
   ReloadOutlined,
+  FormOutlined,
 } from '@ant-design/icons';
 import { useRouter, useParams } from 'next/navigation';
 import { getProject, deleteProject, getProjectExpiryInfo, Project, ProjectStatus } from '@/services/projectService';
@@ -32,6 +33,7 @@ import {
 } from '@/services/imageService';
 import { getInvitationsByProject, Invitation } from '@/services/invitationService';
 import { effectiveDeadline } from '@/utils/viewingWindow';
+import ConsentFormsPanel from '@/components/ConsentFormsPanel';
 import dayjs from 'dayjs';
 import 'dayjs/locale/ja';
 
@@ -143,7 +145,7 @@ export default function ProjectDetailPage() {
   const handleDeleteProject = () => {
     modal.confirm({
       title: 'プロジェクトを削除しますか？',
-      content: `プロジェクト「${project.name}」を削除します。画像 ${images.length} 枚、招待リンク ${invitations.length} 件も同時に削除されます。この操作は取り消せません。`,
+      content: `プロジェクト「${project.name}」を削除します。画像 ${images.length} 枚、招待リンク ${invitations.length} 件、同意フォームと同意の記録も同時に削除されます。この操作は取り消せません。`,
       okText: '削除',
       okType: 'danger',
       cancelText: 'キャンセル',
@@ -471,6 +473,22 @@ export default function ProjectDetailPage() {
               </span>
             ),
             children: invitationsContent,
+          },
+          {
+            key: 'consent',
+            label: (
+              <span>
+                <FormOutlined /> 同意フォーム
+              </span>
+            ),
+            children: (
+              <ConsentFormsPanel
+                projectId={projectId}
+                projectName={project.name}
+                invitations={invitations}
+                imageCount={images.length}
+              />
+            ),
           },
         ]}
       />

@@ -40,6 +40,12 @@ vi.mock('../invitationService', () => ({
   getInvitationsByProject: (...args: unknown[]) => mockGetInvitationsByProject(...args),
 }));
 
+const mockDeleteConsentDataForProject = vi.fn();
+
+vi.mock('../consentService', () => ({
+  deleteConsentDataForProject: (...args: unknown[]) => mockDeleteConsentDataForProject(...args),
+}));
+
 let projectService: typeof import('../projectService');
 
 beforeEach(async () => {
@@ -305,6 +311,18 @@ describe('projectService', () => {
 
       expect(mockBatch.delete).toHaveBeenCalledTimes(2);
       expect(mockBatch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('同意フォームと同意の記録を、招待より先に削除する', async () => {
+      // フォームが生きていると、削除の途中に届いた送信が新しい招待を作る。
+      setupDelete([], [{ id: 'invitation-1', ...sampleInvitation }]);
+
+      await projectService.deleteProject('project-1');
+
+      expect(mockDeleteConsentDataForProject).toHaveBeenCalledWith('project-1');
+      expect(mockDeleteConsentDataForProject.mock.invocationCallOrder[0]).toBeLessThan(
+        mockGetInvitationsByProject.mock.invocationCallOrder[0]
+      );
     });
 
     it('招待を画像より先に削除する', async () => {
